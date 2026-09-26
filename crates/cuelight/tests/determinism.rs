@@ -621,7 +621,8 @@ fn scenes_entered_part_way_through_a_frame() {
 /// Ducking under a bus, including a ramp turned round halfway and a clip
 /// whose delay runs out mid-frame. Reel cells
 /// with stagger. A counter stepping through whole numbers. Scenes entered
-/// part way through a frame.
+/// part way through a frame. Values the show animates, read straight and
+/// through a transition, including one that steps inside a frame.
 ///
 /// **Not mapped, and why.**
 ///
@@ -725,5 +726,46 @@ fn a_condition_starts_its_timeline_when_it_turned_true() {
         &s,
         &script,
         &[0.13, 0.2, 0.35, 0.5, 0.63, 0.77, 0.9, 1.1, 1.3],
+    );
+}
+
+// --- Values the show animates ---------------------------------------
+
+#[test]
+fn a_transition_on_a_value_that_steps() {
+    // The value jumps partway through: a frame that spans the jump has
+    // to start the transition where the jump was, not where the frame
+    // happened to land.
+    let s = r##"{ "format": 1, "name": "t", "size": [100, 100],
+      "values": { "fuel": { "timelines": [{ "name": "drain", "trigger": "go", "hold": true,
+        "keys": [{ "t": 0, "v": 72, "ease": "step" },
+                 { "t": 0.4, "v": 34, "ease": "step" },
+                 { "t": 0.9, "v": 34 }] }] } },
+      "layers": [{ "name": "bar", "type": "shape", "x": 0,
+        "shape": { "rect": [0, 0, 10, 10] }, "fill": "#FFFFFF",
+        "bindings": [{ "property": "x", "variable": "fuel",
+                       "transition": { "duration": 0.5 } }] }] }"##;
+    let script = [(0.17, Input::Trigger("go"))];
+    same_at_any_rate(
+        "a transition on a value that steps",
+        s,
+        &script,
+        &[0.1, 0.3, 0.57, 0.6, 0.8, 1.07, 1.3, 2.0],
+    );
+}
+
+#[test]
+fn a_value_a_binding_follows_straight() {
+    let s = r##"{ "format": 1, "name": "t", "size": [100, 100],
+      "values": { "sweep": { "timelines": [{ "name": "run", "autoplay": true, "hold": true,
+        "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 40 }] }] } },
+      "layers": [{ "name": "bar", "type": "shape", "x": 0,
+        "shape": { "rect": [0, 0, 10, 10] }, "fill": "#FFFFFF",
+        "bindings": [{ "property": "x", "variable": "sweep" }] }] }"##;
+    same_at_any_rate(
+        "a value a binding follows straight",
+        s,
+        &[],
+        &[0.1, 0.33, 0.5, 0.77, 1.0, 1.5],
     );
 }
