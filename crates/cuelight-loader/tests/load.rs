@@ -1,5 +1,5 @@
 use cuelight::Engine;
-use cuelight_loader::{load, Driver, DriverPlayer, LoadError, Step};
+use cuelight_loader::{load, Driver, DriverPlayer, Live, LoadError, Step};
 use std::path::PathBuf;
 
 fn shows() -> PathBuf {
@@ -640,7 +640,7 @@ fn seeking_lands_where_playing_there_would_have() {
     // where playing there would have.
     let mut sought = Engine::new();
     sought.load_show(show).unwrap();
-    cuelight_loader::seek(&mut sought, None, 2.0, 60.0);
+    cuelight_loader::seek(&mut sought, None, &Live::default(), 2.0, 60.0);
     assert!(
         (at(&sought) - at(&played)).abs() < 1e-9,
         "{} vs {}",
@@ -651,7 +651,7 @@ fn seeking_lands_where_playing_there_would_have() {
     for _ in 0..120 {
         sought.advance_frame(1.0 / 60.0);
     }
-    cuelight_loader::seek(&mut sought, None, 2.0, 60.0);
+    cuelight_loader::seek(&mut sought, None, &Live::default(), 2.0, 60.0);
     assert!(
         (at(&sought) - at(&played)).abs() < 1e-9,
         "going back is the same place"
@@ -673,22 +673,90 @@ fn seeking_replays_the_driver_on_the_way() {
     let mut engine = Engine::new();
     engine.load_show(show).unwrap();
 
-    cuelight_loader::seek(&mut engine, Some(driver.clone()), 0.5, 60.0);
+    cuelight_loader::seek(
+        &mut engine,
+        Some(driver.clone()),
+        &Live::default(),
+        0.5,
+        60.0,
+    );
     assert_eq!(
         engine.variable("score"),
         Some(&cuelight::Value::Number(10.0))
     );
-    cuelight_loader::seek(&mut engine, Some(driver.clone()), 1.5, 60.0);
+    cuelight_loader::seek(
+        &mut engine,
+        Some(driver.clone()),
+        &Live::default(),
+        1.5,
+        60.0,
+    );
     assert_eq!(
         engine.variable("score"),
         Some(&cuelight::Value::Number(20.0))
     );
     // And back: the driver is replayed from the top, not rewound.
-    cuelight_loader::seek(&mut engine, Some(driver), 0.5, 60.0);
+    cuelight_loader::seek(&mut engine, Some(driver), &Live::default(), 0.5, 60.0);
     assert_eq!(
         engine.variable("score"),
         Some(&cuelight::Value::Number(10.0))
     );
+}
+
+#[test]
+fn seeking_replays_what_a_host_did_to_the_show() {
+    // A show is a function of its inputs and its clock, and a key or a
+    // press is an input: a scrub that dropped them would put the show
+    // somewhere it never was.
+    let show = r##"{ "name": "played", "size": [8, 8],
+      "input": { "keys": { "ArrowRight": "go" } },
+      "layers": [{ "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+                   "fill": "#FFFFFF", "x": 0,
+                   "timelines": [{ "name": "slide", "trigger": "go", "hold": true,
+                     "tracks": [{ "property": "x",
+                                  "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 8 }] }] }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let at = |engine: &Engine| match engine.resolved_layers().unwrap()[0].shape {
+        cuelight::ResolvedShape::Rect { x, .. } => x,
+        ref other => panic!("{other:?}"),
+    };
+
+    // Played: a key at half a second, so the slide is half done at 1.0.
+    let mut live = Live::default();
+    for _ in 0..30 {
+        engine.advance_frame(1.0 / 60.0);
+    }
+    let trigger = engine.key("ArrowRight").expect("the show reads that key");
+    live.record(engine.time(), trigger);
+    for _ in 0..30 {
+        engine.advance_frame(1.0 / 60.0);
+    }
+    let played = at(&engine);
+    assert!((played - 4.0).abs() < 0.2, "{played}");
+
+    // Sought to the same moment, from cold: the key is replayed on the
+    // way and the show is where it was.
+    cuelight_loader::seek(&mut engine, None, &live, 1.0, 60.0);
+    assert!(
+        (at(&engine) - played).abs() < 1e-9,
+        "{} vs {played}",
+        at(&engine)
+    );
+
+    // Before the key: the show has not been told anything yet.
+    cuelight_loader::seek(&mut engine, None, &live, 0.25, 60.0);
+    assert_eq!(at(&engine), 0.0);
+
+    // And past it again, without playing through: still there, since
+    // scrubbing does not forget what the host did.
+    cuelight_loader::seek(&mut engine, None, &live, 1.0, 60.0);
+    assert!((at(&engine) - played).abs() < 1e-9);
+
+    // Until it is told to.
+    live.forget_from(0.4);
+    cuelight_loader::seek(&mut engine, None, &live, 1.0, 60.0);
+    assert_eq!(at(&engine), 0.0);
 }
 
 /// A show and its files, held in memory, for the cases where the layout

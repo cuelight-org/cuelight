@@ -116,6 +116,25 @@ impl Transform {
         [a * x + c * y + e, b * x + d * y + f]
     }
 
+    /// The map back, for asking where a canvas point is in a layer's own
+    /// space. `None` for a map that flattens everything to a line, which
+    /// has no back.
+    pub fn invert(self) -> Option<Transform> {
+        let [a, b, c, d, e, f] = self.0;
+        let det = a * d - b * c;
+        if det == 0.0 || !det.is_finite() {
+            return None;
+        }
+        Some(Transform([
+            d / det,
+            -b / det,
+            -c / det,
+            a / det,
+            (c * f - d * e) / det,
+            (b * e - a * f) / det,
+        ]))
+    }
+
     /// `(scale, x, y)` when this is only a positive uniform scale and a
     /// translation, which the draw list bakes into its coordinates.
     pub fn plain(self) -> Option<(f64, f64, f64)> {
@@ -1103,6 +1122,79 @@ impl Engine {
         self.vectors.get(name)
     }
 
+    /// Press a key, by the name a browser gives it
+    /// (`KeyboardEvent.key`): `ArrowRight`, `Enter`, `a`, `" "`.
+    ///
+    /// Fires what the show's `input.keys` says the key means and hands
+    /// back that trigger's name, or `None` when the show says nothing
+    /// about it. A key is a host event like any other: the show decides
+    /// what it means, so a player, a browser and an embedder agree
+    /// without any of them knowing what the show is about.
+    pub fn key(&mut self, key: &str) -> Option<String> {
+        let show = self.show.as_ref()?;
+        let trigger = show.input.keys.get(key)?.clone();
+        self.trigger(&trigger);
+        Some(trigger)
+    }
+
+    /// Press the canvas at `at`, in canvas coordinates.
+    ///
+    /// The topmost pressable layer drawn under that point fires its
+    /// trigger; where nothing pressable is under it, the show's own
+    /// `input.press` does, which is how "press anywhere to go on"
+    /// is written. Hands back the trigger fired, or `None`.
+    ///
+    /// The point is tested against the frame as drawn: a layer hidden,
+    /// clipped away or covered is not hit, and what counts as inside is
+    /// the shape for a rect or a circle and the bounding box for
+    /// anything else. A host turns a click into canvas coordinates
+    /// first; `render::fit` says where the canvas landed on its surface.
+    pub fn press(&mut self, at: [f64; 2]) -> Option<String> {
+        let trigger = self.pressed(at).or_else(|| {
+            let show = self.show.as_ref()?;
+            show.input.press.clone()
+        })?;
+        self.trigger(&trigger);
+        Some(trigger)
+    }
+
+    /// What a press at `at` lands on, without firing it: the trigger of
+    /// the topmost pressable layer there. `None` when the point is over
+    /// nothing pressable, which a host may show as a plain cursor.
+    pub fn pressed(&self, at: [f64; 2]) -> Option<String> {
+        let drawn = self.drawn().ok()?;
+        let mut clips: Vec<ResolvedShape> = Vec::new();
+        let mut hit = None;
+        for (i, item) in drawn.items.iter().enumerate() {
+            match &item.shape {
+                ResolvedShape::ClipBegin { shape } => {
+                    clips.push((**shape).clone());
+                    continue;
+                }
+                ResolvedShape::ClipEnd => {
+                    clips.pop();
+                    continue;
+                }
+                _ => {}
+            }
+            let Some((_, trigger)) = drawn.pressable.iter().find(|(range, _)| range.contains(&i))
+            else {
+                continue;
+            };
+            let inside = |shape: &ResolvedShape| match item.transform.invert() {
+                // The shape is in its layer's own space when a rotation
+                // or an uneven scale put it there; the point comes back
+                // the same way.
+                Some(back) => covers(shape, back.apply(at)),
+                None => false,
+            };
+            if inside(&item.shape) && clips.iter().all(inside) {
+                hit = Some(trigger.clone());
+            }
+        }
+        hit
+    }
+
     /// Fire a named event. A scene declaring it as its trigger becomes the
     /// active scene (restarting it when already active); then every
     /// timeline declaring it, in the show's layers or the active scene,
@@ -1992,8 +2084,14 @@ impl Engine {
     }
 
     pub fn resolved_layers(&self) -> Result<Vec<ResolvedLayer>, Error> {
+        Ok(self.drawn()?.items)
+    }
+
+    /// The draw list, and which of its items belong to a layer that can
+    /// be pressed.
+    fn drawn(&self) -> Result<Drawn, Error> {
         let show = self.show.as_ref().ok_or(Error::NoShow)?;
-        let mut out = Vec::new();
+        let mut out = Drawn::default();
         self.walk(
             Root::Show,
             &show.layers,
@@ -3253,7 +3351,7 @@ impl Engine {
         layers: &[Layer],
         path: &mut Vec<usize>,
         from: Inherited,
-        out: &mut Vec<ResolvedLayer>,
+        built: &mut Drawn,
     ) -> Result<(), Error> {
         let Inherited {
             transform: parent,
@@ -3263,6 +3361,10 @@ impl Engine {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if self.is_visible(root, layer, path) {
+                // Where this layer's drawing starts, so a press can be
+                // tested against what it drew rather than against a
+                // second guess at where it went.
+                let from = built.items.len();
                 // A group that may bleed lets its whole subtree bleed.
                 let overflow = bleeding || layer.overflow;
                 let number = |prop| self.number(root, layer, path, prop);
@@ -3299,7 +3401,7 @@ impl Engine {
                     LayerKind::Group { children, clip, .. } => {
                         // A blended group is composited as one picture.
                         let mut marker = |shape: ResolvedShape| {
-                            out.push(ResolvedLayer {
+                            built.items.push(ResolvedLayer {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
@@ -3327,10 +3429,10 @@ impl Engine {
                                 opacity,
                                 overflow,
                             },
-                            out,
+                            built,
                         )?;
                         if clip.is_some() {
-                            out.push(ResolvedLayer {
+                            built.items.push(ResolvedLayer {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
@@ -3342,7 +3444,7 @@ impl Engine {
                             });
                         }
                         if layer.blend != Blend::Normal {
-                            out.push(ResolvedLayer {
+                            built.items.push(ResolvedLayer {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
@@ -3384,7 +3486,7 @@ impl Engine {
                                 Ok::<_, Error>((color, s.width * scale))
                             })
                             .transpose()?;
-                        out.push(ResolvedLayer {
+                        built.items.push(ResolvedLayer {
                             gradient,
                             overflow,
                             name: layer.name.clone(),
@@ -3412,7 +3514,7 @@ impl Engine {
                                 |info| [info.width, info.height],
                             );
                             let [width, height] = size.unwrap_or(natural);
-                            out.push(ResolvedLayer {
+                            built.items.push(ResolvedLayer {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
@@ -3462,7 +3564,7 @@ impl Engine {
                             });
                             let box_size = size.unwrap_or([art.width, art.height]);
                             push_vector(
-                                out,
+                                &mut built.items,
                                 art,
                                 &Placed {
                                     overflow,
@@ -3504,7 +3606,7 @@ impl Engine {
                                     ],
                                 }
                             });
-                            out.push(ResolvedLayer {
+                            built.items.push(ResolvedLayer {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
@@ -3618,7 +3720,14 @@ impl Engine {
                                 // light that reached it.
                                 if let Some(unlit) = unlit {
                                     for (i, mask) in masks.iter().enumerate() {
-                                        push(out, !mask, unlit, look, layer.blend, cell_of(i));
+                                        push(
+                                            &mut built.items,
+                                            !mask,
+                                            unlit,
+                                            look,
+                                            layer.blend,
+                                            cell_of(i),
+                                        );
                                     }
                                 }
                                 if let Some(glow) = glow {
@@ -3634,7 +3743,7 @@ impl Engine {
                                     // warm colour saturate their red and
                                     // go on brightening the rest, which
                                     // turns the joins yellow-white.
-                                    out.push(drawn(
+                                    built.items.push(drawn(
                                         ResolvedShape::BlendBegin {
                                             blend: Blend::Screen,
                                         },
@@ -3649,7 +3758,7 @@ impl Engine {
                                             let from = f64::from(step - 1) / f64::from(GLOW_STEPS);
                                             let [r, g, b, a] = lit;
                                             // The halo falls off as the
-                                            // square of the distance out,
+                                            // square of the distance &mut built.items,
                                             // which keeps most of the
                                             // light within a bar's width
                                             // of the segment and reaches
@@ -3673,7 +3782,7 @@ impl Engine {
                                             };
                                             let alpha = f64::from(a) * share;
                                             push(
-                                                out,
+                                                &mut built.items,
                                                 *mask,
                                                 [r, g, b, (alpha.clamp(0.0, 255.0)) as u8],
                                                 segments::Look {
@@ -3685,14 +3794,25 @@ impl Engine {
                                             );
                                         }
                                     }
-                                    out.push(drawn(ResolvedShape::BlendEnd, [0; 4], Blend::Normal));
+                                    built.items.push(drawn(
+                                        ResolvedShape::BlendEnd,
+                                        [0; 4],
+                                        Blend::Normal,
+                                    ));
                                 }
                                 for (i, mask) in masks.iter().enumerate() {
-                                    push(out, *mask, lit, look, layer.blend, cell_of(i));
+                                    push(
+                                        &mut built.items,
+                                        *mask,
+                                        lit,
+                                        look,
+                                        layer.blend,
+                                        cell_of(i),
+                                    );
                                 }
                             }
                             DigitDisplay::Reel(reel) => self.push_reel(
-                                out,
+                                &mut built.items,
                                 &placed,
                                 reel,
                                 &text,
@@ -3714,14 +3834,91 @@ impl Engine {
                             blend: layer.blend,
                             transform,
                         };
-                        self.push_text(out, &placed, &font, &text, *size, *align);
+                        self.push_text(&mut built.items, &placed, &font, &text, *size, *align);
                     }
+                }
+                if let Some(press) = &layer.press {
+                    built
+                        .pressable
+                        .push((from..built.items.len(), press.trigger.clone()));
                 }
             }
             path.pop();
         }
         Ok(())
     }
+}
+
+/// Whether `at` is inside a drawn shape, in the shape's own
+/// coordinates.
+///
+/// Exact for a rect and a circle, which are most of what a show makes
+/// pressable; anything else by the box it fills, which is predictable
+/// and enough to start with. A marker covers nothing.
+fn covers(shape: &ResolvedShape, at: [f64; 2]) -> bool {
+    let [px, py] = at;
+    let box_of = |[x, y, w, h]: [f64; 4]| px >= x && px <= x + w && py >= y && py <= y + h;
+    match shape {
+        ResolvedShape::Rect {
+            x,
+            y,
+            width,
+            height,
+        } => box_of([*x, *y, *width, *height]),
+        ResolvedShape::Circle { cx, cy, radius } => {
+            let (dx, dy) = (px - cx, py - cy);
+            dx * dx + dy * dy <= radius * radius
+        }
+        ResolvedShape::Polygon { points } => within(points, at),
+        ResolvedShape::Path { elements, .. } => crate::path::bounds(elements).is_some_and(box_of),
+        ResolvedShape::Image {
+            x,
+            y,
+            width,
+            height,
+            ..
+        }
+        | ResolvedShape::Bitmap {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => box_of([*x, *y, *width, *height]),
+        // Glyphs are outlines the host rasterizes, so the run is taken
+        // as the line it sits on: its glyph boxes at the size it is
+        // drawn.
+        ResolvedShape::GlyphRun { size, glyphs, .. } => glyphs
+            .iter()
+            .any(|glyph| box_of([glyph.x, glyph.y - size, *size, *size])),
+        ResolvedShape::ClipBegin { shape } => covers(shape, at),
+        ResolvedShape::ClipEnd | ResolvedShape::BlendBegin { .. } | ResolvedShape::BlendEnd => {
+            false
+        }
+    }
+}
+
+/// Whether `at` is inside a closed polygon, by crossings.
+fn within(points: &[[f64; 2]], [px, py]: [f64; 2]) -> bool {
+    let mut inside = false;
+    for (i, &[x1, y1]) in points.iter().enumerate() {
+        let [x2, y2] = points[(i + 1) % points.len()];
+        if (y1 > py) != (y2 > py) && px < (x2 - x1) * (py - y1) / (y2 - y1) + x1 {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// A resolved frame: what to draw, and which of it can be pressed.
+#[derive(Debug, Default)]
+struct Drawn {
+    items: Vec<ResolvedLayer>,
+    /// Per pressable layer, the items it drew and the trigger a press on
+    /// them fires, in paint order. Item ranges rather than shapes, so a
+    /// press is tested against the very geometry the frame drew, clips
+    /// and transforms included.
+    pressable: Vec<(std::ops::Range<usize>, String)>,
 }
 
 /// What a layer takes from the tree above it.

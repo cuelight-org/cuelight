@@ -24,6 +24,10 @@
       "default": 1,
       "minimum": 0
     },
+    "input": {
+      "description": "What a key or a press on the show means, so a show can be played\nwith rather than only driven.",
+      "$ref": "#/$defs/Input"
+    },
     "layers": {
       "description": "Layers that are always present, painted behind the active scene.",
       "type": "array",
@@ -643,6 +647,27 @@
         }
       ]
     },
+    "Input": {
+      "description": "What the show makes of a host's keys and presses.\n\nDeclared by the show rather than wired into each host, so the player,\na browser and an embedder behave the same, and a host stays a source\nof events: it says which key went down or where a press landed, and\nthe show says what that means.",
+      "type": "object",
+      "properties": {
+        "keys": {
+          "description": "Keys that fire a trigger, by the name a browser gives the key\n(`KeyboardEvent.key`): `ArrowRight`, `Enter`, `a`, `\" \"` for the\nspace bar. Names are matched exactly, so `A` is shift and `a` is\nnot.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "press": {
+          "description": "Trigger fired by a press that lands on nothing pressable: \"click\nanywhere to go on\". A press on a layer with its own `press` fires\nthat instead, and never this.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "Justify": {
       "description": "Which end of a digit row its text sits against.",
       "oneOf": [
@@ -723,6 +748,17 @@
           "description": "Let this layer (and a group's subtree) draw past the canvas.\n\nA show is authored against a fixed canvas and a host fits that\ncanvas into whatever surface it has, painting the area around it\nwith the show's `background`. That is the right default: it keeps\nthe canvas meaning exactly what it means for layout. It is the\nwrong answer for a backdrop whose job is to reach the edges, which\non a wider display sits in two bars of flat colour with nothing\nthe show can say about them.\n\nMarked here, only the clip changes: coordinates are still authored\nagainst the canvas, which stays a safe area for everything placed\nexactly. A show cannot know how far it will be asked to stretch,\nso anything that bleeds has to be drawn generously.\n\nIt does nothing where the frame *is* the canvas: an offscreen\nrender, `pixel_perfect` scaling, a `dots` pass, or an output mode\nother than `rgb`, all of which draw the canvas at its own size\nfirst. There is no area outside a dot matrix to reach into.",
           "type": "boolean",
           "default": false
+        },
+        "press": {
+          "description": "What a press on this layer fires, when it lands on it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Press"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "rotation": {
           "description": "Rotation in degrees, clockwise on the canvas, around the layer's\nx/y origin or its anchor point. A group turns its whole subtree.",
@@ -1352,6 +1388,20 @@
           "type": "string",
           "const": "shuffle"
         }
+      ]
+    },
+    "Press": {
+      "description": "What a press on a layer does.\n\nA trigger, and nothing else: the engine's inputs stay one-way, so a\npress is the same thing a host firing that trigger would be, and a\nshow is still a function of its triggers and its clock.",
+      "type": "object",
+      "properties": {
+        "trigger": {
+          "description": "Trigger fired when the layer is pressed.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "trigger"
       ]
     },
     "Property": {

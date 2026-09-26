@@ -147,6 +147,9 @@ fn event_to_js(event: &Event) -> JsValue {
 struct Inner {
     engine: Engine,
     script: Option<Driver>,
+    /// What keys and presses fired while the show played, so a seek can
+    /// put it back: they are inputs like the script's.
+    live: cuelight_loader::Live,
     driver: Option<DriverPlayer>,
     driver_playing: bool,
     /// The clock is stopped: frames still paint, nothing advances.
@@ -169,6 +172,12 @@ struct Inner {
 }
 
 impl Inner {
+    /// Pixels per CSS pixel on this screen, for turning a pointer's
+    /// place on the element into a place on the surface.
+    fn pixel_ratio(&self) -> f64 {
+        web_sys::window().map_or(1.0, |w| w.device_pixel_ratio())
+    }
+
     /// Pixel size the canvas should have for its CSS size on this screen.
     fn wanted_size(&self) -> (u32, u32) {
         let ratio = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
@@ -387,6 +396,7 @@ impl CuelightPlayer {
         .map_err(|e| error(format!("renderer: {e}")))?;
 
         let inner = Rc::new(RefCell::new(Inner {
+            live: cuelight_loader::Live::default(),
             paused: false,
             engine,
             driver: loaded.driver.clone().map(DriverPlayer::new),
@@ -459,6 +469,60 @@ impl CuelightPlayer {
     /// Fire a trigger.
     pub fn trigger(&self, name: &str) {
         self.inner.borrow_mut().engine.trigger(name);
+    }
+
+    /// Press a key, by the name the browser gives it
+    /// (`KeyboardEvent.key`). Fires what the show says the key means and
+    /// returns that trigger, or `null` when the show says nothing about
+    /// it, so a page can leave the key to the browser.
+    pub fn key(&self, key: &str) -> Option<String> {
+        let mut inner = self.inner.borrow_mut();
+        let fired = inner.engine.key(key)?;
+        let at = inner.engine.time();
+        inner.live.record(at, fired.clone());
+        Some(fired)
+    }
+
+    /// Press the canvas at a point on the element, in CSS pixels from
+    /// its top-left corner: `press(event.offsetX, event.offsetY)`.
+    ///
+    /// Fires the topmost pressable layer there, or the show's own
+    /// `input.press` when there is none, and returns the trigger fired.
+    /// `null` when the press landed in the letterbox beside the canvas
+    /// or on nothing that answers.
+    pub fn press(&self, x: f64, y: f64) -> Option<String> {
+        let mut inner = self.inner.borrow_mut();
+        let size = inner.engine.show()?.size;
+        // CSS pixels to the surface the frame was presented on.
+        let ratio = inner.pixel_ratio();
+        let surface = [inner.surface.config.width, inner.surface.config.height];
+        let at = cuelight::render::canvas_at(
+            size,
+            surface,
+            inner.engine.scaling(),
+            [x * ratio, y * ratio],
+        )?;
+        let fired = inner.engine.press(at)?;
+        let at = inner.engine.time();
+        inner.live.record(at, fired.clone());
+        Some(fired)
+    }
+
+    /// What a press at that point would fire, without firing it: for a
+    /// page that wants a pointer cursor over what can be pressed.
+    #[wasm_bindgen(js_name = pressedAt)]
+    pub fn pressed_at(&self, x: f64, y: f64) -> Option<String> {
+        let inner = self.inner.borrow();
+        let size = inner.engine.show()?.size;
+        let ratio = inner.pixel_ratio();
+        let surface = [inner.surface.config.width, inner.surface.config.height];
+        let at = cuelight::render::canvas_at(
+            size,
+            surface,
+            inner.engine.scaling(),
+            [x * ratio, y * ratio],
+        )?;
+        inner.engine.pressed(at)
     }
 
     /// Set a variable to a boolean, a number or a string.
@@ -591,9 +655,10 @@ impl CuelightPlayer {
     pub fn seek(&self, seconds: f64, fps: Option<f64>) {
         let mut inner = self.inner.borrow_mut();
         let script = inner.script.clone();
+        let live = inner.live.clone();
         let fps = fps.filter(|f| f.is_finite() && *f > 0.0).unwrap_or(60.0);
         let Inner { engine, .. } = &mut *inner;
-        let played = cuelight_loader::seek(engine, script, seconds.max(0.0), fps);
+        let played = cuelight_loader::seek(engine, script, &live, seconds.max(0.0), fps);
         inner.driver = played;
         // The clock is read from the anchor, and the show is somewhere
         // else now: the next frame works out where it starts from.

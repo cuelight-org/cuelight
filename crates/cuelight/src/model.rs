@@ -52,6 +52,40 @@ pub struct Show {
     /// when the show loads), entered by firing its trigger.
     #[serde(default)]
     pub scenes: Vec<Scene>,
+    /// What a key or a press on the show means, so a show can be played
+    /// with rather than only driven.
+    #[serde(default, skip_serializing_if = "Input::is_empty")]
+    pub input: Input,
+}
+
+/// What the show makes of a host's keys and presses.
+///
+/// Declared by the show rather than wired into each host, so the player,
+/// a browser and an embedder behave the same, and a host stays a source
+/// of events: it says which key went down or where a press landed, and
+/// the show says what that means.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Input {
+    /// Keys that fire a trigger, by the name a browser gives the key
+    /// (`KeyboardEvent.key`): `ArrowRight`, `Enter`, `a`, `" "` for the
+    /// space bar. Names are matched exactly, so `A` is shift and `a` is
+    /// not.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, String>,
+    /// Trigger fired by a press that lands on nothing pressable: "click
+    /// anywhere to go on". A press on a layer with its own `press` fires
+    /// that instead, and never this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub press: Option<String>,
+}
+
+impl Input {
+    /// Whether the show says nothing about input.
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.press.is_none()
+    }
 }
 
 /// The trigger names something listens to: in a show document one name
@@ -533,6 +567,9 @@ pub struct Layer {
     /// blends its children as one picture.
     #[serde(default)]
     pub blend: Blend,
+    /// What a press on this layer fires, when it lands on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub press: Option<Press>,
     /// Live property bindings: `property = variable * scale + offset`.
     #[serde(default)]
     pub bindings: Vec<Binding>,
@@ -543,6 +580,19 @@ pub struct Layer {
 
 fn default_opacity() -> f64 {
     1.0
+}
+
+/// What a press on a layer does.
+///
+/// A trigger, and nothing else: the engine's inputs stay one-way, so a
+/// press is the same thing a host firing that trigger would be, and a
+/// show is still a function of its triggers and its clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Press {
+    /// Trigger fired when the layer is pressed.
+    pub trigger: String,
 }
 
 /// How a layer's colors combine with the colors already beneath it.

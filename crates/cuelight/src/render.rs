@@ -560,6 +560,27 @@ pub fn fit(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> (f64, f64, f64
     )
 }
 
+/// Where a point on a `target`-sized surface lands on the canvas, given
+/// the same `scaling` the frame was presented with; `None` when it lands
+/// in the letterbox beside the canvas rather than on it.
+///
+/// What a host needs to turn a click or a touch into something
+/// [`Engine::press`](crate::Engine::press) can answer, and the same
+/// arithmetic wherever it is asked, so every host agrees on what was
+/// pressed.
+pub fn canvas_at(
+    show: [u32; 2],
+    target: [u32; 2],
+    scaling: Scaling,
+    [px, py]: [f64; 2],
+) -> Option<[f64; 2]> {
+    let (x, y, width, height) = fit(show, target, scaling);
+    let [show_w, show_h] = show.map(f64::from);
+    let at = [(px - x) / width * show_w, (py - y) / height * show_h];
+    let inside = (0.0..=show_w).contains(&at[0]) && (0.0..=show_h).contains(&at[1]);
+    inside.then_some(at)
+}
+
 /// The loaded show's declared background as a vello color; opaque black
 /// when no show is loaded or the color string does not parse.
 pub fn background_color(engine: &Engine) -> Color {
