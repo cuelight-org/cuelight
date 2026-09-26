@@ -57,6 +57,9 @@ pub struct ImageCache {
     cells: HashMap<(String, [u32; 4]), (u64, vello::peniko::ImageData)>,
     /// Engine-generated bitmaps (text) by revision.
     bitmaps: ByteLru<u64, vello::peniko::ImageData>,
+    /// Reduced copies for drawing an image smaller than its pixels, by
+    /// name and how many halvings; see [`ImageCache::fitted`].
+    reduced: HashMap<(String, [u32; 4], u32), (u64, vello::peniko::ImageData)>,
     /// See [`ImageCache::keepalive`].
     keepalive: Option<vello::peniko::ImageData>,
     /// Outline fonts by registration revision: vello caches glyph outlines
@@ -74,6 +77,7 @@ impl Default for ImageCache {
         Self {
             entries: HashMap::new(),
             cells: HashMap::new(),
+            reduced: HashMap::new(),
             bitmaps: ByteLru::new(MAX_BITMAP_BYTES),
             keepalive: None,
             fonts: HashMap::new(),
@@ -91,6 +95,86 @@ fn peniko_image(data: &crate::engine::ImageData) -> vello::peniko::ImageData {
     }
 }
 
+/// How far an image may be reduced before it is drawn: down to a
+/// sixteenth of its width, which covers a backdrop shown as a thumbnail.
+/// Each level costs a quarter of the one above it, so the whole chain is
+/// a third more memory than the image, and only the levels a show asks
+/// for are built.
+const MAX_REDUCTION: u32 = 4;
+
+/// Halve an image, averaging each square of four pixels.
+///
+/// Averaged through premultiplied alpha, or the colour of a transparent
+/// pixel would bleed into its neighbours and leave a halo round
+/// everything cut out.
+fn halved(width: u32, height: u32, pixels: &[u8]) -> (u32, u32, Vec<u8>) {
+    let (half_w, half_h) = ((width / 2).max(1), (height / 2).max(1));
+    let mut out = Vec::with_capacity((half_w * half_h * 4) as usize);
+    for y in 0..half_h {
+        for x in 0..half_w {
+            let mut sum = [0u32; 4];
+            let mut count = 0u32;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let (sx, sy) = (x * 2 + dx, y * 2 + dy);
+                    if sx >= width || sy >= height {
+                        continue;
+                    }
+                    let at = ((sy * width + sx) * 4) as usize;
+                    let alpha = u32::from(pixels[at + 3]);
+                    for c in 0..3 {
+                        sum[c] += u32::from(pixels[at + c]) * alpha;
+                    }
+                    sum[3] += alpha;
+                    count += 1;
+                }
+            }
+            let alpha = sum[3] / count.max(1);
+            for c in 0..3 {
+                // Back out of premultiplied, where there is any alpha to
+                // divide by; a fully transparent pixel keeps no colour.
+                let value = match sum[3] {
+                    0 => 0,
+                    total => sum[c] / total,
+                };
+                out.push(value as u8);
+            }
+            out.push(alpha as u8);
+        }
+    }
+    (half_w, half_h, out)
+}
+
+/// How many halvings to take before drawing `source` pixels across
+/// `onto` device pixels.
+///
+/// Nothing until the image is at least twice the size it is drawn at.
+/// From there, the copy nearest that size: sampling four texels of a
+/// picture whose detail is finer than a pixel is what leaves a
+/// high-contrast edge stepping from one pixel to the next instead of
+/// landing between them, and averaging the pixels a destination pixel
+/// covers is what puts it between them.
+///
+/// Both ends of that are measured against the same board drawn as
+/// paths, which is what an edge should look like. Halving earlier, from
+/// the 1.41 the nearest copy would otherwise start at, means halving
+/// and then scaling back up by as much as 1.4, and the edges come out
+/// softer than the paths rather than like them: 22 pixels of a row
+/// between black and white where the paths leave 8. Reducing past the
+/// size it is drawn at, rather than to the nearest copy, blurs a
+/// picture drawn at an exact fraction, which is the case that came out
+/// perfectly before.
+fn reduction(source: u32, onto: f64) -> u32 {
+    if onto <= 0.0 || onto.is_nan() || source == 0 {
+        return 0;
+    }
+    let ratio = f64::from(source) / onto;
+    if ratio < 2.0 {
+        return 0;
+    }
+    (ratio.log2().round() as u32).min(MAX_REDUCTION)
+}
+
 impl ImageCache {
     pub fn new() -> Self {
         Self::default()
@@ -106,6 +190,46 @@ impl ImageCache {
                 image
             }
         }
+    }
+
+    /// The copy of an image, or of one cell of a sheet, to sample when
+    /// it is drawn `onto` device pixels wide: the picture itself, or a
+    /// reduced one when the show is shrinking it.
+    fn fitted(
+        &mut self,
+        name: &str,
+        data: &crate::engine::ImageData,
+        cell: Option<[u32; 4]>,
+        onto: f64,
+    ) -> vello::peniko::ImageData {
+        let whole = match cell {
+            None => self.get(name, data),
+            Some(cell) => self.cell(name, data, cell),
+        };
+        let level = reduction(whole.width, onto);
+        if level == 0 {
+            return whole;
+        }
+        let key = (name.to_owned(), cell.unwrap_or_default(), level);
+        if let Some((revision, image)) = self.reduced.get(&key) {
+            if *revision == data.revision() {
+                return image.clone();
+            }
+        }
+        let (mut width, mut height) = (whole.width, whole.height);
+        let mut pixels = whole.data.as_ref().to_vec();
+        for _ in 0..level {
+            (width, height, pixels) = halved(width, height, &pixels);
+        }
+        let image = vello::peniko::ImageData {
+            data: Blob::new(Arc::new(pixels)),
+            format: ImageFormat::Rgba8,
+            alpha_type: ImageAlphaType::Alpha,
+            width,
+            height,
+        };
+        self.reduced.insert(key, (data.revision(), image.clone()));
+        image
     }
 
     /// One transparent pixel that every scene draws. vello 0.10 keeps its
@@ -363,16 +487,24 @@ fn build_scene(
                 let Some(data) = engine.image(&image) else {
                     continue;
                 };
-                let pixels = match source {
-                    None => images.get(&image, data),
-                    Some(cell) => images.cell(&image, data, cell),
-                };
                 // Stretched to the box, or one tile's worth repeated
                 // across it from wherever the pattern starts.
                 let (tile_w, tile_h, ox, oy) = match tile {
                     None => (width, height, 0.0, 0.0),
                     Some(tile) => (tile.width, tile.height, tile.offset[0], tile.offset[1]),
                 };
+                // How wide the picture lands on the surface, which says
+                // whether it is being shrunk and by how much. On a show's
+                // own pixel grid it is left alone: what is drawn there is
+                // dots of the show's palette, and averaging a blue one
+                // with the red one beside it invents a magenta that is
+                // not in it.
+                let [a, b, ..] = placement.as_coeffs();
+                let onto = match engine.pixel_grid() {
+                    true => f64::MAX,
+                    false => tile_w * (a * a + b * b).sqrt(),
+                };
+                let pixels = images.fitted(&image, data, source, onto);
                 let transform = placement
                     * Affine::translate((x + ox, y + oy))
                     * Affine::scale_non_uniform(
