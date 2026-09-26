@@ -187,9 +187,52 @@ impl DriverPlayer {
     }
 }
 
+/// What a host told a show while it played, kept so seeking can put it
+/// back: the trigger each key and press fired, on the show's own clock.
+///
+/// A show is a function of its inputs and the clock, which is what makes
+/// scrubbing a matter of replaying rather than rewinding. Live input is
+/// an input like a script's, so it has to be replayed too, or a show
+/// scrubbed back would lose everything anyone did to it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Live {
+    fired: Vec<(f64, String)>,
+}
+
+impl Live {
+    /// Remember that `trigger` was fired at `at` seconds.
+    ///
+    /// Kept in time order: a host records as it plays, and a seek does
+    /// not disturb what it recorded, so scrubbing back and forward again
+    /// finds the same show both times.
+    pub fn record(&mut self, at: f64, trigger: impl Into<String>) {
+        let at = at.max(0.0);
+        let after = self.fired.iter().rposition(|(when, _)| *when <= at);
+        let index = after.map_or(0, |i| i + 1);
+        self.fired.insert(index, (at, trigger.into()));
+    }
+
+    /// Whether the show has been told anything live.
+    pub fn is_empty(&self) -> bool {
+        self.fired.is_empty()
+    }
+
+    /// Everything fired, in time order.
+    pub fn fired(&self) -> impl Iterator<Item = (f64, &str)> {
+        self.fired.iter().map(|(at, name)| (*at, name.as_str()))
+    }
+
+    /// Forget everything from `at` on: what a host calls when a take
+    /// starts again from there and the rest should not come back.
+    pub fn forget_from(&mut self, at: f64) {
+        self.fired.retain(|(when, _)| *when < at);
+    }
+}
+
 /// Put the show back to its beginning and walk it to `to` seconds in
-/// steps of `1 / fps`, replaying `driver` alongside. Hands back the
-/// driver where it ended up, so playing on from there continues.
+/// steps of `1 / fps`, replaying `driver` and `live` alongside. Hands
+/// back the driver where it ended up, so playing on from there
+/// continues.
 ///
 /// A show's state is a function of its inputs and the clock, so reaching
 /// a moment is restarting and advancing to it. Nothing is stored, nothing
@@ -202,14 +245,25 @@ impl DriverPlayer {
 pub fn seek(
     engine: &mut Engine,
     driver: Option<Driver>,
+    live: &Live,
     to: f64,
     fps: f64,
 ) -> Option<DriverPlayer> {
     engine.restart();
     let mut player = driver.map(DriverPlayer::new);
+    let mut live = live.fired().peekable();
     let step = 1.0 / fps.max(1.0);
     let (mut steps, mut time) = (0u64, 0.0_f64);
-    while time < to {
+    loop {
+        // Everything the host fired by now, before the frame that
+        // carried it: the instant it landed on is the one it was
+        // recorded at.
+        while let Some((_, trigger)) = live.next_if(|(at, _)| *at <= time) {
+            engine.trigger(trigger);
+        }
+        if time >= to {
+            break;
+        }
         let dt = step.min(to - time);
         if let Some(player) = &mut player {
             player.advance(engine, dt);

@@ -21,6 +21,16 @@
 //! to the start; walking it stops it. All of it keeps working while a
 //! driver runs.
 //!
+//! A show that says what a key means gets that key: the player is a host
+//! like any other, and its own transport keeps whatever the show leaves
+//! alone. Hold ctrl for the transport whatever the show says, so a deck
+//! that wants the arrows can still be scrubbed. A click presses the show
+//! where it lands.
+//!
+//! Keys and presses are recorded as they are fired, so scrubbing replays
+//! them: a show played with by hand can be walked back through and comes
+//! out the same.
+//!
 //! Images, fonts and sounds a show references but nobody registered are
 //! logged as warnings at load and skipped. Sound plays through the default
 //! output device unless `--no-audio` is given.
@@ -203,10 +213,20 @@ struct App {
     /// The show's own driver as written, for seeking: a scrub replays it
     /// from the top rather than rewinding the one that is running.
     script: Option<Driver>,
+    /// What keys and presses fired while the show played, so scrubbing
+    /// puts it back: a show is a function of its inputs and its clock,
+    /// and these are inputs like the script's.
+    live: cuelight_loader::Live,
+    /// Where the pointer last was on the surface, for turning a click
+    /// into a point on the canvas.
+    pointer: Option<[f64; 2]>,
     /// The clock is stopped: frames still paint, nothing advances.
     paused: bool,
     /// Shift is held, which makes an arrow a second instead of a frame.
     shift: bool,
+    /// Whether ctrl is held, which keeps the player's own transport
+    /// reachable in a show that wants the same keys.
+    ctrl: bool,
     /// The sound device, when one could be opened and was wanted.
     audio: Option<Output>,
     console: Receiver<String>,
@@ -242,6 +262,21 @@ struct App {
     long_frames: u64,
     fps: common::Fps,
     presenter: Presenter,
+}
+
+/// A key's name as a browser would give it (`KeyboardEvent.key`), which
+/// is what a show's `input.keys` is written in: `ArrowRight`, `Enter`,
+/// `a`, `" "` for the space bar.
+///
+/// winit names its keys after the same specification, so a named key is
+/// its own name and a character key is the character it typed.
+fn key_name(key: &Key) -> Option<String> {
+    Some(match key {
+        Key::Character(c) => c.to_string(),
+        Key::Named(NamedKey::Space) => " ".to_owned(),
+        Key::Named(named) => format!("{named:?}"),
+        _ => return None,
+    })
 }
 
 /// A gap between frames past which the show is not caught up with, in
@@ -417,12 +452,51 @@ impl App {
         }
     }
 
+    /// Fire what the show says this key means, and remember it so a
+    /// scrub can put it back. `false` when the show says nothing about
+    /// the key, which leaves it to the player's own transport.
+    fn fire_key(&mut self, key: &Key) -> bool {
+        let Some(name) = key_name(key) else {
+            return false;
+        };
+        let Some(trigger) = self.engine.key(&name) else {
+            return false;
+        };
+        log::info!("key {name:?} fired {trigger:?}");
+        self.live.record(self.engine.time(), trigger);
+        true
+    }
+
+    /// Press the canvas where the pointer is, if it is on the canvas at
+    /// all rather than in the letterbox beside it.
+    fn press_pointer(&mut self) {
+        let (Some(pointer), Some(state)) = (self.pointer, &self.state) else {
+            return;
+        };
+        let Some(show) = self.engine.show().map(|show| show.size) else {
+            return;
+        };
+        let size = state.window.inner_size();
+        let at = cuelight::render::canvas_at(
+            show,
+            [size.width, size.height],
+            self.engine.scaling(),
+            pointer,
+        );
+        let Some(trigger) = at.and_then(|at| self.engine.press(at)) else {
+            return;
+        };
+        log::info!("press fired {trigger:?}");
+        self.live.record(self.engine.time(), trigger);
+    }
+
     /// Put the show `by` seconds from where it is, forwards or backwards,
     /// and stop the clock so it stays there.
     fn scrub(&mut self, by: f64) {
         let to = (self.engine.time() + by).max(0.0);
         self.paused = true;
-        self.driver = cuelight_loader::seek(&mut self.engine, self.script.clone(), to, 60.0);
+        self.driver =
+            cuelight_loader::seek(&mut self.engine, self.script.clone(), &self.live, to, 60.0);
         // Here rather than at the next frame: the show has been moved,
         // and the clock starting again before then would read it from
         // an anchor that belongs to where it was.
@@ -764,6 +838,13 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::KeyboardInput { event, .. } if event.state.is_pressed() => {
+                // The show first: a show that says what a key means gets
+                // it, so the player behaves like any other host. The
+                // player's own transport keeps whatever is left, and is
+                // always there with ctrl held.
+                if !self.ctrl && self.fire_key(&event.logical_key) {
+                    return;
+                }
                 match &event.logical_key {
                     Key::Named(NamedKey::Escape) if self.fullscreen => self.set_fullscreen(false),
                     Key::Named(NamedKey::Escape) => {
@@ -805,7 +886,17 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.shift = modifiers.state().shift_key();
+                self.ctrl = modifiers.state().control_key();
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.pointer = Some([position.x, position.y]);
+            }
+            WindowEvent::CursorLeft { .. } => self.pointer = None,
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Left,
+                ..
+            } if state.is_pressed() => self.press_pointer(),
             // Only noted here: a drag can deliver several sizes per frame,
             // and each reconfiguration of the surface costs milliseconds.
             // The next redraw applies the last one.
@@ -1165,8 +1256,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         videos,
         actions,
         script: script.clone(),
+        live: cuelight_loader::Live::default(),
+        pointer: None,
         paused: false,
         shift: false,
+        ctrl: false,
         driver,
         audio,
         console: rx,

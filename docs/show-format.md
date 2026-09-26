@@ -151,6 +151,52 @@ distribution form.
   0/1).
 - `layers` are always present; `scenes` (optional) are switchable views
   painted on top of them.
+- `input` (optional) says what a key or a press on the show means; see
+  [Input](#input).
+
+## Input
+
+A show can be played with, not only driven. What a key or a press means
+is the show's to say, so a player, a browser and an embedder behave the
+same and none of them needs to know what the show is about:
+
+```json
+{ "input": { "keys": { "ArrowRight": "next", "ArrowLeft": "prev", " ": "next" },
+             "press": "next" } }
+```
+
+- `keys` maps a key to a trigger. Keys are named as a browser names them
+  (`KeyboardEvent.key`): `ArrowRight`, `Enter`, `Escape`, `a`, and `" "`
+  for the space bar. Names match exactly, so `A` is the shifted one.
+- `press` is the trigger a press fires when it lands on nothing
+  pressable, which is how "press anywhere to go on" is written.
+
+A layer says it can be pressed, and what that fires:
+
+```json
+{ "name": "lever", "type": "image", "image": "lever", "press": { "trigger": "pull" } }
+```
+
+A press finds the topmost pressable layer drawn under the point. The
+frame as drawn is what answers: a layer that is hidden, clipped away or
+covered is not hit, and one that has moved is hit where it is now. What
+counts as inside is the shape for a rect or a circle and the box it
+fills for anything else, which is enough for a lever, a word or a
+button, and predictable.
+
+A press fires a trigger and nothing else. That keeps the show's inputs
+one-way: a press is the same thing a host firing that trigger would be,
+so a show stays a function of its triggers and its clock, and pressing
+the same things at the same times gives the same show. It is also what
+lets a host record presses and keys and replay them, which is how
+scrubbing keeps working while a show is being played with
+(`cuelight_loader::Live`, see [Host contract](#host-contract)).
+
+Hosts: `Engine::key(name)` and `Engine::press([x, y])` fire, and hand
+back the trigger they fired so a host can log or record it;
+`Engine::pressed([x, y])` asks without firing, for a pointer cursor.
+Presses are in canvas coordinates, which `render::canvas_at` works out
+from a point on the surface.
 
 ## Scenes
 
@@ -1316,7 +1362,9 @@ than to the base when it ends.
 ## Host contract
 
 The engine is driven exclusively through four calls: `load_show` (JSON in),
-`set_variable`, `trigger`, and moving the clock. What the show itself
+`set_variable`, `trigger`, and moving the clock. `key` and `press` are
+the same door: they look up what the show says the key or the point
+means and fire that trigger (see [Input](#input)). What the show itself
 fires (`on_end` triggers) comes back through `drain_events()`, so content
 can tell the host that something finished. Output is either
 `resolved_layers()` (a flat, GPU-free draw list; each item carries a
@@ -1357,6 +1405,13 @@ vanishing. `cuelight-player` keeps five seconds as that mark.
 `advance_frame` is still the one for a host that genuinely has only a
 delta, and for a script or a render that has the instant, `advance_to`
 takes it directly.
+
+A host that lets a show be played with records what it fired and when,
+in a `cuelight_loader::Live`, and hands that to `seek` along with the
+driver script. Seeking is replaying, so an input that was not recorded
+is an input the show loses the moment anyone scrubs; recorded, a scrub
+puts the show back exactly where playing left it, and scrubbing past a
+press and back again finds it still there.
 
 `dt` is how much time passed, not how much of the show to play in one
 piece. A frame is cut at every instant something inside it ends, so a
