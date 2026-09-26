@@ -1414,10 +1414,12 @@ puts the show back exactly where playing left it, and scrubbing past a
 press and back again finds it still there.
 
 `dt` is how much time passed, not how much of the show to play in one
-piece. A frame is cut at every instant something inside it ends, so a
-timeline or a clip lasts exactly as long as it says whatever the frame
-rate is, and a chain of them linked by `on_end` lasts what its parts add
-up to: three ten-second clips end at thirty seconds at 60 fps and at
+piece. A frame is cut at every instant something inside it ends, and at
+every instant a value an eased binding reads changes, so a timeline or a
+clip lasts exactly as long as it says whatever the frame rate is, a
+transition starts where its input moved rather than where the frame
+landed, and a chain of timelines linked by `on_end` lasts what its parts
+add up to: three ten-second clips end at thirty seconds at 60 fps and at
 0.1 fps alike. Frame rate only decides when the host is *told*, since
 `drain_events()` is read once a frame; the show's own clock is already
 right.

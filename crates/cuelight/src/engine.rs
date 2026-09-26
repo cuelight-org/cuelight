@@ -9,7 +9,7 @@ use crate::output::OutputColor;
 use crate::path::{self, PathElement};
 use crate::segments;
 use crate::value::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -632,6 +632,10 @@ pub struct Engine {
     transitions: HashMap<TransitionSite, Change>,
     /// The same, for the one property whose value is a color.
     color_transitions: HashMap<TransitionSite, ColorChange>,
+    /// Values the show animates that a binding eases from, found once at
+    /// load: a frame is cut where one of these changes, so a transition
+    /// starts where its input moved rather than where the frame landed.
+    eased_values: BTreeSet<String>,
     /// Every binding with a debounce, found once at load, and what each
     /// has settled on.
     debounce_sites: Vec<TransitionSite>,
@@ -743,6 +747,7 @@ impl Engine {
             ignored_fields(&raw, &understood, "", &mut self.load_warnings);
         }
         quiet_bindings(&show, &mut self.load_warnings);
+        self.eased_values = eased_values(&show);
         quiet_artwork(&show, &self.vectors, &mut self.load_warnings);
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.reel_sites = reel_sites(&show);
@@ -1684,6 +1689,47 @@ impl Engine {
             let ends = starts + length * plays;
             if ends > self.time + SAME_INSTANT && ends < first {
                 first = ends;
+            }
+        }
+        // And where a value an eased binding reads changes. A value is
+        // an input to the property that follows it, so a frame that
+        // carried the change across its middle would start the
+        // transition where the frame landed instead of where the value
+        // moved, and the same show at the same instant would look
+        // different for having been reached in longer steps.
+        for p in &self.playing {
+            let Owner::Value(name) = &p.owner else {
+                continue;
+            };
+            if p.held || !self.eased_values.contains(name) {
+                continue;
+            }
+            let Some(keys) = show
+                .values
+                .get(name)
+                .and_then(|value| value.timelines.get(p.timeline))
+                .map(|tl| &tl.keys)
+            else {
+                continue;
+            };
+            let Some(tl) = timing_in(show, p) else {
+                continue;
+            };
+            // Every key of the play under way, and of the round after
+            // it: a loop's first key comes round again.
+            let round = tl.duration.max(0.0);
+            let played = (self.time - p.starts).max(0.0);
+            let rounds = match round > 0.0 && (tl.looping || tl.play_time > round) {
+                true => [(played / round).floor(), (played / round).floor() + 1.0],
+                false => [0.0, 0.0],
+            };
+            for turn in rounds {
+                for key in keys {
+                    let at = p.starts + turn * round + key.t;
+                    if at > self.time + SAME_INSTANT && at < first && at <= p.ends(tl) {
+                        first = at;
+                    }
+                }
             }
         }
         first
@@ -4233,6 +4279,34 @@ fn worded(b: &Binding, text: String) -> String {
         (true, true) => text,
         _ => format!("{}{text}{}", b.prefix, b.suffix),
     }
+}
+
+/// The values a show animates that a binding eases from.
+///
+/// A transition follows what its binding reads, so the instant that
+/// input changes is an instant the clock has to stop at. Only values
+/// the show animates need it: a variable is set by the host, which
+/// happens between frames anyway.
+fn eased_values(show: &Show) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    fn walk(show: &Show, layers: &[Layer], out: &mut BTreeSet<String>) {
+        for layer in layers {
+            let eased = layer
+                .bindings
+                .iter()
+                .filter(|binding| binding.transition.is_some());
+            for binding in eased {
+                if show.values.contains_key(&binding.variable) {
+                    out.insert(binding.variable.clone());
+                }
+            }
+            walk(show, layer.children(), out);
+        }
+    }
+    for layers in show.layer_trees() {
+        walk(show, layers, &mut out);
+    }
+    out
 }
 
 /// Where the show's bindings with a transition are, and those with a
