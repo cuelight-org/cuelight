@@ -408,6 +408,16 @@ Layer kinds:
   behind white artwork, one sprite or icon reused in several colors, a
   worn look over a clean texture).
 
+  An image drawn at less than half its pixels is resampled: the renderer
+  keeps reduced copies of it, halved and averaged, and samples the one
+  nearest the size it is drawn at, so a high-contrast edge lands between
+  pixels instead of stepping from one to the next. The copies are built
+  the first time a show shrinks that image that far, cost a third of its
+  memory in total, and an image drawn at its own size, near it, or at an
+  exact fraction of it is untouched. A show drawn on its own pixel grid
+  keeps its pixels: there the colours are the palette, and averaging two
+  neighbouring dots invents one that is not in it.
+
   `sheet` and `frame` are for pixels, since a sheet is a grid of them;
   on vector artwork they are reported at load and do nothing. Older
   shows write `"type": "vector"` with the name in a `vector` field, and

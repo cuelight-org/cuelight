@@ -626,3 +626,91 @@ fn a_glow_lights_the_dark_around_a_segment() {
         "and falls off with distance: {further} at three pixels, {close} at one"
     );
 }
+
+#[test]
+fn an_image_drawn_smaller_than_its_pixels_is_resampled() {
+    // A checkerboard of 32 pixel squares, 512 across, drawn at 150: a
+    // destination pixel covers about three and a half source ones. Its
+    // edges should land between pixels, as they do when the same board
+    // is drawn as paths, rather than snapping to whole ones.
+    let board = |side: u32, square: u32| {
+        let mut pixels = Vec::with_capacity((side * side * 4) as usize);
+        for y in 0..side {
+            for x in 0..side {
+                let v = u8::from(!(x / square + y / square).is_multiple_of(2)) * 255;
+                pixels.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        pixels
+    };
+    let edges = |drawn: u32| {
+        let mut engine = Engine::new();
+        engine.set_image("board", 512, 512, board(512, 32)).unwrap();
+        engine
+            .load_show(&format!(
+                r##"{{ "name": "a", "size": [256, 256], "background": "#808080",
+                  "layers": [{{ "name": "b", "type": "image", "image": "board",
+                     "size": [{drawn}, {drawn}] }}] }}"##
+            ))
+            .unwrap();
+        let frame = render(&engine)?;
+        // Pixels along the middle row that are neither black nor white:
+        // an edge that was resampled rather than stepped.
+        let y = drawn / 2;
+        Some(
+            (0..drawn)
+                .map(|x| pixel(&frame, x, y)[0])
+                .filter(|v| (40..215).contains(v))
+                .count(),
+        )
+    };
+    let Some(resampled) = edges(150) else { return };
+    assert!(resampled > 8, "{resampled} of the row's edges are soft");
+    // At an exact fraction every edge lands on a pixel boundary, and
+    // the picture stays as crisp as it was: reducing past the size it
+    // is drawn at would only blur it.
+    assert_eq!(edges(64), Some(0));
+}
+
+#[test]
+fn a_show_on_a_pixel_grid_keeps_its_own_colours() {
+    // Two dots of a palette, side by side, shrunk. Averaged, they would
+    // make a third colour the show never had; on a pixel grid the
+    // picture keeps the colours it was drawn in.
+    // Stripes of five pixels, blue and red one after the other, drawn
+    // at a third of their size: a reduced copy's pixel then straddles
+    // two of them.
+    let pixels: Vec<u8> = (0..60u32 * 60)
+        .flat_map(|i| match ((i % 60) / 5).is_multiple_of(2) {
+            true => [0, 0, 255, 255],
+            false => [255, 0, 0, 255],
+        })
+        .collect();
+    let show = |grid: &str| {
+        format!(
+            r##"{{ "name": "a", "size": [20, 20], "background": "#000000",{grid}
+              "layers": [{{ "name": "b", "type": "image", "image": "dots",
+                 "size": [20, 20] }}] }}"##
+        )
+    };
+    let colours = |grid: &str| {
+        let mut engine = Engine::new();
+        engine.set_image("dots", 60, 60, pixels.clone()).unwrap();
+        engine.load_show(&show(grid)).unwrap();
+        let frame = render(&engine)?;
+        Some((0..20).map(|x| pixel(&frame, x, 10)).collect::<Vec<_>>())
+    };
+    let Some(smooth) = colours("") else { return };
+    let grid = colours(r#" "output": { "scaling": "pixel_perfect" },"#).expect("an adapter");
+    // Smoothed, the two colours meet in a mixture.
+    assert!(
+        smooth.iter().any(|[r, _, b, _]| *r > 40 && *b > 40),
+        "{smooth:?}"
+    );
+    // On the grid every dot is one of the two, give or take the level
+    // the renderer samples them with.
+    for [r, _, b, _] in &grid {
+        let palette = (*r < 40 && *b > 200) || (*r > 200 && *b < 40);
+        assert!(palette, "{grid:?}");
+    }
+}

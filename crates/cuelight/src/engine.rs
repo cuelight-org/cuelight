@@ -1572,6 +1572,18 @@ impl Engine {
         self.effective_output().scaling.unwrap_or_default()
     }
 
+    /// Whether the frame is made on the canvas's own pixel grid: a gray
+    /// output mode, or pixel-perfect scaling.
+    ///
+    /// What such a show draws is dots, and their colours are its
+    /// palette, so nothing should soften an edge or average two of them
+    /// into a colour that is not in it.
+    pub fn pixel_grid(&self) -> bool {
+        let output = self.effective_output();
+        output.mode.unwrap_or_default() != crate::model::OutputMode::Rgb
+            || output.scaling.unwrap_or_default() == Scaling::PixelPerfect
+    }
+
     fn enter_scene(&mut self, scene: usize) {
         self.playing.retain(|p| p.owner.root() == Root::Show);
         // Leaving a scene stops its sounds.
@@ -3714,13 +3726,8 @@ impl Engine {
                                     .transpose()?;
                                 let masks = segments::masks(*style, &text, cells.0, cells.1);
                                 // Where the frame is made on the canvas's own
-                                // pixel grid (anything but smooth full color,
-                                // see the presenter), segments keep to it.
-                                let output = self.effective_output();
-                                let snap = (output.mode.unwrap_or_default()
-                                    != crate::model::OutputMode::Rgb
-                                    || output.scaling.unwrap_or_default() == Scaling::PixelPerfect)
-                                    && transform == Transform::IDENTITY;
+                                // pixel grid, segments keep to it.
+                                let snap = self.pixel_grid() && transform == Transform::IDENTITY;
                                 let cell_w = width * scale / cells.0.max(1) as f64;
                                 let look = segments::Look {
                                     thickness: thickness.unwrap_or(0.1),
