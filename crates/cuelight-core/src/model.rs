@@ -1858,6 +1858,101 @@ pub struct Binding {
     pub transition: Option<Transition>,
 }
 
+impl Binding {
+    /// A number after the reading's `threshold` or `curve`, then `scale`
+    /// and `offset`: what a numeric property takes from a value.
+    pub fn scaled(&self, n: f64) -> f64 {
+        // Bent against the input before any change of unit, so the curve
+        // is written in whatever the variable counts in.
+        self.reading.bend(n) * self.scale + self.offset
+    }
+
+    /// `text` with the binding's `prefix` and `suffix` round it.
+    pub fn worded(&self, text: String) -> String {
+        match (self.prefix.is_empty(), self.suffix.is_empty()) {
+            (true, true) => text,
+            _ => format!("{}{text}{}", self.prefix, self.suffix),
+        }
+    }
+
+    /// What the property gets for a value the reading produced: a number
+    /// through [`scaled`](Binding::scaled), text through `format` and
+    /// the words, a name as it is. `None` when the property cannot use
+    /// the value, which leaves it as it was: a tint that is not a color,
+    /// a font style `show` does not declare.
+    pub fn convert(&self, value: Value, show: &Show) -> Option<Value> {
+        match self.property {
+            Property::Text => Some(Value::Text(self.worded(match value {
+                Value::Number(n) => self.format.format(self.scaled(n), self.decimals),
+                other => other.to_text(),
+            }))),
+            Property::Visible => Some(Value::Bool(self.scaled(value.as_number()) != 0.0)),
+            // Only real colors apply, as only declared styles do.
+            Property::Tint => match value {
+                Value::Text(color) if color.is_empty() || parse_color(&color).is_some() => {
+                    Some(Value::Text(color))
+                }
+                _ => None,
+            },
+            // Any name will do: a video nobody registered simply has no
+            // frames, as an unregistered image has no pixels.
+            Property::Video | Property::Sound => Some(Value::Text(value.to_text())),
+            // Only declared font styles apply.
+            Property::Font => match value {
+                Value::Text(style) if show.fonts.contains_key(&style) => Some(Value::Text(style)),
+                _ => None,
+            },
+            _ => Some(Value::Number(self.scaled(value.as_number()))),
+        }
+    }
+
+    /// The binding's reading of `value` one stage at a time, with what
+    /// each stage made of it: what an editor shows beside the pipeline.
+    /// The same functions the engine applies, in the same order, so the
+    /// two cannot disagree. `debounce` and `transition` happen over time
+    /// and are not stages of a value; see
+    /// [`Transition::step_response`] for the latter.
+    pub fn stages(&self, value: Value, show: &Show) -> Stages {
+        let mapped = self.reading.mapped(value.clone());
+        // Where the property takes a number, the stages between.
+        let takes_number = match self.property {
+            Property::Text => matches!(mapped, Some(Value::Number(_))),
+            Property::Tint | Property::Video | Property::Sound | Property::Font => false,
+            _ => true,
+        };
+        let bent = mapped
+            .as_ref()
+            .filter(|_| takes_number)
+            .map(|value| self.reading.bend(value.as_number()));
+        let scaled = bent.map(|n| n * self.scale + self.offset);
+        let output = mapped.clone().and_then(|value| self.convert(value, show));
+        Stages {
+            read: value,
+            mapped,
+            bent,
+            scaled,
+            output,
+        }
+    }
+}
+
+/// A binding's reading of one value, stage by stage; see
+/// [`Binding::stages`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stages {
+    /// The value read, before anything.
+    pub read: Value,
+    /// After `map` and `default`. `None` when the map does not list the
+    /// value and there is no default, where the binding stops.
+    pub mapped: Option<Value>,
+    /// After `threshold` or `curve`, where the property takes a number.
+    pub bent: Option<f64>,
+    /// After `scale` and `offset`.
+    pub scaled: Option<f64>,
+    /// What the property gets; `None` when it cannot use the value.
+    pub output: Option<Value>,
+}
+
 /// How a bound property moves when its binding's value changes: from the
 /// value it has now to the new one over `duration` seconds.
 ///
@@ -1943,6 +2038,22 @@ impl Transition {
     pub fn move_time(&self) -> f64 {
         let offset_end = self.offset.last().map_or(0.0, |k| k.t);
         self.duration.max(offset_end)
+    }
+
+    /// The value `elapsed` seconds after the binding's input stepped from
+    /// `from` to `to`, having rested at `from` before: eased there over
+    /// the transition's timing, or for a modelled transition the light
+    /// of a filament driven from one power to the other. What an editor
+    /// draws as the transition's response.
+    pub fn step_response(&self, from: f64, to: f64, elapsed: f64) -> f64 {
+        match self.model {
+            Some(Model::Incandescent) => {
+                let lamp = crate::lamp::Filament::of(self);
+                let start = crate::lamp::settled(lamp, from);
+                crate::lamp::shown(lamp, crate::lamp::temperature(lamp, start, to, elapsed))
+            }
+            None => self.value_at(from, to, elapsed),
+        }
     }
 
     /// The value `elapsed` seconds into a change from `start` to `target`.
@@ -2176,9 +2287,11 @@ pub struct Key {
     pub ease: Easing,
 }
 
-/// Sample `keys` at `time` seconds: the first value before the first key,
-/// the last after the last, eased in between. `None` without keys.
-pub(crate) fn sample_keys(keys: &[Key], time: f64) -> Option<f64> {
+/// Sample `keys` at `time`: the first value before the first key, the
+/// last after the last, eased in between. `None` without keys. A track's
+/// keys at a time, or a `curve`'s at an input: the one function under
+/// both.
+pub fn sample_keys(keys: &[Key], time: f64) -> Option<f64> {
     let first = keys.first()?;
     if time <= first.t {
         return Some(first.v);
