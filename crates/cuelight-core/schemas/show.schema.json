@@ -109,7 +109,7 @@
       "type": "object",
       "properties": {
         "curve": {
-          "description": "Bend the value against the input instead of scaling it straight.\n\nKeys are a track's, with the input value where a track has time,\nand the same easings between them: below the first key it holds\nthe first value, above the last it holds the last. A lamp whose\nglow wants a gamma curve, a tachometer compressed at the low end,\na loudness in decibels rather than a linear gain.\n\nThis shapes value against input; a [`Transition`]'s `ease` shapes\na change over time. A binding can have both, and they do different\nthings.\n\nIt applies after `map` and before `scale` and `offset`, so the\ncurve is written in the variable's own units and `scale` stays the\nlast change of unit. It cannot be combined with `threshold`, which\nis the same job done crudely: a `step` ease says it as a curve.",
+          "description": "Bend the value against the input instead of scaling it straight.\n\nKeys are a track's, with the input value where a track has time,\nand the same easings between them: below the first key it holds\nthe first value, above the last it holds the last. A lamp whose\nglow wants a gamma curve, a tachometer compressed at the low end,\na loudness in decibels rather than a linear gain.\n\nThis shapes value against input; a [`Transition`]'s `ease` shapes\na change over time. A binding can have both, and they do different\nthings.\n\nIt applies after `map` and before `scale` and `offset`, so the\ncurve is written in the variable's own units and `scale` stays the\nlast change of unit. It cannot be combined with `threshold`, which\nis this curve written short.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Key"
@@ -182,7 +182,7 @@
           "type": "string"
         },
         "threshold": {
-          "description": "A level: the value becomes 1 at or above it and 0 below, before\n`scale` and `offset` apply. A lamp that lights when a brightness\npasses a half, a `visible` that follows a level.",
+          "description": "A level: the value becomes 1 at or above it and 0 below, before\n`scale` and `offset` apply. A lamp that lights when a brightness\npasses a half, a `visible` that follows a level.\n\nShorthand for a `curve` of two keys with a `step` ease, and read\nas exactly that curve (see [`Binding::bend`]), which is the rule\nfor any shorthand the format has: it is defined as the longer\nform it stands for, so the two cannot drift apart.",
           "type": [
             "number",
             "null"

@@ -1771,6 +1771,11 @@ pub struct Binding {
     /// A level: the value becomes 1 at or above it and 0 below, before
     /// `scale` and `offset` apply. A lamp that lights when a brightness
     /// passes a half, a `visible` that follows a level.
+    ///
+    /// Shorthand for a `curve` of two keys with a `step` ease, and read
+    /// as exactly that curve (see [`Binding::bend`]), which is the rule
+    /// for any shorthand the format has: it is defined as the longer
+    /// form it stands for, so the two cannot drift apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threshold: Option<f64>,
     /// Seconds a new value has to hold before it reaches the property;
@@ -1794,12 +1799,44 @@ pub struct Binding {
     /// It applies after `map` and before `scale` and `offset`, so the
     /// curve is written in the variable's own units and `scale` stays the
     /// last change of unit. It cannot be combined with `threshold`, which
-    /// is the same job done crudely: a `step` ease says it as a curve.
+    /// is this curve written short.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub curve: Vec<Key>,
     /// Ease toward a new value instead of jumping to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,
+}
+
+impl Binding {
+    /// The curve the binding bends its input through: `curve`, or the
+    /// two keys `threshold` stands for. Empty without either.
+    pub fn curve_in_effect(&self) -> std::borrow::Cow<'_, [Key]> {
+        match self.threshold {
+            // 0 up to the level, 1 from it on. Below its first key a
+            // curve holds that key's value, so where the first key sits
+            // does not matter as long as it is below the level.
+            Some(level) => std::borrow::Cow::Owned(vec![
+                Key {
+                    t: level - 1.0,
+                    v: 0.0,
+                    ease: Easing::Linear,
+                },
+                Key {
+                    t: level,
+                    v: 1.0,
+                    ease: Easing::Step,
+                },
+            ]),
+            None => std::borrow::Cow::Borrowed(&self.curve),
+        }
+    }
+
+    /// `n` bent against the input through
+    /// [`curve_in_effect`](Binding::curve_in_effect); `n` itself without
+    /// a curve.
+    pub fn bend(&self, n: f64) -> f64 {
+        sample_keys(&self.curve_in_effect(), n).unwrap_or(n)
+    }
 }
 
 /// How a bound property moves when its binding's value changes: from the
