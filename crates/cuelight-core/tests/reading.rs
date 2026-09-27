@@ -9,8 +9,8 @@ fn x_of(engine: &Engine, layer: &str) -> f64 {
         .values()
         .unwrap()
         .into_iter()
-        .find(|(name, prop, _)| name == layer && *prop == Property::X)
-        .map(|(_, _, value)| value.as_number())
+        .find(|row| row.name == layer && row.property == Property::X)
+        .map(|row| row.value.as_number())
         .unwrap()
 }
 

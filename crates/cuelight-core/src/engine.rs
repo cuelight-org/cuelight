@@ -122,6 +122,37 @@ pub enum Root {
     Scene(usize),
 }
 
+/// Where a layer is in the document: which tree, and the index of each
+/// step down it. Names need not be unique, so this is what tells two
+/// layers apart, and what maps anything drawn or resolved back to its
+/// place in the document.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LayerPath {
+    pub root: Root,
+    /// Each step an index into the children of the layer before it.
+    pub indices: Vec<usize>,
+}
+
+impl LayerPath {
+    pub fn new(root: Root, indices: impl Into<Vec<usize>>) -> Self {
+        Self {
+            root,
+            indices: indices.into(),
+        }
+    }
+}
+
+/// One row of [`Engine::values`]: what one property of one layer
+/// resolved to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedValue {
+    pub layer: LayerPath,
+    /// The layer's name, for reading; two layers may share one.
+    pub name: String,
+    pub property: Property,
+    pub value: Value,
+}
+
 /// What a playhead's timeline belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Owner {
@@ -1700,9 +1731,9 @@ impl Engine {
     /// produced, so this is what to compare two moments by, and what a
     /// test should assert on.
     ///
-    /// Layers come in draw order, each with its name, and only the
-    /// properties that layer actually has.
-    pub fn values(&self) -> Result<Vec<(String, Property, Value)>, Error> {
+    /// Layers come in draw order, each with its path and name, and only
+    /// the properties that layer actually has.
+    pub fn values(&self) -> Result<Vec<ResolvedValue>, Error> {
         const EVERY: [Property; 15] = [
             Property::X,
             Property::Y,
@@ -1725,13 +1756,18 @@ impl Engine {
             root: Root,
             layers: &[Layer],
             path: &mut Vec<usize>,
-            out: &mut Vec<(String, Property, Value)>,
+            out: &mut Vec<ResolvedValue>,
         ) {
             for (i, layer) in layers.iter().enumerate() {
                 path.push(i);
-                for prop in EVERY {
-                    if let Some(value) = engine.resolve(root, layer, path, prop) {
-                        out.push((layer.name.clone(), prop, value));
+                for property in EVERY {
+                    if let Some(value) = engine.resolve(root, layer, path, property) {
+                        out.push(ResolvedValue {
+                            layer: LayerPath::new(root, path.clone()),
+                            name: layer.name.clone(),
+                            property,
+                            value,
+                        });
                     }
                 }
                 walk(engine, root, layer.children(), path, out);

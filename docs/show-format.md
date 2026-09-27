@@ -1429,7 +1429,10 @@ it, in which case the shape is in its layer's space and the transform
 puts it on the canvas) or the `render` feature's vello rasterizer, plus
 `voices()` for what should be heard (see [Sound](#sound)), and
 `values()` for what every layer's properties resolved to, with no
-geometry built. Everything else, including where variable values and
+geometry built. Both name each layer by its path (the tree it is in and
+the index of each step down it), since names need not be unique, and
+`layers_at([x, y])` lists the layers drawn under a canvas point, topmost
+first, by the test a press uses. Everything else, including where variable values and
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 

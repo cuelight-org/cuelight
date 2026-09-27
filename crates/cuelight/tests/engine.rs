@@ -1579,3 +1579,42 @@ fn audio_draws_nothing() {
     engine.trigger("strike");
     assert!(engine.resolved_layers().unwrap().is_empty());
 }
+
+#[test]
+fn two_layers_of_one_name_are_told_apart_by_their_path() {
+    use cuelight_core::{LayerPath, Root};
+    // A `spot` in the show's layers and one in the scene: the same name,
+    // two places.
+    let show = r##"{ "name": "paths", "size": [8, 8],
+      "layers": [{ "name": "spot", "type": "shape", "shape": { "rect": [0, 0, 2, 2] },
+                   "fill": "#FFFFFF" }],
+      "scenes": [{ "name": "one", "trigger": "one",
+        "layers": [{ "name": "group", "type": "group", "children": [
+          { "name": "spot", "type": "shape", "shape": { "rect": [4, 4, 2, 2] },
+            "fill": "#FFFFFF" } ] }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let drawn: Vec<LayerPath> = engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.name == "spot")
+        .map(|item| item.layer)
+        .collect();
+    assert_eq!(
+        drawn,
+        [
+            LayerPath::new(Root::Show, vec![0]),
+            LayerPath::new(Root::Scene(0), vec![0, 0])
+        ]
+    );
+    // The rows of values() say the same.
+    let rows: Vec<LayerPath> = engine
+        .values()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.name == "spot" && row.property == cuelight_core::Property::X)
+        .map(|row| row.layer)
+        .collect();
+    assert_eq!(rows, drawn);
+}

@@ -52,8 +52,8 @@ mod value;
 
 pub use easing::Easing;
 pub use engine::{
-    frame_key, layer_at, root_layers, row_cells, Engine, Error, Event, Playing, Root, VideoInfo,
-    Voice,
+    frame_key, layer_at, root_layers, row_cells, Engine, Error, Event, LayerPath, Playing,
+    ResolvedValue, Root, VideoInfo, Voice,
 };
 pub use model::{
     parse_color, Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, Duck,

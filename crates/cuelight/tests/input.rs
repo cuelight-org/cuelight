@@ -120,3 +120,34 @@ fn a_press_moves_with_what_it_presses() {
     assert_eq!(engine.press([4.0, 16.0]), None, "it has gone");
     assert_eq!(engine.press([44.0, 16.0]).as_deref(), Some("pull"));
 }
+
+#[test]
+fn the_layers_under_a_point_come_topmost_first() {
+    use cuelight_core::{LayerPath, Root};
+    let engine = engine();
+    // The circle over the rect: both are under its middle, the circle
+    // first. Only the rect beside it, and nothing over the bare canvas
+    // (the blue box is there, but it is a layer too).
+    let layer = |i: usize| LayerPath::new(Root::Show, vec![i]);
+    assert_eq!(engine.layers_at([16.0, 16.0]), [layer(1), layer(0)]);
+    assert_eq!(engine.layers_at([2.0, 2.0]), [layer(0)]);
+    assert_eq!(engine.layers_at([50.0, 16.0]), [layer(2)]);
+    assert!(engine.layers_at([36.0, 16.0]).is_empty(), "the gap");
+}
+
+#[test]
+fn a_layer_clipped_away_is_not_under_the_point() {
+    let show = r##"{ "name": "in", "size": [64, 32], "layers": [
+        { "name": "window", "type": "group", "clip": { "rect": [0, 0, 16, 32] },
+          "children": [
+            { "name": "wide", "type": "shape", "shape": { "rect": [0, 0, 32, 32] },
+              "fill": "#FFFFFF" } ] }
+      ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    assert_eq!(engine.layers_at([8.0, 16.0]).len(), 1);
+    assert!(
+        engine.layers_at([24.0, 16.0]).is_empty(),
+        "outside the window"
+    );
+}

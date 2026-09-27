@@ -12,8 +12,8 @@ use crate::output::OutputColor;
 use crate::segments;
 use cuelight_core::{
     frame_key, parse_color, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill, Gradient,
-    Justify, Layer, LayerKind, Pass, PathElement, Playing, Property, Reel, ReelCells, Root,
-    Scaling, Shape, Sheet, Show, Value, Voice,
+    Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing, Property, Reel, ReelCells,
+    ResolvedValue, Root, Scaling, Shape, Sheet, Show, Value, Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -406,7 +406,7 @@ impl Engine {
     }
 
     /// See [`cuelight_core::Engine::values`].
-    pub fn values(&self) -> Result<Vec<(String, Property, Value)>, Error> {
+    pub fn values(&self) -> Result<Vec<ResolvedValue>, Error> {
         self.core.values()
     }
 
@@ -629,36 +629,31 @@ impl Engine {
     /// nothing pressable, which a host may show as a plain cursor.
     pub fn pressed(&self, at: [f64; 2]) -> Option<String> {
         let drawn = self.drawn().ok()?;
-        let mut clips: Vec<ResolvedShape> = Vec::new();
-        let mut hit = None;
-        for (i, item) in drawn.items.iter().enumerate() {
-            match &item.shape {
-                ResolvedShape::ClipBegin { shape } => {
-                    clips.push((**shape).clone());
-                    continue;
-                }
-                ResolvedShape::ClipEnd => {
-                    clips.pop();
-                    continue;
-                }
-                _ => {}
-            }
-            let Some((_, trigger)) = drawn.pressable.iter().find(|(range, _)| range.contains(&i))
-            else {
-                continue;
-            };
-            let inside = |shape: &ResolvedShape| match item.transform.invert() {
-                // The shape is in its layer's own space when a rotation
-                // or an uneven scale put it there; the point comes back
-                // the same way.
-                Some(back) => covers(shape, back.apply(at)),
-                None => false,
-            };
-            if inside(&item.shape) && clips.iter().all(inside) {
-                hit = Some(trigger.clone());
+        hit_items(&drawn, at).into_iter().rev().find_map(|i| {
+            let (_, trigger) = drawn
+                .pressable
+                .iter()
+                .find(|(range, _)| range.contains(&i))?;
+            Some(trigger.clone())
+        })
+    }
+
+    /// The layers drawn under `at`, topmost first, by the same test a
+    /// press uses: a rect and a circle exact, anything else by its box;
+    /// hidden, clipped-away and covered layers excluded. Empty over
+    /// nothing. An editor selects by clicking with this.
+    pub fn layers_at(&self, at: [f64; 2]) -> Vec<LayerPath> {
+        let Ok(drawn) = self.drawn() else {
+            return Vec::new();
+        };
+        let mut out: Vec<LayerPath> = Vec::new();
+        for i in hit_items(&drawn, at).into_iter().rev() {
+            let layer = &drawn.items[i].layer;
+            if !out.contains(layer) {
+                out.push(layer.clone());
             }
         }
-        hit
+        out
     }
 
     /// Output color handling for the current frame (the active scene's
@@ -862,6 +857,7 @@ impl Engine {
     ) {
         let Placed {
             name,
+            layer,
             origin: [x, y],
             scale,
             opacity,
@@ -886,6 +882,7 @@ impl Engine {
                         gradient: None,
                         overflow,
                         name: name.to_owned(),
+                        layer: layer.clone(),
                         shape: ResolvedShape::Bitmap {
                             x: x + f64::from(ox) * scale + dx,
                             y: y + f64::from(oy) * scale + dy,
@@ -926,6 +923,7 @@ impl Engine {
                         gradient: None,
                         overflow,
                         name: name.to_owned(),
+                        layer: layer.clone(),
                         shape: ResolvedShape::GlyphRun {
                             font: data.clone(),
                             size: em * scale,
@@ -993,6 +991,7 @@ impl Engine {
                         gradient: None,
                         overflow: placed.overflow,
                         name: placed.name.to_owned(),
+                        layer: placed.layer.clone(),
                         shape: ResolvedShape::Path {
                             elements: item
                                 .elements
@@ -1024,6 +1023,7 @@ impl Engine {
                     gradient: None,
                     overflow: placed.overflow,
                     name: placed.name.to_owned(),
+                    layer: placed.layer.clone(),
                     shape: ResolvedShape::Image {
                         image: name.to_owned(),
                         tile: None,
@@ -1133,6 +1133,7 @@ impl Engine {
                 gradient: None,
                 overflow: placed.overflow,
                 name: placed.name.to_owned(),
+                layer: placed.layer.clone(),
                 shape,
                 color: [0; 4],
                 opacity: placed.opacity,
@@ -1191,6 +1192,7 @@ impl Engine {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
             if self.core.is_visible(root, layer, path) {
+                let here = LayerPath::new(root, path.clone());
                 // Where this layer's drawing starts, so a press can be
                 // tested against what it drew rather than against a
                 // second guess at where it went.
@@ -1235,6 +1237,7 @@ impl Engine {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
+                                layer: here.clone(),
                                 shape,
                                 color: [0; 4],
                                 opacity,
@@ -1266,6 +1269,7 @@ impl Engine {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
+                                layer: here.clone(),
                                 shape: ResolvedShape::ClipEnd,
                                 color: [0; 4],
                                 opacity,
@@ -1278,6 +1282,7 @@ impl Engine {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
+                                layer: here.clone(),
                                 shape: ResolvedShape::BlendEnd,
                                 color: [0; 4],
                                 opacity,
@@ -1320,6 +1325,7 @@ impl Engine {
                             gradient,
                             overflow,
                             name: layer.name.clone(),
+                            layer: here.clone(),
                             shape: resolve_shape(shape, x, y, scale, stroke),
                             color,
                             opacity,
@@ -1345,6 +1351,7 @@ impl Engine {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
+                                layer: here.clone(),
                                 shape: ResolvedShape::Image {
                                     image: key,
                                     tile: None,
@@ -1398,6 +1405,7 @@ impl Engine {
                                 &Placed {
                                     overflow,
                                     name: &layer.name,
+                                    layer: &here,
                                     origin: [x, y],
                                     scale,
                                     opacity,
@@ -1441,6 +1449,7 @@ impl Engine {
                                 gradient: None,
                                 overflow,
                                 name: layer.name.clone(),
+                                layer: here.clone(),
                                 shape: ResolvedShape::Image {
                                     image: image.clone(),
                                     source,
@@ -1473,6 +1482,7 @@ impl Engine {
                         let placed = Placed {
                             overflow,
                             name: &layer.name,
+                            layer: &here,
                             origin: [x, y],
                             scale,
                             opacity,
@@ -1515,6 +1525,7 @@ impl Engine {
                                         gradient: None,
                                         overflow,
                                         name: layer.name.clone(),
+                                        layer: here.clone(),
                                         shape,
                                         color,
                                         opacity,
@@ -1655,6 +1666,7 @@ impl Engine {
                         let placed = Placed {
                             overflow,
                             name: &layer.name,
+                            layer: &here,
                             origin: [x, y],
                             scale,
                             opacity,
@@ -1675,6 +1687,37 @@ impl Engine {
         Ok(())
     }
 }
+/// The items of a frame under `at`, in paint order, clips honoured.
+/// Markers cover nothing.
+fn hit_items(drawn: &Drawn, at: [f64; 2]) -> Vec<usize> {
+    let mut clips: Vec<ResolvedShape> = Vec::new();
+    let mut hits = Vec::new();
+    for (i, item) in drawn.items.iter().enumerate() {
+        match &item.shape {
+            ResolvedShape::ClipBegin { shape } => {
+                clips.push((**shape).clone());
+                continue;
+            }
+            ResolvedShape::ClipEnd => {
+                clips.pop();
+                continue;
+            }
+            _ => {}
+        }
+        let inside = |shape: &ResolvedShape| match item.transform.invert() {
+            // The shape is in its layer's own space when a rotation or
+            // an uneven scale put it there; the point comes back the
+            // same way.
+            Some(back) => covers(shape, back.apply(at)),
+            None => false,
+        };
+        if inside(&item.shape) && clips.iter().all(inside) {
+            hits.push(i);
+        }
+    }
+    hits
+}
+
 /// Whether `at` is inside a drawn shape, in the shape's own
 /// coordinates.
 ///
@@ -1801,6 +1844,7 @@ fn push_vector(
                 gradient: None,
                 overflow: placed.overflow,
                 name: placed.name.to_owned(),
+                layer: placed.layer.clone(),
                 shape: ResolvedShape::Path {
                     elements: item
                         .elements
@@ -1845,6 +1889,7 @@ fn push_vector(
         gradient: None,
         overflow: placed.overflow,
         name: placed.name.to_owned(),
+        layer: placed.layer.clone(),
         shape,
         color: [0; 4],
         opacity: placed.opacity,
@@ -1876,6 +1921,7 @@ fn push_vector(
 #[derive(Debug, Clone, Copy)]
 struct Placed<'a> {
     name: &'a str,
+    layer: &'a LayerPath,
     /// Top-left corner on the canvas.
     origin: [f64; 2],
     scale: f64,
@@ -2049,6 +2095,9 @@ fn resolve_shape(
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct ResolvedLayer {
+    /// Where the layer is in the document, which tells two layers of one
+    /// name apart and maps the item back to its place.
+    pub layer: LayerPath,
     pub name: String,
     pub shape: ResolvedShape,
     /// Fill color as RGBA bytes; opaque white for images. With a

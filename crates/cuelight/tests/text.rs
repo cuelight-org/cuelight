@@ -76,8 +76,8 @@ fn shown(engine: &Engine, name: &str) -> String {
         .values()
         .unwrap()
         .into_iter()
-        .find(|(layer, prop, _)| layer == name && *prop == cuelight_core::Property::Text)
-        .map(|(_, _, v)| v.to_text())
+        .find(|row| row.name == name && row.property == cuelight_core::Property::Text)
+        .map(|row| row.value.to_text())
         .unwrap_or_else(|| panic!("no text on layer {name:?}"))
 }
 
