@@ -172,3 +172,29 @@ fn a_transitions_step_response_is_what_the_engine_shows() {
         serde_json::from_str(r#"{ "duration": 2, "ease": "linear" }"#).unwrap();
     assert_eq!(eased.step_response(10.0, 20.0, 0.5), 12.5);
 }
+
+#[test]
+fn a_condition_follows_a_value_the_show_animates_from_the_instant_it_turns() {
+    // No host variable: the condition follows the show's own value, which
+    // crosses the mark at exactly half a second, inside the one frame
+    // taken. The slide it starts is timed from there, not from the
+    // frame's end.
+    let show = r##"{ "name": "t", "size": [8, 8],
+      "values": { "rise": { "timelines": [{ "name": "up", "autoplay": true, "hold": true,
+        "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 1 }] }] } },
+      "layers": [
+        { "name": "lamp", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+          "timelines": [{ "name": "flash", "when": { "variable": "rise", "threshold": 0.5 }, "hold": true,
+            "tracks": [{ "property": "x", "keys": [{ "t": 0, "v": 5 }, { "t": 1, "v": 9 }] }] }] }
+      ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.advance_to(0.25);
+    assert_eq!(x_of(&engine, "lamp"), 0.0);
+    engine.advance_to(0.75);
+    assert!(
+        (x_of(&engine, "lamp") - 6.0).abs() < 1e-5,
+        "{}",
+        x_of(&engine, "lamp")
+    );
+}

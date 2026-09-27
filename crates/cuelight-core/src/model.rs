@@ -1685,10 +1685,8 @@ impl Layer {
 /// to `scale`, `offset` and its `transition`; a condition takes it as
 /// true when it is not 0.
 ///
-/// The name is a host variable, or for a binding failing that a value
-/// the show animates itself (a condition is an edge, and the clock does
-/// not yet stop where a show's own value crosses a mark, so a condition
-/// reads host variables only). Without a value, or with a `map` that
+/// The name is a host variable, or failing that a value the show
+/// animates itself. Without a value of either kind, or with a `map` that
 /// does not list the value and no `default`, the reading has nothing to
 /// say: a binding then leaves its property as it was, a condition is
 /// false.

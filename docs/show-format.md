@@ -1042,14 +1042,10 @@ fields are the same, they sit directly on the reader, and they apply in
 the same order: `debounce`, then `map` (with `default`), then `threshold`
 or `curve`.
 
-- `variable`: the name read. A host variable of that name, or for a
-  binding failing that a [value the show
-  animates](#values-the-show-animates). A condition reads host variables
-  only: it is an edge, and a value the show animates crosses a mark at
-  an instant inside a frame that the clock does not stop at, so the edge
-  would land wherever the frame did. Without a value the reading has
-  nothing to say: a binding leaves its property as it was, a condition
-  is false.
+- `variable`: the name read. A host variable of that name, or failing
+  that a [value the show animates](#values-the-show-animates). Without
+  either the reading has nothing to say: a binding leaves its property
+  as it was, a condition is false.
 - `map` and `default`: look the value up (as text) and use what is found,
   or the default, in its place; with a map that lists nothing and no
   default the reading has nothing to say.
@@ -1470,11 +1466,13 @@ puts the show back exactly where playing left it, and scrubbing past a
 press and back again finds it still there.
 
 `dt` is how much time passed, not how much of the show to play in one
-piece. A frame is cut at every instant something inside it ends, and at
-every instant a value an eased binding reads changes, so a timeline or a
-clip lasts exactly as long as it says whatever the frame rate is, a
+piece. A frame is cut at every instant something inside it ends, at
+every instant a value an eased binding reads changes, and at the instant
+a value the show animates turns a condition, so a timeline or a clip
+lasts exactly as long as it says whatever the frame rate is, a
 transition starts where its input moved rather than where the frame
-landed, and a chain of timelines linked by `on_end` lasts what its parts
+landed, a `when` fires where its value crossed the mark, and a chain of
+timelines linked by `on_end` lasts what its parts
 add up to: three ten-second clips end at thirty seconds at 60 fps and at
 0.1 fps alike. Frame rate only decides when the host is *told*, since
 `drain_events()` is read once a frame; the show's own clock is already

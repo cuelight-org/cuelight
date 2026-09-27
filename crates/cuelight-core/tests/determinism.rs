@@ -342,6 +342,36 @@ fn binding_debounce() {
     );
 }
 
+#[test]
+fn condition_on_a_value_the_show_animates() {
+    // A `when` and a `while` reading a value the show plays itself: the
+    // value crosses their marks between frames at every rate here, with
+    // an ease that does not go straight there, and a looping value takes
+    // the `while` up and down again.
+    let s = r##"{ "format": 1, "name": "t", "size": [100, 100],
+      "values": {
+        "rise": { "timelines": [{ "name": "up", "autoplay": true, "hold": true,
+          "keys": [{ "t": 0, "v": 0 }, { "t": 0.7, "v": 100, "ease": "cubic_in_out" }] }] },
+        "wave": { "timelines": [{ "name": "round", "autoplay": true, "loop": true,
+          "keys": [{ "t": 0, "v": 0 }, { "t": 0.5, "v": 1 }, { "t": 1, "v": 0 }] }] }
+      },
+      "layers": [
+        { "name": "box", "type": "shape", "shape": { "rect": [0,0,4,4] }, "fill": "#FFFFFF",
+          "x": 0, "timelines": [
+            { "name": "go", "when": { "variable": "rise", "threshold": 33 }, "hold": true,
+              "tracks": [{ "property": "x", "keys": [{"t":0,"v":0},{"t":1,"v":50}] }] },
+            { "name": "blink", "while": { "variable": "wave", "threshold": 0.5 }, "loop": true,
+              "tracks": [{ "property": "opacity", "keys": [{"t":0,"v":0},{"t":0.3,"v":1}] }] }
+          ] }
+      ] }"##;
+    same_at_any_rate(
+        "condition on a value",
+        s,
+        &[],
+        &[0.1, 0.3, 0.35, 0.5, 0.7, 0.9, 1.1, 1.3, 1.75, 2.2, 3.0],
+    );
+}
+
 // --- Media ----------------------------------------------------------
 
 /// Sound and video are read through `voices()` and `videos()` rather
