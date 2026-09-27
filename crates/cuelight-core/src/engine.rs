@@ -431,6 +431,10 @@ pub struct Engine {
     /// load: a frame is cut where one of these changes, so a transition
     /// starts where its input moved rather than where the frame landed.
     eased_values: BTreeSet<String>,
+    /// Every timeline condition that reads a value the show animates,
+    /// with the tree it is in, found once at load: a frame is cut where
+    /// one of these turns, for the same reason.
+    value_conditions: Vec<(Root, Reading)>,
     /// Every reading with a debounce, binding or condition, found once
     /// at load, and what each has settled on.
     debounce_sites: Vec<ReadSite>,
@@ -545,6 +549,7 @@ impl Engine {
         }
         quiet_bindings(&show, &mut self.load_warnings);
         self.eased_values = eased_values(&show);
+        self.value_conditions = value_conditions(&show);
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
         self.reel_sites = reel_sites(&show);
         self.show = Some(show);
@@ -622,6 +627,12 @@ impl Engine {
     /// timelines is running: a held one only if nothing else is, as a
     /// layer's properties resolve.
     fn show_value(&self, name: &str) -> Option<f64> {
+        self.show_value_at(name, self.time)
+    }
+
+    /// The number a show value stands at the instant `now`, from the
+    /// timelines playing it as they are.
+    fn show_value_at(&self, name: &str, now: f64) -> Option<f64> {
         let show = self.show.as_ref()?;
         let value = show.values.get(name)?;
         let mut out = None;
@@ -633,7 +644,7 @@ impl Engine {
                 let Some(tl) = value.timelines.get(p.timeline) else {
                     continue;
                 };
-                if let Some(v) = tl.at(p.at(self.time, tl.into())) {
+                if let Some(v) = tl.at(p.at(now, tl.into())) {
                     out = Some(v);
                 }
             }
@@ -1328,35 +1339,113 @@ impl Engine {
             if p.held || !self.eased_values.contains(name) {
                 continue;
             }
-            let Some(keys) = show
+            for at in self.key_instants(show, p) {
+                if at < first {
+                    first = at;
+                }
+            }
+        }
+        // And where a value a condition reads turns it. A condition is
+        // an edge, and a value crosses its mark between keys, so the
+        // instant is searched for: the truth at each key up to the
+        // earliest change found so far, then bisection over the interval
+        // where it differs. Between two keys with an ease that goes
+        // straight there that is the one crossing; an ease that overshoots
+        // can cross and come back inside one interval, and a turn shorter
+        // than the interval is not seen.
+        let showing =
+            |root: Root| root == Root::Show || Some(root) == self.active_scene.map(Root::Scene);
+        for (root, condition) in &self.value_conditions {
+            // A host variable of the name takes the value over and changes
+            // between frames, where the clock already is; a debounced
+            // reading settles at a step of its own.
+            if !showing(*root)
+                || self.variables.contains_key(&condition.variable)
+                || condition.debounce.is_some()
+            {
+                continue;
+            }
+            let Some(p) = self.playing.iter().find(|p| {
+                !p.held && matches!(&p.owner, Owner::Value(v) if *v == condition.variable)
+            }) else {
+                continue;
+            };
+            let was = self.condition_at(condition, self.time);
+            let mut lo = self.time;
+            let mut marks: Vec<f64> = self
+                .key_instants(show, p)
+                .filter(|at| *at < first)
+                .collect();
+            marks.push(first);
+            for mark in marks {
+                if self.condition_at(condition, mark) == was {
+                    lo = mark;
+                    continue;
+                }
+                // Down to adjacent floats, not to the tolerance: the
+                // flip then lands on the same instant whichever frame
+                // the search started from, which is what keeps the
+                // state the same at every rate.
+                let mut hi = mark;
+                loop {
+                    let mid = lo + (hi - lo) / 2.0;
+                    if !(lo < mid && mid < hi) {
+                        break;
+                    }
+                    if self.condition_at(condition, mid) == was {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                if hi > self.time + SAME_INSTANT && hi < first {
+                    first = hi;
+                }
+                break;
+            }
+        }
+        first
+    }
+
+    /// The instants of the keys of the value timeline `p` plays that lie
+    /// ahead of the clock: every key of the play under way and of the
+    /// round after it, since a loop's first key comes round again.
+    fn key_instants<'a>(
+        &'a self,
+        show: &'a Show,
+        p: &'a Playhead,
+    ) -> impl Iterator<Item = f64> + 'a {
+        let keys = match &p.owner {
+            Owner::Value(name) => show
                 .values
                 .get(name)
                 .and_then(|value| value.timelines.get(p.timeline))
-                .map(|tl| &tl.keys)
-            else {
-                continue;
-            };
-            let Some(tl) = timing_in(show, p) else {
-                continue;
-            };
-            // Every key of the play under way, and of the round after
-            // it: a loop's first key comes round again.
+                .map(|tl| tl.keys.as_slice()),
+            Owner::Layer { .. } => None,
+        };
+        let tl = timing_in(show, p);
+        keys.zip(tl).into_iter().flat_map(move |(keys, tl)| {
             let round = tl.duration.max(0.0);
             let played = (self.time - p.starts).max(0.0);
             let rounds = match round > 0.0 && (tl.looping || tl.play_time > round) {
                 true => [(played / round).floor(), (played / round).floor() + 1.0],
                 false => [0.0, 0.0],
             };
-            for turn in rounds {
-                for key in keys {
+            rounds.into_iter().flat_map(move |turn| {
+                keys.iter().filter_map(move |key| {
                     let at = p.starts + turn * round + key.t;
-                    if at > self.time + SAME_INSTANT && at < first && at <= p.ends(tl) {
-                        first = at;
-                    }
-                }
-            }
-        }
-        first
+                    (at > self.time + SAME_INSTANT && at <= p.ends(tl)).then_some(at)
+                })
+            })
+        })
+    }
+
+    /// Whether `condition`, reading a value the show animates, holds at
+    /// the instant `at`.
+    fn condition_at(&self, condition: &Reading, at: f64) -> bool {
+        self.show_value_at(&condition.variable, at)
+            .and_then(|n| condition.mapped(Value::Number(n)))
+            .is_some_and(|value| condition.bend(value.as_number()) != 0.0)
     }
 
     /// One indivisible move of the clock, landing exactly on `to`; see
@@ -2071,7 +2160,7 @@ impl Engine {
             let Some((reading, hold)) = reading.and_then(|r| Some((r, r.debounce?))) else {
                 continue;
             };
-            let Some(value) = self.source(site.2, &reading.variable) else {
+            let Some(value) = self.value(&reading.variable) else {
                 debounced.remove(site);
                 continue;
             };
@@ -2424,25 +2513,10 @@ impl Engine {
     fn read(&self, site: &ReadSite, reading: &Reading) -> Option<Value> {
         let value = match (reading.debounce, self.debounced.get(site)) {
             (Some(_), Some(settling)) => settling.settled.clone(),
-            _ => self.source(site.2, &reading.variable)?,
+            // The show's own value when no host set one.
+            _ => self.value(&reading.variable)?,
         };
         reading.mapped(value)
-    }
-
-    /// What `name` reads as for `reader`, before any of the reading's
-    /// steps: the host's variable, or for a binding the show's own value
-    /// of that name when no host set one.
-    ///
-    /// A condition reads host variables only. It is an edge, and a value
-    /// the show animates crosses a mark at an instant inside a frame that
-    /// the clock does not stop at, so the edge would land wherever the
-    /// frame did; a host's variable changes between frames, where the
-    /// clock already is.
-    fn source(&self, reader: Reader, name: &str) -> Option<Value> {
-        match reader {
-            Reader::Binding(_) => self.value(name),
-            Reader::When(_) | Reader::While(_) => self.variables.get(name).cloned(),
-        }
     }
 
     /// The value a binding at `site` feeds its property; see
@@ -2656,6 +2730,27 @@ fn eased_values(show: &Show) -> BTreeSet<String> {
     }
     for layers in show.layer_trees() {
         walk(show, layers, &mut out);
+    }
+    out
+}
+
+/// The timeline conditions that read a value the show animates, each
+/// with the tree it is in.
+fn value_conditions(show: &Show) -> Vec<(Root, Reading)> {
+    let mut out = Vec::new();
+    for (root, layers) in std::iter::once((Root::Show, show.layers.as_slice())).chain(
+        show.scenes
+            .iter()
+            .enumerate()
+            .map(|(i, scene)| (Root::Scene(i), scene.layers.as_slice())),
+    ) {
+        collect_timelines(layers, &mut Vec::new(), &mut |_, _, tl| {
+            for condition in [&tl.when, &tl.whilst].into_iter().flatten() {
+                if show.values.contains_key(&condition.variable) {
+                    out.push((root, condition.clone()));
+                }
+            }
+        });
     }
     out
 }

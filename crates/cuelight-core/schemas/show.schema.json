@@ -1466,7 +1466,7 @@
       ]
     },
     "Reading": {
-      "description": "A value read from a variable: the one shape everything that reads a\nvariable uses, so a binding, a timeline's `when` and `while`, and\nwhatever reads a variable next take the same fields and read them in\nthe same order.\n\nThe order is `debounce`, then `map` (with `default`), then\n`threshold` or `curve`. What comes out is a value: a binding goes on\nto `scale`, `offset` and its `transition`; a condition takes it as\ntrue when it is not 0.\n\nThe name is a host variable, or for a binding failing that a value\nthe show animates itself (a condition is an edge, and the clock does\nnot yet stop where a show's own value crosses a mark, so a condition\nreads host variables only). Without a value, or with a `map` that\ndoes not list the value and no `default`, the reading has nothing to\nsay: a binding then leaves its property as it was, a condition is\nfalse.",
+      "description": "A value read from a variable: the one shape everything that reads a\nvariable uses, so a binding, a timeline's `when` and `while`, and\nwhatever reads a variable next take the same fields and read them in\nthe same order.\n\nThe order is `debounce`, then `map` (with `default`), then\n`threshold` or `curve`. What comes out is a value: a binding goes on\nto `scale`, `offset` and its `transition`; a condition takes it as\ntrue when it is not 0.\n\nThe name is a host variable, or failing that a value the show\nanimates itself. Without a value of either kind, or with a `map` that\ndoes not list the value and no `default`, the reading has nothing to\nsay: a binding then leaves its property as it was, a condition is\nfalse.",
       "type": "object",
       "properties": {
         "curve": {
