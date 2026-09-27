@@ -10,6 +10,7 @@
 //! player.trigger("go");
 //! player.set("score", 1200);
 //! player.onEvent((event) => console.log(event));
+//! player.onError((message) => alert(message));
 //! ```
 //!
 //! The show folder needs a `manifest.json` (the `cuelight-manifest` tool of
@@ -36,7 +37,11 @@
 //! through later gestures; `true` lets it through again.
 //!
 //! WebGPU only: without it `CuelightPlayer.create` rejects with a message
-//! saying so. The crate is empty on targets other than `wasm32`.
+//! saying so. What goes wrong on the GPU afterwards (a shader that did
+//! not compile, a validation error) stops the frames rather than drawing
+//! black on: it is logged, listed by `player.warnings()` and handed to
+//! `player.onError`, so a page can show it where a phone user can read
+//! it. The crate is empty on targets other than `wasm32`.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -45,6 +50,7 @@ mod audio;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex};
 
 use cuelight::render::Presenter;
 use cuelight::vello;
@@ -156,6 +162,10 @@ struct Inner {
     /// The clock is stopped: frames still paint, nothing advances.
     paused: bool,
     warnings: Vec<String>,
+    /// What the GPU reported since the last frame, from wgpu's
+    /// uncaptured-error handler: it runs outside the frame, so the
+    /// frame loop picks these up and stops.
+    gpu_errors: Arc<Mutex<Vec<String>>>,
     canvas: HtmlCanvasElement,
     context: RenderContext,
     surface: RenderSurface<'static>,
@@ -167,6 +177,7 @@ struct Inner {
     /// tab.
     anchor_ms: Option<f64>,
     on_event: Option<js_sys::Function>,
+    on_error: Option<js_sys::Function>,
     pending_frame: Option<i32>,
     /// The page's sound, when the browser gave us an audio context.
     audio: Option<audio::WebAudio>,
@@ -325,6 +336,9 @@ impl CuelightPlayer {
     /// Fetch the show folder at `url` and start playing it in `canvas`.
     pub async fn create(canvas: HtmlCanvasElement, url: String) -> Result<CuelightPlayer, JsValue> {
         console_error_panic_hook::set_once();
+        // wgpu and vello say what went wrong through `log`; without a
+        // logger that went nowhere.
+        let _ = console_log::init_with_level(log::Level::Warn);
         let gpu = js_sys::Reflect::get(&window()?.navigator(), &"gpu".into())?;
         if gpu.is_undefined() {
             return Err(error(
@@ -390,11 +404,19 @@ impl CuelightPlayer {
             )
             .await
             .map_err(|e| error(format!("no WebGPU surface for the canvas: {e}")))?;
-        let renderer = vello::Renderer::new(
-            &context.devices[surface.dev_id].device,
-            vello::RendererOptions::default(),
-        )
-        .map_err(|e| error(format!("renderer: {e}")))?;
+        let device = &context.devices[surface.dev_id].device;
+        let renderer = vello::Renderer::new(device, vello::RendererOptions::default())
+            .map_err(|e| error(format!("renderer: {e}")))?;
+        // A GPU error is reported between frames, not from a call that
+        // could return it; kept here for the frame loop, and logged at
+        // once in case the loop is already gone.
+        let gpu_errors: Arc<Mutex<Vec<String>>> = Arc::default();
+        let sink = gpu_errors.clone();
+        device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
+            let message = format!("GPU error: {e}");
+            web_sys::console::error_1(&format!("cuelight: {message}").into());
+            sink.lock().unwrap_or_else(|p| p.into_inner()).push(message);
+        }));
 
         let inner = Rc::new(RefCell::new(Inner {
             live: cuelight_loader::Live::default(),
@@ -404,6 +426,7 @@ impl CuelightPlayer {
             driver_playing: loaded.driver.is_some(),
             script: loaded.driver,
             warnings,
+            gpu_errors,
             canvas,
             context,
             surface,
@@ -411,6 +434,7 @@ impl CuelightPlayer {
             presenter: Presenter::new(),
             anchor_ms: None,
             on_event: None,
+            on_error: None,
             pending_frame: None,
             audio,
         }));
@@ -587,9 +611,20 @@ impl CuelightPlayer {
         self.inner.borrow().engine.show().expect("show loaded").size[1]
     }
 
-    /// What loading complained about; also logged to the console.
+    /// What loading complained about, and what stopped the frames since
+    /// (a GPU error, a frame that failed); also logged to the console.
     pub fn warnings(&self) -> Vec<String> {
         self.inner.borrow().warnings.clone()
+    }
+
+    /// Call `callback` with a message when the GPU reports an error or a
+    /// frame fails; the frames stop then, since the next would fail the
+    /// same way, while the page keeps the player to read `warnings()`
+    /// from. `null` stops it. The message is logged to the console
+    /// either way.
+    #[wasm_bindgen(js_name = onError)]
+    pub fn on_error(&self, callback: Option<js_sys::Function>) {
+        self.inner.borrow_mut().on_error = callback;
     }
 
     /// Whether the show folder came with a driver script.
@@ -737,24 +772,41 @@ fn start_frames(inner: &Rc<RefCell<Inner>>) -> Result<Rc<RefCell<Option<FrameCal
         };
         // The borrow ends before any callback runs: a callback may well
         // call back into the player.
-        let (result, on_event) = {
+        let (result, failed, on_event, on_error) = {
             let mut inner = inner.borrow_mut();
             inner.pending_frame = None;
-            (inner.frame(now_ms), inner.on_event.clone())
+            // What the GPU reported since the last frame comes first: a
+            // frame that failed after it failed because of it.
+            let mut failed: Vec<String> =
+                std::mem::take(&mut *inner.gpu_errors.lock().unwrap_or_else(|p| p.into_inner()));
+            let result = inner.frame(now_ms);
+            if let Err(e) = &result {
+                web_sys::console::error_1(&format!("cuelight: {e}").into());
+                failed.push(e.clone());
+            }
+            inner.warnings.extend(failed.iter().cloned());
+            (
+                result,
+                failed,
+                inner.on_event.clone(),
+                inner.on_error.clone(),
+            )
         };
-        match result {
-            Ok(events) => {
-                if let Some(on_event) = on_event {
-                    for event in &events {
-                        let _ = on_event.call1(&JsValue::NULL, &event_to_js(event));
-                    }
+        if let (Ok(events), Some(on_event)) = (&result, on_event) {
+            for event in events {
+                let _ = on_event.call1(&JsValue::NULL, &event_to_js(event));
+            }
+        }
+        // The loop stops: a frame that failed will fail again, and a
+        // canvas drawing black on is what hid the error in the first
+        // place.
+        if !failed.is_empty() {
+            if let Some(on_error) = on_error {
+                for message in &failed {
+                    let _ = on_error.call1(&JsValue::NULL, &JsValue::from_str(message));
                 }
             }
-            // The loop stops: a frame that failed will fail again.
-            Err(e) => {
-                web_sys::console::error_1(&format!("cuelight: {e}").into());
-                return;
-            }
+            return;
         }
         let callback = cell.borrow();
         if let (Some(window), Some(callback)) = (web_sys::window(), callback.as_ref()) {
