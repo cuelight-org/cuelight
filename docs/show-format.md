@@ -1377,6 +1377,14 @@ way they read a variable:
 - `Engine::value(name)` reads either: the host's variable when it set one,
   else the show's value at that moment.
 
+Timelines are the one kind of value so far. Whatever a show comes to
+animate or decide itself next (a timer counting at a rate, a counter
+stepped by triggers, a queue of announcements whose current item is read)
+is another kind of value under `values`, read by the same bindings and
+taken over by a host variable of the same name the same way. The format
+grows by kinds of value, never by a new top-level section per mechanism:
+one place to look for what the show owns, one way to read it.
+
 ## Property precedence
 
 Each frame a property resolves to, strongest first:
