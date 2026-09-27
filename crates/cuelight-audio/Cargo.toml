@@ -9,7 +9,7 @@ keywords = ["multimedia", "audio", "mixer", "player"]
 categories = ["multimedia::audio"]
 
 [dependencies]
-cuelight = { path = "../cuelight", version = "0.0.1", default-features = false }
+cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "ogg", "vorbis", "flac", "mp3"] }
 hound = "3.5"
 cpal = { version = "0.18", optional = true }

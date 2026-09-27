@@ -280,7 +280,7 @@ fn register_named(
     loaded: &mut LoadedFiles,
     #[cfg(feature = "svg")] artwork: &mut Vec<(String, Vec<u8>)>,
 ) -> Result<Vec<String>, LoadError> {
-    let Ok(parsed) = serde_json::from_str::<cuelight::Show>(show) else {
+    let Ok(parsed) = serde_json::from_str::<cuelight_core::Show>(show) else {
         // Not a show at all; loading it will say so properly in a moment.
         return Ok(Vec::new());
     };
@@ -420,14 +420,14 @@ pub(crate) fn safe_path(name: &str) -> Result<&str, String> {
 ///
 /// The document decides what a show needs, which is what lets one sit
 /// beside a folder of a few hundred clips and load the handful it uses.
-pub(crate) fn references(show: &cuelight::Show) -> Vec<(Asset, String)> {
-    use cuelight::{LayerKind, ReelCells};
+pub(crate) fn references(show: &cuelight_core::Show) -> Vec<(Asset, String)> {
+    use cuelight_core::{LayerKind, ReelCells};
     let mut out: Vec<(Asset, String)> = show
         .fonts
         .values()
         .map(|style| (Asset::Font, style.file.clone()))
         .collect();
-    fn walk(layers: &[cuelight::Layer], out: &mut Vec<(Asset, String)>) {
+    fn walk(layers: &[cuelight_core::Layer], out: &mut Vec<(Asset, String)>) {
         for layer in layers {
             match &layer.kind {
                 // One layer kind for artwork, and the file says which
@@ -451,7 +451,7 @@ pub(crate) fn references(show: &cuelight::Show) -> Vec<(Asset, String)> {
                     out.extend(sound.iter().map(|n| (Asset::Sound, n.to_owned())));
                 }
                 LayerKind::Digits {
-                    display: cuelight::DigitDisplay::Reel(reel),
+                    display: cuelight_core::DigitDisplay::Reel(reel),
                     ..
                 } => match &reel.cells {
                     Some(ReelCells::Vectors(names)) => {
@@ -478,7 +478,7 @@ pub(crate) fn references(show: &cuelight::Show) -> Vec<(Asset, String)> {
 ///
 /// Used before anything is read, to decide what to read at all.
 pub(crate) fn named_files(show: &str) -> Vec<(Asset, String, Vec<String>)> {
-    let Ok(parsed) = serde_json::from_str::<cuelight::Show>(show) else {
+    let Ok(parsed) = serde_json::from_str::<cuelight_core::Show>(show) else {
         return Vec::new();
     };
     let mut out: Vec<(Asset, String, Vec<String>)> = Vec::new();

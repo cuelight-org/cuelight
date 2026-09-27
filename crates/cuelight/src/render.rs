@@ -10,9 +10,8 @@
 
 use crate::engine::{Engine, ResolvedShape};
 use crate::lru::ByteLru;
-use crate::model::{parse_color, Blend, DotShape, OutputMode, Pass, Scaling};
 use crate::output::{OutputColor, LUMA_WEIGHTS};
-use crate::path::PathElement;
+use cuelight_core::{parse_color, Blend, DotShape, Error, OutputMode, Pass, PathElement, Scaling};
 use std::collections::HashMap;
 use std::sync::Arc;
 use vello::kurbo::{Affine, BezPath, Circle, Join, Rect, Stroke};
@@ -26,7 +25,7 @@ use vello::wgpu;
 #[non_exhaustive]
 pub enum RenderError {
     #[error("engine error: {0}")]
-    Engine(#[from] crate::engine::Error),
+    Engine(#[from] Error),
     #[error("no suitable GPU adapter found")]
     NoAdapter,
     #[error("wgpu device request failed: {0}")]
@@ -651,7 +650,7 @@ fn bounds(shape: &ResolvedShape) -> Option<Rect> {
             ref elements,
             stroke,
         } => {
-            let [x, y, w, h] = crate::path::bounds(elements)?;
+            let [x, y, w, h] = PathElement::bounds(elements)?;
             let half = stroke.map_or(0.0, |(_, width)| width / 2.0);
             Rect::new(x - half, y - half, x + w + half, y + h + half)
         }
@@ -833,7 +832,7 @@ impl Renderer {
     pub fn render_to_rgba(&mut self, engine: &Engine) -> Result<RgbaFrame, RenderError> {
         let show_meta = engine
             .show()
-            .ok_or(crate::engine::Error::NoShow)
+            .ok_or(Error::NoShow)
             .map_err(RenderError::Engine)?;
         let [width, height] = show_meta.size;
         let base_color = background_color(engine);
@@ -1254,7 +1253,7 @@ impl Presenter {
         renderer: &mut vello::Renderer,
         target: [u32; 2],
     ) -> Result<Presented, RenderError> {
-        let show = engine.show().ok_or(crate::engine::Error::NoShow)?;
+        let show = engine.show().ok_or(Error::NoShow)?;
         let size = show.size;
         let (output, scaling) = (engine.output(), engine.scaling());
         let (x, y, width, height) = fit(size, target, scaling);

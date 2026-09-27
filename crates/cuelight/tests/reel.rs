@@ -265,7 +265,8 @@ fn rejects_a_window_of_nothing() {
 /// A square of vector artwork `size` wide, so its fit into a cell is easy
 /// to read off the draw list.
 fn square(size: f64) -> cuelight::Vector {
-    use cuelight::{PathElement, VectorPath};
+    use cuelight::VectorPath;
+    use cuelight_core::PathElement;
     cuelight::Vector {
         width: size,
         height: size,
@@ -310,7 +311,7 @@ fn cells_can_be_vector_artwork_instead_of_characters() {
         unreachable!()
     };
     let corner = match elements[1] {
-        cuelight::PathElement::LineTo(point) => point,
+        cuelight_core::PathElement::LineTo(point) => point,
         other => panic!("{other:?}"),
     };
     assert!((corner[0] - (20.0 + 10.0)).abs() < 1e-9, "{corner:?}");
@@ -329,8 +330,8 @@ fn artwork_keeps_its_shape_in_the_cell() {
                 height: 10.0,
                 paths: vec![cuelight::VectorPath {
                     elements: vec![
-                        cuelight::PathElement::MoveTo([0.0, 0.0]),
-                        cuelight::PathElement::LineTo([20.0, 10.0]),
+                        cuelight_core::PathElement::MoveTo([0.0, 0.0]),
+                        cuelight_core::PathElement::LineTo([20.0, 10.0]),
                     ],
                     fill: Some([255; 4]),
                     stroke: None,
@@ -350,7 +351,7 @@ fn artwork_keeps_its_shape_in_the_cell() {
         panic!("{:?}", layers[1].shape)
     };
     let (start, end) = match (elements[0], elements[1]) {
-        (cuelight::PathElement::MoveTo(a), cuelight::PathElement::LineTo(b)) => (a, b),
+        (cuelight_core::PathElement::MoveTo(a), cuelight_core::PathElement::LineTo(b)) => (a, b),
         other => panic!("{other:?}"),
     };
     // Half scale across a 10 wide cell, 2.5 down from the cell's top.
@@ -378,15 +379,15 @@ fn rejects_cells_that_do_not_cover_the_ring() {
 #[test]
 fn a_spinning_reel_survives_being_written_back_out() {
     let spinning = r#"{ "font": "cell", "duration": 0.5, "step": null, "turns": 2 }"#;
-    let reel: cuelight::Reel = serde_json::from_str(spinning).unwrap();
+    let reel: cuelight_core::Reel = serde_json::from_str(spinning).unwrap();
     assert_eq!(reel.step, None, "null is one move, not one symbol");
     // A show that is loaded, written back and loaded again still spins:
     // dropping the null would turn it into a stepping wheel.
     let round_trip = serde_json::to_string(&reel).unwrap();
-    let again: cuelight::Reel = serde_json::from_str(&round_trip).unwrap();
+    let again: cuelight_core::Reel = serde_json::from_str(&round_trip).unwrap();
     assert_eq!(again.step, None, "{round_trip}");
     // And an absent step is still one symbol at a time.
-    let stepping: cuelight::Reel =
+    let stepping: cuelight_core::Reel =
         serde_json::from_str(r#"{ "font": "cell", "duration": 0.5 }"#).unwrap();
     assert_eq!(stepping.step, Some(1.0));
 }

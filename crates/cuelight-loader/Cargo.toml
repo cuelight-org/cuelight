@@ -11,6 +11,7 @@ categories = ["multimedia", "rendering"]
 [dependencies]
 clap = { version = "4", features = ["derive"], optional = true }
 cuelight = { path = "../cuelight", version = "0.0.1", default-features = false }
+cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 # Decoding only, for sound lengths: no device is opened, so `live` is off.
 cuelight-audio = { path = "../cuelight-audio", version = "0.0.1", default-features = false, optional = true }
 # Measuring only, for video lengths: reads the header, decodes nothing.
@@ -45,7 +46,7 @@ outline-fonts = ["cuelight/outline-fonts"]
 # The `cuelight-render` tool: frames at chosen times, and what a show
 # fired and when. Pulls in the renderer, and with it wgpu.
 # Generate the JSON Schema for driver files.
-schema = ["dep:schemars", "cuelight/schema"]
+schema = ["dep:schemars", "cuelight-core/schema"]
 render-cli = ["dep:clap", "png", "cuelight/render", "dep:cuelight-audio", "dep:cuelight-video"]
 
 [[bin]]

@@ -4,13 +4,13 @@ A cuelight show is a single JSON document describing everything the engine
 can play: a layer tree, the variables the host may drive, and keyframed
 timelines fired by triggers. The normative, machine-readable definition is
 the generated JSON Schema at
-[`crates/cuelight/schemas/show.schema.json`](../crates/cuelight/schemas/show.schema.json);
+[`crates/cuelight-core/schemas/show.schema.json`](../crates/cuelight-core/schemas/show.schema.json);
 this page explains the concepts the schema cannot.
 
 Point your editor at the schema for autocomplete and validation:
 
 ```json
-{ "$schema": "../../schemas/show.schema.json", "name": "my_show", ... }
+{ "$schema": "../../../cuelight-core/schemas/show.schema.json", "name": "my_show", ... }
 ```
 
 ## Format version
@@ -1371,6 +1371,16 @@ than to the base when it ends.
 
 ## Host contract
 
+The engine comes in two crates. `cuelight-core` is the model: the show
+document, the state a show is in, and the clock that moves it, with
+nothing drawn; `cuelight` wraps that engine with the assets a frame needs
+(images, fonts, vector artwork), builds the draw list and, with the
+`render` feature, rasterizes it. Hosts hold a `cuelight::Engine`; the
+core calls below are the same on both, and `core()` / `core_mut()` hand
+the core out to anything that only needs the model, such as a driver
+script or a seek. Loading a show goes through the `cuelight` engine,
+which is where a font style is checked against the font it names.
+
 The engine is driven exclusively through four calls: `load_show` (JSON in),
 `set_variable`, `trigger`, and moving the clock. `key` and `press` are
 the same door: they look up what the show says the key or the point
@@ -1418,7 +1428,7 @@ takes it directly.
 
 A host that lets a show be played with records what it fired and when,
 in a `cuelight_loader::Live`, and hands that to `seek` along with the
-driver script. Seeking is replaying, so an input that was not recorded
+driver script and the engine's core (`engine.core_mut()`). Seeking is replaying, so an input that was not recorded
 is an input the show loses the moment anyone scrubs; recorded, a scrub
 puts the show back exactly where playing left it, and scrubbing past a
 press and back again finds it still there.

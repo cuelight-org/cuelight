@@ -1,6 +1,7 @@
 //! Video layers: a playhead the host decodes for, and the frame it draws.
 
-use cuelight::{Engine, Event, ResolvedShape};
+use cuelight::{Engine, ResolvedShape};
+use cuelight_core::Event;
 
 fn show(layers: &str) -> String {
     format!(r#"{{ "name": "video", "size": [64, 32], "layers": [{layers}] }}"#)

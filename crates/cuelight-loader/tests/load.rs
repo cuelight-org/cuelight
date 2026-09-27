@@ -62,12 +62,12 @@ fn driver_applies_steps_as_time_passes() {
     let mut engine = Engine::new();
     load(&mut engine, shows().join("minigolf.json")).unwrap();
     let mut player = DriverPlayer::new(driver);
-    let applied = player.advance(&mut engine, 0.25);
+    let applied = player.advance(engine.core_mut(), 0.25);
     assert!(matches!(applied.as_slice(), [Step::Set { .. }]));
     assert_eq!(engine.variable("score").unwrap().as_number(), 5.0);
-    assert!(player.advance(&mut engine, 0.5).is_empty());
+    assert!(player.advance(engine.core_mut(), 0.5).is_empty());
     // crossing the 1.0s wait fires the trigger
-    let applied = player.advance(&mut engine, 0.5);
+    let applied = player.advance(engine.core_mut(), 0.5);
     assert_eq!(
         applied,
         [Step::Trigger {
@@ -75,7 +75,7 @@ fn driver_applies_steps_as_time_passes() {
         }]
     );
     // and after the last wait the script starts over
-    let applied = player.advance(&mut engine, 0.5);
+    let applied = player.advance(engine.core_mut(), 0.5);
     assert!(matches!(applied.as_slice(), [Step::Set { .. }]));
     assert!(!player.is_done());
 }
@@ -85,7 +85,7 @@ fn a_looping_driver_without_waits_stops_instead_of_spinning() {
     let driver = Driver::from_json(r#"{ "loop": true, "steps": [{ "trigger": "go" }] }"#).unwrap();
     let mut engine = Engine::new();
     let mut player = DriverPlayer::new(driver);
-    assert_eq!(player.advance(&mut engine, 1.0).len(), 2);
+    assert_eq!(player.advance(engine.core_mut(), 1.0).len(), 2);
     assert!(player.is_done());
 }
 
@@ -320,7 +320,8 @@ fn a_font_a_show_does_not_ship_is_reported() {
 #[cfg(feature = "svg")]
 #[test]
 fn converts_an_svg_into_vector_artwork() {
-    use cuelight::{PathElement, ResolvedShape};
+    use cuelight::ResolvedShape;
+    use cuelight_core::PathElement;
     let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10">
         <g transform="translate(2 0)">
           <rect x="0" y="0" width="4" height="10" fill="#ff0000"/>
@@ -640,7 +641,7 @@ fn seeking_lands_where_playing_there_would_have() {
     // where playing there would have.
     let mut sought = Engine::new();
     sought.load_show(show).unwrap();
-    cuelight_loader::seek(&mut sought, None, &Live::default(), 2.0, 60.0);
+    cuelight_loader::seek(sought.core_mut(), None, &Live::default(), 2.0, 60.0);
     assert!(
         (at(&sought) - at(&played)).abs() < 1e-9,
         "{} vs {}",
@@ -651,7 +652,7 @@ fn seeking_lands_where_playing_there_would_have() {
     for _ in 0..120 {
         sought.advance_frame(1.0 / 60.0);
     }
-    cuelight_loader::seek(&mut sought, None, &Live::default(), 2.0, 60.0);
+    cuelight_loader::seek(sought.core_mut(), None, &Live::default(), 2.0, 60.0);
     assert!(
         (at(&sought) - at(&played)).abs() < 1e-9,
         "going back is the same place"
@@ -674,7 +675,7 @@ fn seeking_replays_the_driver_on_the_way() {
     engine.load_show(show).unwrap();
 
     cuelight_loader::seek(
-        &mut engine,
+        engine.core_mut(),
         Some(driver.clone()),
         &Live::default(),
         0.5,
@@ -682,10 +683,10 @@ fn seeking_replays_the_driver_on_the_way() {
     );
     assert_eq!(
         engine.variable("score"),
-        Some(&cuelight::Value::Number(10.0))
+        Some(&cuelight_core::Value::Number(10.0))
     );
     cuelight_loader::seek(
-        &mut engine,
+        engine.core_mut(),
         Some(driver.clone()),
         &Live::default(),
         1.5,
@@ -693,13 +694,13 @@ fn seeking_replays_the_driver_on_the_way() {
     );
     assert_eq!(
         engine.variable("score"),
-        Some(&cuelight::Value::Number(20.0))
+        Some(&cuelight_core::Value::Number(20.0))
     );
     // And back: the driver is replayed from the top, not rewound.
-    cuelight_loader::seek(&mut engine, Some(driver), &Live::default(), 0.5, 60.0);
+    cuelight_loader::seek(engine.core_mut(), Some(driver), &Live::default(), 0.5, 60.0);
     assert_eq!(
         engine.variable("score"),
-        Some(&cuelight::Value::Number(10.0))
+        Some(&cuelight_core::Value::Number(10.0))
     );
 }
 
@@ -737,7 +738,7 @@ fn seeking_replays_what_a_host_did_to_the_show() {
 
     // Sought to the same moment, from cold: the key is replayed on the
     // way and the show is where it was.
-    cuelight_loader::seek(&mut engine, None, &live, 1.0, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0, 60.0);
     assert!(
         (at(&engine) - played).abs() < 1e-9,
         "{} vs {played}",
@@ -745,17 +746,17 @@ fn seeking_replays_what_a_host_did_to_the_show() {
     );
 
     // Before the key: the show has not been told anything yet.
-    cuelight_loader::seek(&mut engine, None, &live, 0.25, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 0.25, 60.0);
     assert_eq!(at(&engine), 0.0);
 
     // And past it again, without playing through: still there, since
     // scrubbing does not forget what the host did.
-    cuelight_loader::seek(&mut engine, None, &live, 1.0, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0, 60.0);
     assert!((at(&engine) - played).abs() < 1e-9);
 
     // Until it is told to.
     live.forget_from(0.4);
-    cuelight_loader::seek(&mut engine, None, &live, 1.0, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0, 60.0);
     assert_eq!(at(&engine), 0.0);
 }
 

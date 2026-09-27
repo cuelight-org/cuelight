@@ -10,6 +10,7 @@ categories = ["multimedia", "command-line-utilities"]
 
 [dependencies]
 cuelight = { path = "../cuelight", version = "0.0.1" }
+cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 cuelight-loader = { path = "../cuelight-loader", version = "0.0.1" }
 cuelight-audio = { path = "../cuelight-audio", version = "0.0.1" }
 cuelight-video = { path = "../cuelight-video", version = "0.0.1", optional = true }

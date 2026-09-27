@@ -2,7 +2,7 @@ use crate::mixer::Mixer;
 use crate::sound::Sound;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
-use cuelight::Voice;
+use cuelight_core::Voice;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -24,7 +24,7 @@ enum Command {
 /// halves of that are deliberate.
 ///
 /// Whether to open it at all is the host's call, not this type's: a host
-/// asks [`Show::has_sound`](cuelight::Show::has_sound) and does not build
+/// asks [`Show::has_sound`](cuelight_core::Show::has_sound) and does not build
 /// an `Output` for a show that cannot make a sound, so such a show is
 /// never listed by a desktop as an application making one.
 ///

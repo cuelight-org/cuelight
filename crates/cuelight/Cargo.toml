@@ -9,17 +9,16 @@ keywords = ["multimedia", "scene-graph", "animation", "compositor", "embeddable"
 categories = ["multimedia", "rendering", "graphics"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 thiserror = "2"
 
 vello = { version = "0.10", optional = true }
 pollster = { version = "1.0", optional = true }
 png = { version = "0.18", optional = true }
-schemars = { version = "1", optional = true }
 skrifa = { version = "0.44", optional = true }
 
 [dev-dependencies]
+serde_json = "1"
 # examples only: windowed demos
 winit = "0.30"
 ctrlc = "3"
@@ -34,8 +33,6 @@ render = ["dep:vello", "dep:pollster", "dep:png"]
 # placement in the engine. Off by default so a bitmap-font-only embed stays
 # lean; the renderer draws the resulting glyph runs either way.
 outline-fonts = ["dep:skrifa"]
-# JSON Schema generation for the show format (see schemas/)
-schema = ["dep:schemars"]
 
 [[example]]
 name = "render_to_images"

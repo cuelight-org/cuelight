@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/show.schema.json",
+  "$schema": "../../../cuelight-core/schemas/show.schema.json",
   "format": 1,
   "name": "minigolf",
   "size": [512, 128],

@@ -538,7 +538,7 @@ fn a_lamp_in_a_scene_comes_back_cold() {
             .values()
             .unwrap()
             .into_iter()
-            .find(|(n, p, _)| n == "bulb" && *p == cuelight::Property::Opacity)
+            .find(|(n, p, _)| n == "bulb" && *p == cuelight_core::Property::Opacity)
             .map(|(_, _, v)| v.as_number())
             .unwrap_or(0.0)
     };

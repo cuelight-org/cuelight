@@ -5,7 +5,7 @@
 
 #![cfg(feature = "schema")]
 
-use cuelight::Show;
+use cuelight_core::Show;
 
 const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schemas/show.schema.json");
 
@@ -30,7 +30,11 @@ fn checked_in_schema_matches_model() {
 
 #[test]
 fn example_shows_validate_as_shows() {
-    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/shows")).unwrap()
+    for entry in std::fs::read_dir(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../cuelight/examples/shows"
+    ))
+    .unwrap()
     {
         let mut path = entry.unwrap().path();
         // A directory is a show folder: its document is show.json inside.

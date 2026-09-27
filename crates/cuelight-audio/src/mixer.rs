@@ -1,5 +1,5 @@
 use crate::sound::Sound;
-use cuelight::Voice;
+use cuelight_core::Voice;
 use std::collections::HashMap;
 use std::sync::Arc;
 

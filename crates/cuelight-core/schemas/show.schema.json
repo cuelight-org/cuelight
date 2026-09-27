@@ -510,7 +510,7 @@
           "default": "#FFFFFF"
         },
         "file": {
-          "description": "Name of the font as registered by the host, by convention the font\nfile's stem: a bitmap font ([`Engine::set_font`](crate::Engine::set_font))\nor an outline font (`Engine::set_outline_font`). Which kind it is\ndecides how the text is drawn; the layers using the style do not\nchange.",
+          "description": "Name of the font as registered by the host, by convention the font\nfile's stem: a bitmap font (the `cuelight` crate's `set_font`) or\nan outline font (its `set_outline_font`). Which kind it is\ndecides how the text is drawn; the layers using the style do not\nchange.",
           "type": "string"
         },
         "shadow": {
@@ -877,7 +877,7 @@
           ]
         },
         {
-          "description": "Artwork the host registered under `image`: pixels through\n[`Engine::set_image`](crate::Engine::set_image), or vector artwork\nthrough [`Engine::set_vector`](crate::Engine::set_vector), which\nthe loader does for every `assets/*.svg`. Drawn with its top-left\ncorner at the layer's x/y unless the layer has an `anchor`; what\nis not registered yet is skipped.\n\nOne layer kind for both, since the asset says how to draw itself\nand everything else about a layer of artwork is the same. `type`\nand the name may still be written as `vector`, which older shows\ndo; `sheet` and `frame` are for pixels, and say so at load on\nvector artwork.",
+          "description": "Artwork the host registered under `image` with the `cuelight`\ncrate: pixels through its `set_image`, or vector artwork through\nits `set_vector`, which the loader does for every `assets/*.svg`.\nDrawn with its top-left corner at the layer's x/y unless the layer\nhas an `anchor`; what is not registered yet is skipped.\n\nOne layer kind for both, since the asset says how to draw itself\nand everything else about a layer of artwork is the same. `type`\nand the name may still be written as `vector`, which older shows\ndo; `sheet` and `frame` are for pixels, and say so at load on\nvector artwork.",
           "type": "object",
           "properties": {
             "frame": {

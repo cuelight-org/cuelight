@@ -544,12 +544,11 @@ version = "0.0.1"
 dependencies = [
  "cpal",
  "ctrlc",
+ "cuelight-core",
  "env_logger",
  "log",
  "png",
  "pollster",
- "schemars",
- "serde",
  "serde_json",
  "skrifa",
  "thiserror 2.0.21",
@@ -562,10 +561,20 @@ name = "cuelight-audio"
 version = "0.0.1"
 dependencies = [
  "cpal",
- "cuelight",
+ "cuelight-core",
  "hound",
  "log",
  "symphonia",
+]
+
+[[package]]
+name = "cuelight-core"
+version = "0.0.1"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -575,6 +584,7 @@ dependencies = [
  "clap",
  "cuelight",
  "cuelight-audio",
+ "cuelight-core",
  "cuelight-video",
  "png",
  "schemars",
@@ -593,6 +603,7 @@ dependencies = [
  "ctrlc",
  "cuelight",
  "cuelight-audio",
+ "cuelight-core",
  "cuelight-loader",
  "cuelight-video",
  "env_logger",
@@ -614,6 +625,7 @@ version = "0.0.1"
 dependencies = [
  "console_error_panic_hook",
  "cuelight",
+ "cuelight-core",
  "cuelight-loader",
  "futures-util",
  "js-sys",

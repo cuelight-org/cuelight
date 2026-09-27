@@ -1,6 +1,6 @@
 //! Audio layers as pure data: plays, positions, gains and ends, no device.
 
-use cuelight::{Engine, Event, Voice};
+use cuelight_core::{Engine, Event, Voice};
 
 fn show(layers: &str) -> String {
     format!(
@@ -61,12 +61,6 @@ fn stop_trigger_ends_the_play_without_on_end() {
     assert!(voices(&engine).is_empty());
     engine.advance_frame(5.0);
     assert!(engine.drain_events().is_empty());
-}
-
-#[test]
-fn audio_draws_nothing() {
-    let engine = engine(THUNDER);
-    assert!(engine.resolved_layers().unwrap().is_empty());
 }
 
 #[test]

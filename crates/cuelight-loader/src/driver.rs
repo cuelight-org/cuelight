@@ -13,7 +13,7 @@
 //! ```
 
 use crate::LoadError;
-use cuelight::{Engine, Value};
+use cuelight_core::{Engine, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 

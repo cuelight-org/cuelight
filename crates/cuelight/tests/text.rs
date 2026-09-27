@@ -1,6 +1,7 @@
 //! Text layers: bitmap font registration, layout, text bindings.
 
-use cuelight::{BitmapFont, Engine, NumberFormat, ResolvedShape};
+use cuelight::{BitmapFont, Engine, ResolvedShape};
+use cuelight_core::NumberFormat;
 
 // A 3-pixel-wide font: every digit and ',' is a 2x3 block, advance 3.
 const FNT: &str = r#"info face="Blocks" size=3
@@ -75,7 +76,7 @@ fn shown(engine: &Engine, name: &str) -> String {
         .values()
         .unwrap()
         .into_iter()
-        .find(|(layer, prop, _)| layer == name && *prop == cuelight::Property::Text)
+        .find(|(layer, prop, _)| layer == name && *prop == cuelight_core::Property::Text)
         .map(|(_, _, v)| v.to_text())
         .unwrap_or_else(|| panic!("no text on layer {name:?}"))
 }

@@ -2,7 +2,7 @@
 //! onto buffer sources and gain nodes, which already run on the browser's
 //! own audio thread, so there is nothing to mix here.
 
-use cuelight::Voice;
+use cuelight_core::Voice;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;

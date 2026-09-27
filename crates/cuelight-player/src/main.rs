@@ -53,8 +53,9 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use cuelight::render::Presenter;
 use cuelight::vello;
-use cuelight::{Engine, Layer, LayerKind, Value};
+use cuelight::Engine;
 use cuelight_audio::{Output, Sound};
+use cuelight_core::{Layer, LayerKind, Value};
 use cuelight_loader::{Driver, DriverPlayer, Step};
 #[cfg(feature = "video")]
 use cuelight_video::{Clip, Decode};
@@ -495,8 +496,13 @@ impl App {
     fn scrub(&mut self, by: f64) {
         let to = (self.engine.time() + by).max(0.0);
         self.paused = true;
-        self.driver =
-            cuelight_loader::seek(&mut self.engine, self.script.clone(), &self.live, to, 60.0);
+        self.driver = cuelight_loader::seek(
+            self.engine.core_mut(),
+            self.script.clone(),
+            &self.live,
+            to,
+            60.0,
+        );
         // Here rather than at the next frame: the show has been moved,
         // and the clock starting again before then would read it from
         // an anchor that belongs to where it was.
@@ -510,7 +516,7 @@ impl App {
             return;
         };
         let was_done = driver.is_done();
-        for step in driver.advance(&mut self.engine, dt) {
+        for step in driver.advance(self.engine.core_mut(), dt) {
             match step {
                 Step::Trigger { trigger } => log::info!("driver fires action {trigger:?}"),
                 Step::Set { set } => {
@@ -1167,7 +1173,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if cli.no_audio || audio.is_some() {
             return;
         }
-        if !anyway && !engine.show().is_some_and(cuelight::Show::has_sound) {
+        if !anyway && !engine.show().is_some_and(cuelight_core::Show::has_sound) {
             log::debug!("no audio layers in this show; not looking for a sound device");
             return;
         }

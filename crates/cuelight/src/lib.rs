@@ -3,7 +3,9 @@
 //! Shows are trees of typed layers whose properties are driven by three
 //! kinds of input: **variables** (named values pushed by the host),
 //! **triggers** (named events fired by the host) and **timelines**
-//! (keyframed property animation described as data).
+//! (keyframed property animation described as data). The show document
+//! and the clock that plays it are the [`cuelight_core`] crate; this
+//! crate is that engine with the assets a frame needs, and the frame.
 //!
 //! The core contract is four calls:
 //!
@@ -22,38 +24,41 @@
 //! samples). [`Engine::drain_events`] hands back what the show itself
 //! fired.
 //!
-//! Everything else belongs to hosts and adapters, not this crate.
+//! # What belongs here
+//!
+//! Anything that needs an asset to answer: images, bitmap and outline
+//! fonts and vector artwork ([`Engine::set_image`], [`Engine::set_font`],
+//! [`Engine::set_vector`]), text layout and rasterization, the geometry
+//! of the draw list (shapes, paths, segment displays, reels, transforms),
+//! hit testing a press against that list ([`Engine::press`]), output
+//! colour handling ([`OutputColor`]) and the renderer.
+//!
+//! # What does not
+//!
+//! Anything that decides what the show is doing: that is
+//! [`cuelight_core`], and this crate only reads its answers. Everything
+//! further out (files, decoding, sound devices, windows) belongs to hosts
+//! and adapters: the loader, `cuelight-audio`, `cuelight-video` and the
+//! players.
+//!
+//! Types the show is written in (`Show`, `Layer`, `Value`, `Property`,
+//! ...) and what the core reports (`Event`, `Voice`, `Playing`) are
+//! [`cuelight_core`]'s and are used from there; nothing is re-exported.
 
-mod easing;
 mod engine;
 mod font;
-mod lamp;
 mod lru;
-mod model;
 #[cfg(feature = "outline-fonts")]
 mod outline;
 mod output;
-mod path;
 mod segments;
-mod value;
 
-pub use easing::Easing;
 pub use engine::{
-    Engine, Error, Event, FontData, ImageData, PlacedGlyph, Playing, ResolvedGradient,
-    ResolvedGradientKind, ResolvedLayer, ResolvedShape, Tiled, Transform, Vector, VectorPath,
-    VideoInfo, Voice,
+    AssetError, Engine, FontData, ImageData, PlacedGlyph, ResolvedGradient, ResolvedGradientKind,
+    ResolvedLayer, ResolvedShape, Tiled, Transform, Vector, VectorPath,
 };
 pub use font::BitmapFont;
-pub use model::{
-    Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, Duck, Fill, FontStyle,
-    Glow, Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind, Model, NumberFormat, Output,
-    OutputMode, Pass, Property, Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow,
-    Shape, Sheet, Show, Stroke, Tile, Timeline, Track, Transition, Triggers, When, FORMAT,
-    MAIN_BUS,
-};
 pub use output::{OutputColor, LUMA_WEIGHTS};
-pub use path::{PathData, PathElement};
-pub use value::Value;
 
 #[cfg(feature = "render")]
 pub mod render;

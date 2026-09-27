@@ -103,8 +103,8 @@ fn inputs(cli: &Cli) -> Result<Vec<Input>, String> {
             .split_once('=')
             .ok_or_else(|| format!("{arg:?} needs a value, as in 0:score=1500"))?;
         let value = match value.parse::<f64>() {
-            Ok(number) => cuelight::Value::Number(number),
-            Err(_) => cuelight::Value::Text(value.to_owned()),
+            Ok(number) => cuelight_core::Value::Number(number),
+            Err(_) => cuelight_core::Value::Text(value.to_owned()),
         };
         out.push(Input {
             at,
@@ -389,7 +389,7 @@ fn run(cli: &Cli) -> Result<(), Stop> {
             break;
         }
         if let Some(driver) = &mut driver {
-            for played in driver.advance(&mut engine, step) {
+            for played in driver.advance(engine.core_mut(), step) {
                 if cli.events {
                     say(&format!("{time:8.3}  driver {played:?}"))?;
                 }
@@ -495,12 +495,12 @@ mod tests {
         assert_eq!(times, [0.0, 1.0, 2.5]);
         // A number stays a number and anything else is text.
         match &inputs[0].what {
-            Step::Set { set } => assert_eq!(set["score"], cuelight::Value::Number(1500.0)),
+            Step::Set { set } => assert_eq!(set["score"], cuelight_core::Value::Number(1500.0)),
             other => panic!("{other:?}"),
         }
         match &inputs[1].what {
             Step::Set { set } => {
-                assert_eq!(set["mode"], cuelight::Value::Text("multiball".into()));
+                assert_eq!(set["mode"], cuelight_core::Value::Text("multiball".into()));
             }
             other => panic!("{other:?}"),
         }

@@ -1,7 +1,7 @@
 //! Segment display geometry: which segments light up for a character and
 //! where each segment sits in a digit cell.
 
-use crate::model::{Justify, SegmentStyle};
+use cuelight_core::{Justify, SegmentStyle};
 
 /// 14-segment character masks, one bit per segment:
 /// 0 a (top), 1 b (upper right), 2 c (lower right), 3 d (bottom),
