@@ -8,7 +8,7 @@
 
 use crate::model::{
     parse_color, Binding, Choice, DigitDisplay, Justify, Layer, LayerKind, MediaKind, Output, Pass,
-    Pick, Property, Retrigger, Scaling, Show, Timeline, Triggers, ValueTimeline, FORMAT,
+    Pick, Property, Reading, Retrigger, Scaling, Show, Timeline, Triggers, ValueTimeline, FORMAT,
 };
 use crate::value::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -32,9 +32,23 @@ pub enum Error {
     InvalidVideo(String),
 }
 
-/// A binding with a transition or a debounce: layer tree, layer path,
-/// binding index.
+/// A binding with a transition: layer tree, layer path, binding index.
 type TransitionSite = (Root, Vec<usize>, usize);
+
+/// Where a variable is read: layer tree, layer path, and which of the
+/// layer's readers.
+type ReadSite = (Root, Vec<usize>, Reader);
+
+/// One of the places on a layer that reads a variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Reader {
+    /// The binding at this index.
+    Binding(usize),
+    /// The `when` of the timeline at this index.
+    When(usize),
+    /// The `while` of the timeline at this index.
+    While(usize),
+}
 
 /// A debounced binding's input: the value that reached the property, and
 /// the newer one waiting to have held long enough.
@@ -417,10 +431,10 @@ pub struct Engine {
     /// load: a frame is cut where one of these changes, so a transition
     /// starts where its input moved rather than where the frame landed.
     eased_values: BTreeSet<String>,
-    /// Every binding with a debounce, found once at load, and what each
-    /// has settled on.
-    debounce_sites: Vec<TransitionSite>,
-    debounced: HashMap<TransitionSite, Settling>,
+    /// Every reading with a debounce, binding or condition, found once
+    /// at load, and what each has settled on.
+    debounce_sites: Vec<ReadSite>,
+    debounced: HashMap<ReadSite, Settling>,
     /// Where each ducking layer's level is: whether its bus was sounding
     /// at the last step and when that last changed, so a ramp knows where
     /// it started.
@@ -1893,8 +1907,12 @@ impl Engine {
             type Conditioned = (Vec<usize>, usize, Option<bool>, Option<bool>);
             let mut found: Vec<Conditioned> = Vec::new();
             collect_timelines(layers, &mut Vec::new(), &mut |path, idx, tl| {
-                let when = tl.when.as_ref().map(|w| self.holds(w));
-                let whilst = tl.whilst.as_ref().map(|w| self.holds(w));
+                let holds = |reader, condition: &Option<Reading>| {
+                    let condition = condition.as_ref()?;
+                    Some(self.holds(&(root, path.to_vec(), reader), condition))
+                };
+                let when = holds(Reader::When(idx), &tl.when);
+                let whilst = holds(Reader::While(idx), &tl.whilst);
                 if when.is_some() || whilst.is_some() {
                     found.push((path.to_vec(), idx, when, whilst));
                 }
@@ -1951,21 +1969,13 @@ impl Engine {
         }
     }
 
-    /// Whether a condition reads as true right now.
-    fn holds(&self, when: &crate::model::When) -> bool {
-        let Some(value) = self.variables.get(&when.variable) else {
-            return false;
-        };
-        let value = match &when.map {
-            None => value.clone(),
-            Some(map) => match map.get(&value.to_text()).or(when.default.as_ref()) {
-                Some(mapped) => mapped.clone(),
-                None => return false,
-            },
-        };
-        match when.threshold {
-            Some(level) => value.as_number() >= level,
-            None => value.as_number() != 0.0,
+    /// Whether the condition at `site` reads as true right now: what it
+    /// reads, bent through its threshold or curve, is not 0. A reading
+    /// with nothing to say is false.
+    fn holds(&self, site: &ReadSite, condition: &Reading) -> bool {
+        match self.read(site, condition) {
+            Some(value) => condition.bend(value.as_number()) != 0.0,
+            None => false,
         }
     }
 
@@ -2045,7 +2055,7 @@ impl Engine {
         });
     }
 
-    /// Let every binding with a debounce take in its variable: a new value
+    /// Let every reading with a debounce take in its variable: a new value
     /// becomes the candidate, and a candidate that will have held for the
     /// debounce time by `to`, where this step lands, settles, so it shows
     /// in the frame the hold runs out. A first look settles at once.
@@ -2053,17 +2063,15 @@ impl Engine {
         let Some(show) = &self.show else { return };
         let mut debounced = std::mem::take(&mut self.debounced);
         for site in &self.debounce_sites {
-            let (root, path, index) = site;
+            let (root, ..) = site;
             if *root != Root::Show && Some(*root) != self.active_scene.map(Root::Scene) {
                 continue;
             }
-            let binding = root_layers(show, *root)
-                .and_then(|layers| layer_at(layers, path))
-                .and_then(|layer| layer.bindings.get(*index));
-            let Some((binding, hold)) = binding.and_then(|b| Some((b, b.debounce?))) else {
+            let reading = reading_at(show, site);
+            let Some((reading, hold)) = reading.and_then(|r| Some((r, r.debounce?))) else {
                 continue;
             };
-            let Some(value) = self.value(&binding.variable) else {
+            let Some(value) = self.source(site.2, &reading.variable) else {
                 debounced.remove(site);
                 continue;
             };
@@ -2409,19 +2417,39 @@ impl Engine {
             .map_or_else(String::new, |v| v.to_text())
     }
 
-    /// The value a binding at `site` feeds its property: the variable's
-    /// (as debounced), or what `map`/`default` turn it into. `None` when
-    /// it does not apply.
-    fn binding_value(&self, site: &TransitionSite, b: &Binding) -> Option<Value> {
-        let value = match (b.debounce, self.debounced.get(site)) {
-            (Some(_), Some(settling)) => &settling.settled,
-            // The show's own value when no host set one.
-            _ => &self.value(&b.variable)?,
+    /// What the reading at `site` gives now: the variable's value (as
+    /// debounced), or the show's own value of that name when no host set
+    /// one, then what `map` and `default` make of it. `None` when it has
+    /// nothing to say.
+    fn read(&self, site: &ReadSite, reading: &Reading) -> Option<Value> {
+        let value = match (reading.debounce, self.debounced.get(site)) {
+            (Some(_), Some(settling)) => settling.settled.clone(),
+            _ => self.source(site.2, &reading.variable)?,
         };
-        match &b.map {
-            None => Some(value.clone()),
-            Some(map) => map.get(&value.to_text()).or(b.default.as_ref()).cloned(),
+        reading.mapped(value)
+    }
+
+    /// What `name` reads as for `reader`, before any of the reading's
+    /// steps: the host's variable, or for a binding the show's own value
+    /// of that name when no host set one.
+    ///
+    /// A condition reads host variables only. It is an edge, and a value
+    /// the show animates crosses a mark at an instant inside a frame that
+    /// the clock does not stop at, so the edge would land wherever the
+    /// frame did; a host's variable changes between frames, where the
+    /// clock already is.
+    fn source(&self, reader: Reader, name: &str) -> Option<Value> {
+        match reader {
+            Reader::Binding(_) => self.value(name),
+            Reader::When(_) | Reader::While(_) => self.variables.get(name).cloned(),
         }
+    }
+
+    /// The value a binding at `site` feeds its property; see
+    /// [`read`](Self::read).
+    fn binding_value(&self, site: &TransitionSite, b: &Binding) -> Option<Value> {
+        let (root, path, index) = site;
+        self.read(&(*root, path.clone(), Reader::Binding(*index)), &b.reading)
     }
 
     /// The number a binding's transition eases toward: its value after
@@ -2641,7 +2669,7 @@ pub fn frame_key(root: Root, path: &[usize]) -> String {
 fn scaled(b: &Binding, n: f64) -> f64 {
     // Bent against the input before any change of unit, so the curve is
     // written in whatever the variable counts in.
-    b.bend(n) * b.scale + b.offset
+    b.reading.bend(n) * b.scale + b.offset
 }
 
 /// A text binding's value with its words round it.
@@ -2667,8 +2695,8 @@ fn eased_values(show: &Show) -> BTreeSet<String> {
                 .iter()
                 .filter(|binding| binding.transition.is_some());
             for binding in eased {
-                if show.values.contains_key(&binding.variable) {
-                    out.insert(binding.variable.clone());
+                if show.values.contains_key(&binding.reading.variable) {
+                    out.insert(binding.reading.variable.clone());
                 }
             }
             walk(show, layer.children(), out);
@@ -2680,10 +2708,10 @@ fn eased_values(show: &Show) -> BTreeSet<String> {
     out
 }
 
-/// Where the show's bindings with a transition are, and those with a
-/// debounce.
-fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<TransitionSite>) {
-    type Sites = (Vec<TransitionSite>, Vec<TransitionSite>);
+/// Where the show's bindings with a transition are, and every reading
+/// with a debounce, binding or condition.
+fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<ReadSite>) {
+    type Sites = (Vec<TransitionSite>, Vec<ReadSite>);
     fn walk(root: Root, layers: &[Layer], path: &mut Vec<usize>, out: &mut Sites) {
         for (i, layer) in layers.iter().enumerate() {
             path.push(i);
@@ -2691,8 +2719,19 @@ fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<TransitionSite>) {
                 if binding.transition.is_some() {
                     out.0.push((root, path.clone(), index));
                 }
-                if binding.debounce.is_some() {
-                    out.1.push((root, path.clone(), index));
+                if binding.reading.debounce.is_some() {
+                    out.1.push((root, path.clone(), Reader::Binding(index)));
+                }
+            }
+            for (index, tl) in layer.timelines.iter().enumerate() {
+                let conditions = [
+                    (Reader::When(index), &tl.when),
+                    (Reader::While(index), &tl.whilst),
+                ];
+                for (reader, condition) in conditions {
+                    if condition.as_ref().is_some_and(|c| c.debounce.is_some()) {
+                        out.1.push((root, path.clone(), reader));
+                    }
                 }
             }
             walk(root, layer.children(), path, out);
@@ -2856,17 +2895,10 @@ fn validate(show: &Show) -> Result<(), Error> {
                         timeline.name, layer.name
                     )));
                 }
-                for condition in [&timeline.when, &timeline.whilst].into_iter().flatten() {
-                    let problem = if condition.variable.is_empty() {
-                        Some("needs a variable in its condition")
-                    } else if condition.threshold.is_some_and(|t| !t.is_finite()) {
-                        Some("needs a finite threshold in its condition")
-                    } else {
-                        None
-                    };
-                    if let Some(problem) = problem {
+                for (which, condition) in [("when", &timeline.when), ("while", &timeline.whilst)] {
+                    if let Some(problem) = condition.as_ref().and_then(reading_problem) {
                         return Err(Error::InvalidShow(format!(
-                            "timeline {:?} of layer {:?} {problem}",
+                            "the {which} of timeline {:?} of layer {:?} {problem}",
                             timeline.name, layer.name
                         )));
                     }
@@ -2897,9 +2929,9 @@ fn validate(show: &Show) -> Result<(), Error> {
                 }
             }
             for binding in &layer.bindings {
-                if binding.threshold.is_some_and(|t| !t.is_finite()) {
+                if let Some(problem) = reading_problem(&binding.reading) {
                     return Err(Error::InvalidShow(format!(
-                        "the {:?} binding of layer {:?} needs a finite threshold",
+                        "the {:?} binding of layer {:?} {problem}",
                         binding.property, layer.name
                     )));
                 }
@@ -2908,37 +2940,6 @@ fn validate(show: &Show) -> Result<(), Error> {
                         "the {:?} binding of layer {:?} asks for more decimals than a number has",
                         binding.property, layer.name
                     )));
-                }
-                if binding.debounce.is_some_and(|d| !d.is_finite() || d < 0.0) {
-                    return Err(Error::InvalidShow(format!(
-                        "the {:?} binding of layer {:?} needs a debounce of 0 or more",
-                        binding.property, layer.name
-                    )));
-                }
-                if !binding.curve.is_empty() {
-                    let sorted = binding.curve.windows(2).all(|w| w[0].t <= w[1].t);
-                    let finite = binding
-                        .curve
-                        .iter()
-                        .all(|k| k.t.is_finite() && k.v.is_finite());
-                    let problem = if binding.threshold.is_some() {
-                        // A threshold is a curve of two keys written
-                        // short, so doing both says nothing clear about
-                        // which happens first.
-                        Some("sets both curve and threshold, which are the same job")
-                    } else if !finite {
-                        Some("needs finite curve keys")
-                    } else if !sorted {
-                        Some("needs its curve keys in order of input")
-                    } else {
-                        None
-                    };
-                    if let Some(problem) = problem {
-                        return Err(Error::InvalidShow(format!(
-                            "the {:?} binding of layer {:?} {problem}",
-                            binding.property, layer.name
-                        )));
-                    }
                 }
                 if let Some(transition) = &binding.transition {
                     let positive = |n: f64| n.is_finite() && n > 0.0;
@@ -2995,8 +2996,8 @@ fn validate(show: &Show) -> Result<(), Error> {
                     .as_ref()
                     .is_some_and(|t| t.model.is_some());
                 if binding.property == Property::Tint && !lamp {
-                    let mapped = binding.map.iter().flat_map(|m| m.values());
-                    for value in mapped.chain(&binding.default) {
+                    let mapped = binding.reading.map.iter().flat_map(|m| m.values());
+                    for value in mapped.chain(&binding.reading.default) {
                         let color = matches!(value, Value::Text(c) if c.is_empty()
                             || parse_color(c).is_some());
                         if !color {
@@ -3010,8 +3011,8 @@ fn validate(show: &Show) -> Result<(), Error> {
                 if binding.property != Property::Font {
                     continue;
                 }
-                let mapped = binding.map.iter().flat_map(|m| m.values());
-                for value in mapped.chain(&binding.default) {
+                let mapped = binding.reading.map.iter().flat_map(|m| m.values());
+                for value in mapped.chain(&binding.reading.default) {
                     let known =
                         matches!(value, Value::Text(style) if show.fonts.contains_key(style));
                     if !known {
@@ -3099,7 +3100,7 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
             for binding in &layer.bindings {
                 // A curve bends a number, and these properties never hold
                 // one, so it would quietly do nothing.
-                if !binding.curve.is_empty()
+                if !binding.reading.curve.is_empty()
                     && matches!(
                         binding.property,
                         Property::Tint | Property::Font | Property::Video | Property::Sound
@@ -3122,14 +3123,14 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
                         binding.property, layer.name
                     ));
                 }
-                let name = &binding.variable;
+                let name = &binding.reading.variable;
                 if !show.variables.contains_key(name) && show.values.contains_key(name) {
                     // A value the show animates is declared as much as a
                     // variable is. It is always a number, though, so a
                     // property that cannot take one without a map still
                     // gets nothing.
                     let problem = match binding.property {
-                        _ if binding.map.is_some() => None,
+                        _ if binding.reading.map.is_some() => None,
                         Property::Tint => Some("a color like \"#RRGGBB\""),
                         Property::Font => Some("one of the show's font styles"),
                         _ => None,
@@ -3153,7 +3154,7 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
                 };
                 // With a map it is the mapped values that reach the
                 // property, and those are checked at load.
-                if binding.map.is_some() {
+                if binding.reading.map.is_some() {
                     continue;
                 }
                 // A modelled tint reads a power level, not a colour.
@@ -3238,6 +3239,48 @@ fn ignored_fields(
             }
         }
         _ => {}
+    }
+}
+
+/// What is wrong with how a variable is read, if anything.
+fn reading_problem(reading: &Reading) -> Option<&'static str> {
+    if reading.variable.is_empty() {
+        return Some("needs a variable");
+    }
+    if reading.threshold.is_some_and(|t| !t.is_finite()) {
+        return Some("needs a finite threshold");
+    }
+    if reading.debounce.is_some_and(|d| !d.is_finite() || d < 0.0) {
+        return Some("needs a debounce of 0 or more");
+    }
+    if reading.curve.is_empty() {
+        return None;
+    }
+    if reading.threshold.is_some() {
+        // A threshold is a curve of two keys written short, so doing
+        // both says nothing clear about which happens first.
+        return Some("sets both curve and threshold, which are the same job");
+    }
+    if !reading
+        .curve
+        .iter()
+        .all(|k| k.t.is_finite() && k.v.is_finite())
+    {
+        return Some("needs finite curve keys");
+    }
+    if !reading.curve.windows(2).all(|w| w[0].t <= w[1].t) {
+        return Some("needs its curve keys in order of input");
+    }
+    None
+}
+
+/// The reading at `site`, from the loaded show.
+fn reading_at<'a>(show: &'a Show, (root, path, reader): &ReadSite) -> Option<&'a Reading> {
+    let layer = layer_at(root_layers(show, *root)?, path)?;
+    match reader {
+        Reader::Binding(i) => layer.bindings.get(*i).map(|b| &b.reading),
+        Reader::When(i) => layer.timelines.get(*i)?.when.as_ref(),
+        Reader::While(i) => layer.timelines.get(*i)?.whilst.as_ref(),
     }
 }
 
