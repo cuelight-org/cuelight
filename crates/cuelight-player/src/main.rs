@@ -496,13 +496,8 @@ impl App {
     fn scrub(&mut self, by: f64) {
         let to = (self.engine.time() + by).max(0.0);
         self.paused = true;
-        self.driver = cuelight_loader::seek(
-            self.engine.core_mut(),
-            self.script.clone(),
-            &self.live,
-            to,
-            60.0,
-        );
+        self.driver =
+            cuelight_loader::seek(self.engine.core_mut(), self.script.clone(), &self.live, to);
         // Here rather than at the next frame: the show has been moved,
         // and the clock starting again before then would read it from
         // an anchor that belongs to where it was.

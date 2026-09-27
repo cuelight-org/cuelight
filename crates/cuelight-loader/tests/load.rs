@@ -641,7 +641,7 @@ fn seeking_lands_where_playing_there_would_have() {
     // where playing there would have.
     let mut sought = Engine::new();
     sought.load_show(show).unwrap();
-    cuelight_loader::seek(sought.core_mut(), None, &Live::default(), 2.0, 60.0);
+    cuelight_loader::seek(sought.core_mut(), None, &Live::default(), 2.0);
     assert!(
         (at(&sought) - at(&played)).abs() < 1e-9,
         "{} vs {}",
@@ -652,7 +652,7 @@ fn seeking_lands_where_playing_there_would_have() {
     for _ in 0..120 {
         sought.advance_frame(1.0 / 60.0);
     }
-    cuelight_loader::seek(sought.core_mut(), None, &Live::default(), 2.0, 60.0);
+    cuelight_loader::seek(sought.core_mut(), None, &Live::default(), 2.0);
     assert!(
         (at(&sought) - at(&played)).abs() < 1e-9,
         "going back is the same place"
@@ -679,7 +679,6 @@ fn seeking_replays_the_driver_on_the_way() {
         Some(driver.clone()),
         &Live::default(),
         0.5,
-        60.0,
     );
     assert_eq!(
         engine.variable("score"),
@@ -690,14 +689,13 @@ fn seeking_replays_the_driver_on_the_way() {
         Some(driver.clone()),
         &Live::default(),
         1.5,
-        60.0,
     );
     assert_eq!(
         engine.variable("score"),
         Some(&cuelight_core::Value::Number(20.0))
     );
     // And back: the driver is replayed from the top, not rewound.
-    cuelight_loader::seek(engine.core_mut(), Some(driver), &Live::default(), 0.5, 60.0);
+    cuelight_loader::seek(engine.core_mut(), Some(driver), &Live::default(), 0.5);
     assert_eq!(
         engine.variable("score"),
         Some(&cuelight_core::Value::Number(10.0))
@@ -738,7 +736,7 @@ fn seeking_replays_what_a_host_did_to_the_show() {
 
     // Sought to the same moment, from cold: the key is replayed on the
     // way and the show is where it was.
-    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0);
     assert!(
         (at(&engine) - played).abs() < 1e-9,
         "{} vs {played}",
@@ -746,17 +744,17 @@ fn seeking_replays_what_a_host_did_to_the_show() {
     );
 
     // Before the key: the show has not been told anything yet.
-    cuelight_loader::seek(engine.core_mut(), None, &live, 0.25, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 0.25);
     assert_eq!(at(&engine), 0.0);
 
     // And past it again, without playing through: still there, since
     // scrubbing does not forget what the host did.
-    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0);
     assert!((at(&engine) - played).abs() < 1e-9);
 
     // Until it is told to.
     live.forget_from(0.4);
-    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0, 60.0);
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0);
     assert_eq!(at(&engine), 0.0);
 }
 
@@ -918,4 +916,88 @@ fn a_bitmap_fonts_page_is_the_fonts_not_left_over() {
     let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
     assert_eq!(loaded.fonts, ["t-8"]);
     assert_eq!(loaded.skipped, ["assets/fonts/stray.png"]);
+}
+
+/// A show with one slide started by `go`, and where that slide has got
+/// to.
+const SLIDE: &str = r##"{ "name": "slide", "size": [8, 8],
+  "layers": [{ "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+               "fill": "#FFFFFF", "x": 0,
+               "timelines": [{ "name": "slide", "trigger": "go", "hold": true,
+                 "tracks": [{ "property": "x",
+                              "keys": [{ "t": 0, "v": 0 }, { "t": 1, "v": 8 }] }] }] }] }"##;
+
+fn slid(engine: &Engine) -> f64 {
+    match engine.resolved_layers().unwrap()[0].shape {
+        cuelight::ResolvedShape::Rect { x, .. } => x,
+        ref other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_driver_step_lands_at_its_instant_whatever_the_frame_rate() {
+    // A trigger due at 0.3 s, between frames at every rate here: the
+    // slide it starts must be exactly as far along at 1.0 s each time,
+    // and as far as a jump straight to 1.0 s puts it.
+    let driver =
+        Driver::from_json(r#"{ "steps": [{ "wait": 0.3 }, { "trigger": "go" }] }"#).unwrap();
+    let at_rate = |fps: f64| {
+        let mut engine = Engine::new();
+        engine.load_show(SLIDE).unwrap();
+        let mut player = DriverPlayer::new(driver.clone());
+        let (mut frames, mut time) = (0u64, 0.0);
+        while time < 1.0 {
+            frames += 1;
+            let next = (frames as f64 / fps).min(1.0);
+            player.advance(engine.core_mut(), next - time);
+            engine.advance_to(next);
+            time = next;
+        }
+        slid(&engine)
+    };
+    let jumped = at_rate(1.0);
+    assert!(
+        (jumped - 5.6).abs() < 1e-9,
+        "{jumped}: 0.7 s of an 8 px slide"
+    );
+    for fps in [60.0, 50.0, 30.0, 7.0] {
+        let x = at_rate(fps);
+        assert!((x - jumped).abs() < 1e-9, "at {fps} fps: {x} vs {jumped}");
+    }
+}
+
+#[test]
+fn seeking_replays_what_a_host_set_by_hand() {
+    // A variable set live at half a second is as much an input as a key.
+    let show = r##"{ "name": "set", "size": [8, 8], "variables": { "fuel": 0 },
+      "layers": [{ "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+                   "fill": "#FFFFFF", "x": 0,
+                   "bindings": [{ "property": "x", "variable": "fuel" }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let mut live = Live::default();
+    engine.advance_to(0.5);
+    engine.set_variable("fuel", 34.0);
+    live.record_set(engine.time(), "fuel", 34.0);
+    engine.advance_to(1.0);
+    assert_eq!(slid(&engine), 34.0);
+
+    cuelight_loader::seek(engine.core_mut(), None, &live, 0.25);
+    assert_eq!(slid(&engine), 0.0, "before the set");
+    cuelight_loader::seek(engine.core_mut(), None, &live, 1.0);
+    assert_eq!(slid(&engine), 34.0, "the set is replayed on the way");
+    assert_eq!(live.inputs().count(), 1);
+}
+
+#[test]
+fn seeking_lands_a_driver_step_at_its_instant() {
+    // Sought to 1.0 s, the slide started at 0.3 s is where playing to
+    // 1.0 s at any rate leaves it.
+    let driver =
+        Driver::from_json(r#"{ "steps": [{ "wait": 0.3 }, { "trigger": "go" }] }"#).unwrap();
+    let mut engine = Engine::new();
+    engine.load_show(SLIDE).unwrap();
+    let player = cuelight_loader::seek(engine.core_mut(), Some(driver), &Live::default(), 1.0);
+    assert!((slid(&engine) - 5.6).abs() < 1e-9, "{}", slid(&engine));
+    assert!(player.unwrap().is_done());
 }

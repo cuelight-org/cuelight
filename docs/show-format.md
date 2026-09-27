@@ -1461,12 +1461,17 @@ vanishing. `cuelight-player` keeps five seconds as that mark.
 delta, and for a script or a render that has the instant, `advance_to`
 takes it directly.
 
-A host that lets a show be played with records what it fired and when,
-in a `cuelight_loader::Live`, and hands that to `seek` along with the
-driver script and the engine's core (`engine.core_mut()`). Seeking is replaying, so an input that was not recorded
-is an input the show loses the moment anyone scrubs; recorded, a scrub
-puts the show back exactly where playing left it, and scrubbing past a
-press and back again finds it still there.
+A host that lets a show be played with records what it did and when,
+the triggers it fired and the variables it set by hand, in a
+`cuelight_loader::Live`, and hands that to `seek` along with the driver
+script and the engine's core (`engine.core_mut()`). Seeking is
+replaying, so an input that was not recorded is an input the show loses
+the moment anyone scrubs; recorded, a scrub puts the show back exactly
+where playing left it, and scrubbing past a press and back again finds
+it still there. A driver's steps and the recorded inputs are applied at
+their own instants, with the clock moved there first, so a seek jumps
+from one input to the next and lands exactly where playing at any frame
+rate would have.
 
 `dt` is how much time passed, not how much of the show to play in one
 piece. A frame is cut at every instant something inside it ends, at

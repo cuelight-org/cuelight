@@ -681,22 +681,18 @@ impl CuelightPlayer {
 
     /// Put the show at `seconds`, forwards or backwards.
     ///
-    /// The show is restarted and advanced to that moment in steps of
-    /// `1 / fps`, replaying the driver script on the way, because a
+    /// The show is restarted and advanced to that moment, replaying the
+    /// driver script and everything the page did on the way, because a
     /// show's state is a function of its inputs and the clock rather than
-    /// anything the engine remembers. A show of a minute costs a couple
-    /// of milliseconds, so a page may call this as a scrub bar moves.
-    ///
-    /// Use the rate the show plays at: a chain of timelines linked by
-    /// `on_end` lands on frame boundaries, so another rate can put them a
-    /// frame or two apart.
-    pub fn seek(&self, seconds: f64, fps: Option<f64>) {
+    /// anything the engine remembers. It lands exactly where playing
+    /// there would have, and costs well under a millisecond, so a page
+    /// may call this as a scrub bar moves.
+    pub fn seek(&self, seconds: f64) {
         let mut inner = self.inner.borrow_mut();
         let script = inner.script.clone();
         let live = inner.live.clone();
-        let fps = fps.filter(|f| f.is_finite() && *f > 0.0).unwrap_or(60.0);
         let Inner { engine, .. } = &mut *inner;
-        let played = cuelight_loader::seek(engine.core_mut(), script, &live, seconds.max(0.0), fps);
+        let played = cuelight_loader::seek(engine.core_mut(), script, &live, seconds.max(0.0));
         inner.driver = played;
         // The clock is read from the anchor, and the show is somewhere
         // else now: the next frame works out where it starts from.
