@@ -14,7 +14,7 @@
 //! [`COVERED`] at the foot of this file lists what is mapped and what
 //! is deliberately not.
 
-use cuelight_core::{Engine, Property, Value};
+use cuelight_core::{Engine, ResolvedValue};
 
 /// Something the host does, at the instant it does it.
 enum Input {
@@ -38,7 +38,7 @@ const RATES: [f64; 7] = [240.0, 60.0, 50.0, 30.0, 7.0, 1.0, 0.1];
 ///
 /// The clock is told the instant to land on rather than a delta, because
 /// a delta is `previous + how much` and that is not the instant meant.
-fn state(show: &str, script: &[(f64, Input)], to: f64, fps: f64) -> Vec<(String, Property, Value)> {
+fn state(show: &str, script: &[(f64, Input)], to: f64, fps: f64) -> Vec<ResolvedValue> {
     let mut engine = Engine::new();
     engine.load_show(show).unwrap();
     let step = 1.0 / fps;
@@ -77,7 +77,7 @@ fn state(show: &str, script: &[(f64, Input)], to: f64, fps: f64) -> Vec<(String,
 /// Require the same state at each instant however fast it is sampled.
 #[track_caller]
 fn same_at_any_rate(what: &str, show: &str, script: &[(f64, Input)], instants: &[f64]) {
-    let mut seen: Vec<Vec<(String, Property, Value)>> = Vec::new();
+    let mut seen: Vec<Vec<ResolvedValue>> = Vec::new();
     for &to in instants {
         let want = state(show, script, to, RATES[0]);
         assert!(!want.is_empty(), "{what}: no state at {to} s");
@@ -89,10 +89,10 @@ fn same_at_any_rate(what: &str, show: &str, script: &[(f64, Input)], instants: &
                     a == b,
                     "{what}: at {to} s, {} fps says {}.{:?} = {:?}, {fps} fps says {:?}",
                     RATES[0],
-                    a.0,
-                    a.1,
-                    a.2,
-                    b.2
+                    a.name,
+                    a.property,
+                    a.value,
+                    b.value
                 );
             }
             assert_eq!(
