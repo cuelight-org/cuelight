@@ -13,7 +13,7 @@
 //! ```
 
 use crate::LoadError;
-use cuelight_core::{Engine, Value};
+use cuelight_core::{Engine, Value, SAME_INSTANT};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -139,21 +139,31 @@ impl DriverPlayer {
         self.done
     }
 
-    /// Advance the script by `dt` seconds: waits consume time, the other
-    /// steps apply to `engine` the moment their turn comes. Call it before
-    /// `Engine::advance_frame` with the same `dt`. Returns the steps that
-    /// were applied, for hosts that log them.
-    pub fn advance(&mut self, engine: &mut Engine, mut dt: f64) -> Vec<Step> {
+    /// Advance the script by `dt` seconds from where the engine's clock
+    /// is: every step whose wait ends inside that span is applied at its
+    /// own instant, with the engine moved there first, so a step lands
+    /// at the same instant whatever the frame rate. The engine is left
+    /// at the last step's instant; call `Engine::advance_to` with the
+    /// end of the frame afterwards, as for any frame. Returns the steps
+    /// that were applied, for hosts that log them.
+    pub fn advance(&mut self, engine: &mut Engine, dt: f64) -> Vec<Step> {
+        let start = engine.time();
+        let end = start + dt.max(0.0);
         let mut applied = Vec::new();
         // A looping script without any wait would never yield.
         let mut wrapped = false;
+        // Where the script has got to on the show's clock.
+        let mut at = start;
         while !self.done {
             if self.wait_left > 0.0 {
-                if dt < self.wait_left {
-                    self.wait_left -= dt;
+                // A wait that runs past this frame keeps what is left
+                // of it. The same instant as the frame's end counts as
+                // inside it, as everywhere on the clock.
+                if at + self.wait_left > end + SAME_INSTANT {
+                    self.wait_left -= (end - at).max(0.0);
                     break;
                 }
-                dt -= self.wait_left;
+                at += self.wait_left;
                 self.wait_left = 0.0;
             }
             if self.index >= self.driver.steps.len() {
@@ -174,8 +184,12 @@ impl DriverPlayer {
                     }
                     continue;
                 }
-                Step::Trigger { trigger } => engine.trigger(trigger),
+                Step::Trigger { trigger } => {
+                    engine.advance_to(at.min(end));
+                    engine.trigger(trigger);
+                }
                 Step::Set { set } => {
+                    engine.advance_to(at.min(end));
                     for (name, value) in set {
                         engine.set_variable(name, value.clone());
                     }
@@ -187,8 +201,28 @@ impl DriverPlayer {
     }
 }
 
+/// One thing a host told a show while it played.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiveInput {
+    /// A trigger fired: what a key or a press meant.
+    Trigger(String),
+    /// A variable set to a value.
+    Set(String, Value),
+}
+
+impl LiveInput {
+    /// Tell it to `engine` again.
+    fn apply(&self, engine: &mut Engine) {
+        match self {
+            LiveInput::Trigger(name) => engine.trigger(name),
+            LiveInput::Set(name, value) => engine.set_variable(name, value.clone()),
+        }
+    }
+}
+
 /// What a host told a show while it played, kept so seeking can put it
-/// back: the trigger each key and press fired, on the show's own clock.
+/// back: the trigger each key and press fired, and each variable set by
+/// hand, on the show's own clock.
 ///
 /// A show is a function of its inputs and the clock, which is what makes
 /// scrubbing a matter of replaying rather than rewinding. Live input is
@@ -196,84 +230,80 @@ impl DriverPlayer {
 /// scrubbed back would lose everything anyone did to it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Live {
-    fired: Vec<(f64, String)>,
+    inputs: Vec<(f64, LiveInput)>,
 }
 
 impl Live {
     /// Remember that `trigger` was fired at `at` seconds.
-    ///
+    pub fn record(&mut self, at: f64, trigger: impl Into<String>) {
+        self.insert(at, LiveInput::Trigger(trigger.into()));
+    }
+
+    /// Remember that variable `name` was set to `value` at `at` seconds.
+    pub fn record_set(&mut self, at: f64, name: impl Into<String>, value: impl Into<Value>) {
+        self.insert(at, LiveInput::Set(name.into(), value.into()));
+    }
+
     /// Kept in time order: a host records as it plays, and a seek does
     /// not disturb what it recorded, so scrubbing back and forward again
     /// finds the same show both times.
-    pub fn record(&mut self, at: f64, trigger: impl Into<String>) {
+    fn insert(&mut self, at: f64, input: LiveInput) {
         let at = at.max(0.0);
-        let after = self.fired.iter().rposition(|(when, _)| *when <= at);
+        let after = self.inputs.iter().rposition(|(when, _)| *when <= at);
         let index = after.map_or(0, |i| i + 1);
-        self.fired.insert(index, (at, trigger.into()));
+        self.inputs.insert(index, (at, input));
     }
 
     /// Whether the show has been told anything live.
     pub fn is_empty(&self) -> bool {
-        self.fired.is_empty()
+        self.inputs.is_empty()
     }
 
-    /// Everything fired, in time order.
-    pub fn fired(&self) -> impl Iterator<Item = (f64, &str)> {
-        self.fired.iter().map(|(at, name)| (*at, name.as_str()))
+    /// Everything the host did, in time order.
+    pub fn inputs(&self) -> impl Iterator<Item = (f64, &LiveInput)> {
+        self.inputs.iter().map(|(at, input)| (*at, input))
     }
 
     /// Forget everything from `at` on: what a host calls when a take
     /// starts again from there and the rest should not come back.
     pub fn forget_from(&mut self, at: f64) {
-        self.fired.retain(|(when, _)| *when < at);
+        self.inputs.retain(|(when, _)| *when < at);
     }
 }
 
-/// Put the show back to its beginning and walk it to `to` seconds in
-/// steps of `1 / fps`, replaying `driver` and `live` alongside. Hands
-/// back the driver where it ended up, so playing on from there
-/// continues.
+/// Put the show back to its beginning and walk it to `to` seconds,
+/// replaying `driver` and `live` on the way, each input at the instant
+/// it belongs to. Hands back the driver where it ended up, so playing on
+/// from there continues.
 ///
 /// A show's state is a function of its inputs and the clock, so reaching
 /// a moment is restarting and advancing to it. Nothing is stored, nothing
-/// is rewound, and a host can scrub by calling this as the pointer moves:
-/// a show of a minute takes a couple of milliseconds.
-///
-/// The step matters. A chain of timelines linked by `on_end` lands on
-/// frame boundaries, so seeking at one rate and playing at another can
-/// put them a frame or two apart; use the rate the show plays at.
+/// is rewound, and a host can scrub by calling this as the pointer moves.
+/// The clock jumps from one input to the next rather than walking in
+/// frames, since a frame is cut wherever something happens anyway: a
+/// show of minutes takes well under a millisecond, and lands exactly
+/// where playing it at any frame rate would.
 pub fn seek(
     engine: &mut Engine,
     driver: Option<Driver>,
     live: &Live,
     to: f64,
-    fps: f64,
 ) -> Option<DriverPlayer> {
     engine.restart();
+    let to = to.max(0.0);
     let mut player = driver.map(DriverPlayer::new);
-    let mut live = live.fired().peekable();
-    let step = 1.0 / fps.max(1.0);
-    let (mut steps, mut time) = (0u64, 0.0_f64);
-    loop {
-        // Everything the host fired by now, before the frame that
-        // carried it: the instant it landed on is the one it was
-        // recorded at.
-        while let Some((_, trigger)) = live.next_if(|(at, _)| *at <= time) {
-            engine.trigger(trigger);
-        }
-        if time >= to {
-            break;
-        }
-        let dt = step.min(to - time);
+    for (at, input) in live.inputs().take_while(|(at, _)| *at <= to) {
+        // The script's steps due by then, each at its own instant, then
+        // the clock to the instant the host acted, then what it did.
         if let Some(player) = &mut player {
-            player.advance(engine, dt);
+            player.advance(engine, at - engine.time());
         }
-        steps += 1;
-        // Counted from the start and handed over as the instant to land
-        // on, so scrubbing to a moment reaches the state playing to it
-        // would, whatever `fps` the walk used.
-        time = (steps as f64 * step).min(to);
-        engine.advance_to(time);
+        engine.advance_to(at);
+        input.apply(engine);
     }
+    if let Some(player) = &mut player {
+        player.advance(engine, to - engine.time());
+    }
+    engine.advance_to(to);
     player
 }

@@ -424,7 +424,7 @@ type BusyBuses = std::collections::BTreeMap<String, Vec<((Root, Vec<usize>), f64
 /// lands a femtosecond past a frame boundary waits a whole frame. A
 /// microsecond is far under anything a show can ask for or a frame can
 /// resolve, and far over that noise at any show length.
-const SAME_INSTANT: f64 = 1e-6;
+pub const SAME_INSTANT: f64 = 1e-6;
 
 /// The engine: the loaded show and every piece of its runtime state.
 ///
