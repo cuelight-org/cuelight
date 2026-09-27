@@ -1038,7 +1038,8 @@ flicker:
 - `threshold`: the value becomes 1 at or above this level and 0 below,
   before `scale` and `offset`. A lamp whose brightness arrives as a float
   lights at a half; with a `transition` it warms up from there. On a
-  `visible` binding it is the level the layer shows from.
+  `visible` binding it is the level the layer shows from. It is a `curve`
+  written short, and is read as exactly that curve (see below).
 - `debounce`: seconds a new value has to hold before it reaches the
   property. Shorter changes (a strobing lamp, a switch that bounces) never
   show. At load and on entering a scene the current value applies at once.
@@ -1061,9 +1062,13 @@ flicker:
 
   A curve shapes value against **input**; a `transition`'s `ease` shapes a
   change over **time**. A binding can have both. It cannot have both
-  `curve` and `threshold`, which are the same job: a threshold is two keys
-  with a `step` ease. It only bends numbers, so one on `tint`, `font`,
-  `video` or `sound` is reported as a binding that does nothing.
+  `curve` and `threshold`, which are the same job: `"threshold": 0.5` is
+  `[{ "t": 0, "v": 0 }, { "t": 0.5, "v": 1, "ease": "step" }]` written
+  short, and the engine reads it as that curve. That is the rule for any
+  shorthand the format has: it is defined as the longer form it stands
+  for, so the two cannot drift apart. A curve only bends numbers, so one
+  on `tint`, `font`, `video` or `sound` is reported as a binding that
+  does nothing.
 
 The order is: `debounce`, then `map`, `threshold`, `curve`, `scale` and
 `offset`, then `transition`. So a curve is written in the variable's own

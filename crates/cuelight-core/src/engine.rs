@@ -2637,22 +2637,11 @@ pub fn frame_key(root: Root, path: &[usize]) -> String {
     key
 }
 
-/// A binding's number after `threshold`, `scale` and `offset`.
+/// A binding's number after `threshold` or `curve`, `scale` and `offset`.
 fn scaled(b: &Binding, n: f64) -> f64 {
-    let n = match b.threshold {
-        Some(level) => {
-            if n >= level {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        None => n,
-    };
     // Bent against the input before any change of unit, so the curve is
     // written in whatever the variable counts in.
-    let n = crate::model::sample_keys(&b.curve, n).unwrap_or(n);
-    n * b.scale + b.offset
+    b.bend(n) * b.scale + b.offset
 }
 
 /// A text binding's value with its words round it.
@@ -2933,9 +2922,9 @@ fn validate(show: &Show) -> Result<(), Error> {
                         .iter()
                         .all(|k| k.t.is_finite() && k.v.is_finite());
                     let problem = if binding.threshold.is_some() {
-                        // The same job: a threshold is a curve of two keys
-                        // with a `step` ease, so doing both says nothing
-                        // clear about which happens first.
+                        // A threshold is a curve of two keys written
+                        // short, so doing both says nothing clear about
+                        // which happens first.
                         Some("sets both curve and threshold, which are the same job")
                     } else if !finite {
                         Some("needs finite curve keys")
