@@ -405,11 +405,12 @@ impl CuelightPlayer {
             .await
             .map_err(|e| error(format!("no WebGPU surface for the canvas: {e}")))?;
         let device = &context.devices[surface.dev_id].device;
-        let renderer = vello::Renderer::new(device, vello::RendererOptions::default())
-            .map_err(|e| error(format!("renderer: {e}")))?;
         // A GPU error is reported between frames, not from a call that
         // could return it; kept here for the frame loop, and logged at
-        // once in case the loop is already gone.
+        // once in case the loop is already gone. Registered as soon as
+        // the device exists: the renderer makes its pipelines right
+        // away, and a pipeline that fails to build is reported here,
+        // before every dispatch that then fails for lack of it.
         let gpu_errors: Arc<Mutex<Vec<String>>> = Arc::default();
         let sink = gpu_errors.clone();
         device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
@@ -417,6 +418,8 @@ impl CuelightPlayer {
             web_sys::console::error_1(&format!("cuelight: {message}").into());
             sink.lock().unwrap_or_else(|p| p.into_inner()).push(message);
         }));
+        let renderer = vello::Renderer::new(device, vello::RendererOptions::default())
+            .map_err(|e| error(format!("renderer: {e}")))?;
 
         let inner = Rc::new(RefCell::new(Inner {
             live: cuelight_loader::Live::default(),
