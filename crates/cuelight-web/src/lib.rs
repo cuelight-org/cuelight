@@ -48,7 +48,8 @@ use std::rc::{Rc, Weak};
 
 use cuelight::render::Presenter;
 use cuelight::vello;
-use cuelight::{Engine, Event, Value};
+use cuelight::Engine;
+use cuelight_core::{Event, Value};
 use cuelight_loader::{Driver, DriverPlayer, Manifest, MANIFEST_FILE};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
@@ -240,7 +241,7 @@ impl Inner {
         }
         if self.driver_playing && !self.paused {
             if let Some(driver) = &mut self.driver {
-                driver.advance(&mut self.engine, dt);
+                driver.advance(self.engine.core_mut(), dt);
             }
         }
         self.engine.advance_to(target);
@@ -658,7 +659,7 @@ impl CuelightPlayer {
         let live = inner.live.clone();
         let fps = fps.filter(|f| f.is_finite() && *f > 0.0).unwrap_or(60.0);
         let Inner { engine, .. } = &mut *inner;
-        let played = cuelight_loader::seek(engine, script, &live, seconds.max(0.0), fps);
+        let played = cuelight_loader::seek(engine.core_mut(), script, &live, seconds.max(0.0), fps);
         inner.driver = played;
         // The clock is read from the anchor, and the show is somewhere
         // else now: the next frame works out where it starts from.

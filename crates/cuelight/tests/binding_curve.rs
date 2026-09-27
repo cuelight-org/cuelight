@@ -1,6 +1,7 @@
 //! A binding that bends its value against the input.
 
-use cuelight::{Engine, Error, ResolvedShape};
+use cuelight::{Engine, ResolvedShape};
+use cuelight_core::Error;
 
 fn show(binding: &str) -> String {
     format!(

@@ -1,8 +1,8 @@
-//! Sound for [`cuelight`] hosts.
+//! Sound for cuelight hosts.
 //!
 //! The engine never touches samples: it registers sounds by duration and
 //! reports what should be heard as a list of [`Voice`]s
-//! ([`Engine::voices`](cuelight::Engine::voices)), one per playing sound
+//! ([`Engine::voices`](cuelight_core::Engine::voices)), one per playing sound
 //! with its position and gain. This crate is the other half:
 //!
 //! - [`Sound`]: a decoded sound file (WAV, FLAC, Ogg Vorbis, MP3), which
@@ -34,7 +34,7 @@ mod wav;
 #[cfg(feature = "live")]
 mod live;
 
-pub use cuelight::Voice;
+pub use cuelight_core::Voice;
 #[cfg(feature = "live")]
 pub use live::Output;
 pub use mixer::Mixer;

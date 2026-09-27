@@ -228,7 +228,6 @@ impl schemars::JsonSchema for Choice {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Pick {
     /// The next one each play, wrapping round at the end.
     #[default]
@@ -305,7 +304,6 @@ pub struct Output {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Pass {
     /// Every canvas pixel becomes a dot, as on a dot matrix display.
     Dots(Dots),
@@ -350,7 +348,6 @@ impl Default for Dots {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum DotShape {
     #[default]
     Round,
@@ -374,7 +371,6 @@ impl Output {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Scaling {
     /// Any factor, smoothly filtered.
     #[default]
@@ -388,7 +384,6 @@ pub enum Scaling {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum OutputMode {
     /// Full color, unchanged.
     #[default]
@@ -405,8 +400,8 @@ pub enum OutputMode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FontStyle {
     /// Name of the font as registered by the host, by convention the font
-    /// file's stem: a bitmap font ([`Engine::set_font`](crate::Engine::set_font))
-    /// or an outline font (`Engine::set_outline_font`). Which kind it is
+    /// file's stem: a bitmap font (the `cuelight` crate's `set_font`) or
+    /// an outline font (its `set_outline_font`). Which kind it is
     /// decides how the text is drawn; the layers using the style do not
     /// change.
     pub file: String,
@@ -495,7 +490,8 @@ impl Align {
         (x, y)
     }
 
-    pub(crate) fn is_left(self) -> bool {
+    /// Whether text aligned this way starts at the left edge of its box.
+    pub fn is_left(self) -> bool {
         matches!(self, Align::TopLeft | Align::Left | Align::BottomLeft)
     }
 }
@@ -600,7 +596,6 @@ pub struct Press {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Blend {
     /// Paint over: the layer covers what is beneath.
     #[default]
@@ -623,7 +618,6 @@ fn default_visible() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum LayerKind {
     /// A container: children are positioned relative to the group and
     /// painted in order. With `clip`, children only show inside that
@@ -646,12 +640,11 @@ pub enum LayerKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stroke: Option<Stroke>,
     },
-    /// Artwork the host registered under `image`: pixels through
-    /// [`Engine::set_image`](crate::Engine::set_image), or vector artwork
-    /// through [`Engine::set_vector`](crate::Engine::set_vector), which
-    /// the loader does for every `assets/*.svg`. Drawn with its top-left
-    /// corner at the layer's x/y unless the layer has an `anchor`; what
-    /// is not registered yet is skipped.
+    /// Artwork the host registered under `image` with the `cuelight`
+    /// crate: pixels through its `set_image`, or vector artwork through
+    /// its `set_vector`, which the loader does for every `assets/*.svg`.
+    /// Drawn with its top-left corner at the layer's x/y unless the layer
+    /// has an `anchor`; what is not registered yet is skipped.
     ///
     /// One layer kind for both, since the asset says how to draw itself
     /// and everything else about a layer of artwork is the same. `type`
@@ -835,7 +828,6 @@ fn default_voices() -> u32 {
 
 /// Which registry the content of a playhead comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum MediaKind {
     Sound,
     Video,
@@ -872,7 +864,6 @@ pub struct Media<'a> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Retrigger {
     /// Start over: the play so far stops.
     #[default]
@@ -899,7 +890,6 @@ pub struct Sheet {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Justify {
     #[default]
     Left,
@@ -998,7 +988,6 @@ pub struct Reel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum ReelCells {
     /// Vector artwork the host registered, by name, one per symbol.
     /// Artwork scales with the row, so a reel of pictures is as sharp as
@@ -1080,7 +1069,6 @@ impl Reel {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum DigitDisplay {
     /// A segment display: lit segments in `fill`, and the dark ones in
     /// `unlit` when given. A `.` or `,` lights the dot of the cell before
@@ -1147,7 +1135,6 @@ fn default_glow_strength() -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum SegmentStyle {
     /// 14 segments plus dot: letters and digits.
     Alpha14,
@@ -1161,7 +1148,6 @@ pub enum SegmentStyle {
 /// (`{ "rect": [0, 0, 8, 4], "radius": 2 }`) rather than nesting it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
-#[non_exhaustive]
 pub enum Shape {
     Rect {
         /// `[x, y, width, height]`
@@ -1433,7 +1419,6 @@ pub struct Stroke {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Property {
     X,
     Y,
@@ -1886,7 +1871,6 @@ pub struct Transition {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum Direction {
     /// Whichever way is shorter; forward on a tie.
     #[default]
@@ -1952,7 +1936,6 @@ impl Transition {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[non_exhaustive]
 pub enum NumberFormat {
     /// Shortest form: `1500`, `2.5`.
     #[default]
@@ -2291,7 +2274,7 @@ impl Timeline {
 }
 
 /// Parse a `#RRGGBB` / `#RRGGBBAA` color into RGBA bytes.
-pub(crate) fn parse_color(s: &str) -> Option<[u8; 4]> {
+pub fn parse_color(s: &str) -> Option<[u8; 4]> {
     let hex = s.strip_prefix('#')?;
     let parse = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
     match hex.len() {

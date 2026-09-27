@@ -7,7 +7,7 @@
 //! That is one function to replace when a shaper comes in.
 
 use crate::engine::{FontData, PlacedGlyph};
-use crate::model::Align;
+use cuelight_core::Align;
 use skrifa::instance::{LocationRef, Size};
 use skrifa::{FontRef, MetadataProvider};
 

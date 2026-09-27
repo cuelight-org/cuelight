@@ -1,7 +1,8 @@
 //! Output modes: the engine picks the active one, the GPU pass matches the
 //! CPU conversion. GPU tests skip (pass) when no adapter is available.
 
-use cuelight::{Engine, OutputColor, OutputMode};
+use cuelight::{Engine, OutputColor};
+use cuelight_core::OutputMode;
 
 mod gpu;
 
@@ -156,7 +157,7 @@ fn gpu_output_pass_matches_cpu_conversion() {
 
 #[test]
 fn scene_output_overrides_only_what_it_sets() {
-    use cuelight::Scaling;
+    use cuelight_core::Scaling;
     let show = r##"{
       "name": "o", "size": [16, 4],
       "output": { "mode": "gray4", "tint": "#FF5820", "scaling": "pixel_perfect" },

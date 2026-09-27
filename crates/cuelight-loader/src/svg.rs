@@ -1,7 +1,8 @@
 //! SVG documents as vector artwork: what usvg makes of a file, reduced to
 //! paths with solid fills and strokes.
 
-use cuelight::{Engine, PathElement, Vector, VectorPath};
+use cuelight::{Engine, Vector, VectorPath};
+use cuelight_core::PathElement;
 use std::sync::{Arc, Mutex};
 use usvg::tiny_skia_path::PathSegment;
 

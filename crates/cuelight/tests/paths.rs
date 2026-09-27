@@ -1,6 +1,7 @@
 //! Path shapes, strokes and vector artwork in the draw list, no GPU.
 
-use cuelight::{Engine, PathElement, ResolvedShape, Vector, VectorPath};
+use cuelight::{Engine, ResolvedShape, Vector, VectorPath};
+use cuelight_core::PathElement;
 
 fn show(layers: &str) -> String {
     format!(r#"{{ "name": "paths", "size": [64, 32], "layers": [{layers}] }}"#)
@@ -432,15 +433,15 @@ fn a_rect_without_a_radius_is_still_a_rect() {
 fn a_radius_is_clamped_to_half_the_shorter_side() {
     // 500 on a 40x20 rect is a pill: the corners meet in the middle.
     assert_eq!(
-        cuelight::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], Some(500.0)),
+        cuelight_core::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], Some(500.0)),
         10.0
     );
     assert_eq!(
-        cuelight::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], Some(-3.0)),
+        cuelight_core::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], Some(-3.0)),
         0.0
     );
     assert_eq!(
-        cuelight::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], None),
+        cuelight_core::Shape::corner_radius([0.0, 0.0, 40.0, 20.0], None),
         0.0
     );
 }

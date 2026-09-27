@@ -1,4 +1,4 @@
-use crate::model::{parse_color, Output, OutputMode};
+use cuelight_core::{parse_color, Output, OutputMode};
 
 /// Weights `[r, g, b]` for luma: how bright a color looks, as one number.
 ///

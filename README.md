@@ -156,8 +156,15 @@ required.
 
 ## Crates
 
-- [`cuelight`](crates/cuelight): the engine, plus the optional vello
-  renderer. It does no I/O: hosts hand it a show document, images and fonts.
+- [`cuelight-core`](crates/cuelight-core): the show document and the
+  deterministic model that plays it: variables, triggers, timelines,
+  scenes, media plays and the clock. It knows nothing of pixels, glyphs
+  or samples, and a show's state at any instant is a function of the
+  document, the inputs and the instant alone.
+- [`cuelight`](crates/cuelight): that engine with the assets a frame
+  needs (images, fonts, vector artwork), the draw list built from them,
+  and the optional vello renderer. It does no I/O: hosts hand it a show
+  document and the assets.
 - [`cuelight-loader`](crates/cuelight-loader): that host work, shared:
   loading show folders from disk (or images, SVGs and fonts from bytes,
   for hosts without a filesystem) and playing `test-driver.json` scripts.
@@ -181,7 +188,7 @@ required.
 
 Shows are declarative JSON; see [docs/show-format.md](docs/show-format.md)
 and the generated JSON Schema at
-`crates/cuelight/schemas/show.schema.json` (kept in sync with the model
+`crates/cuelight-core/schemas/show.schema.json` (kept in sync with the model
 types by a CI check; show files can reference it via `$schema` for editor
 autocomplete and validation).
 

@@ -14,7 +14,7 @@
 //! [`COVERED`] at the foot of this file lists what is mapped and what
 //! is deliberately not.
 
-use cuelight::{Engine, Property, Value};
+use cuelight_core::{Engine, Property, Value};
 
 /// Something the host does, at the instant it does it.
 enum Input {

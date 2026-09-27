@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 
 /// One step of a path, in the coordinates of whatever holds the path.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
 pub enum PathElement {
     MoveTo([f64; 2]),
     LineTo([f64; 2]),
@@ -38,19 +37,19 @@ impl PathElement {
         };
         points.into_iter().flatten()
     }
-}
 
-/// The bounding box `[x, y, width, height]` of a path's points, control
-/// points included; `None` for a path without points.
-pub fn bounds(elements: &[PathElement]) -> Option<[f64; 4]> {
-    let mut points = elements.iter().flat_map(PathElement::points);
-    let [x0, y0] = points.next()?;
-    let (mut min, mut max) = ([x0, y0], [x0, y0]);
-    for [x, y] in points {
-        min = [min[0].min(x), min[1].min(y)];
-        max = [max[0].max(x), max[1].max(y)];
+    /// The bounding box `[x, y, width, height]` of a path's points,
+    /// control points included; `None` for a path without points.
+    pub fn bounds(elements: &[PathElement]) -> Option<[f64; 4]> {
+        let mut points = elements.iter().flat_map(PathElement::points);
+        let [x0, y0] = points.next()?;
+        let (mut min, mut max) = ([x0, y0], [x0, y0]);
+        for [x, y] in points {
+            min = [min[0].min(x), min[1].min(y)];
+            max = [max[0].max(x), max[1].max(y)];
+        }
+        Some([min[0], min[1], max[0] - min[0], max[1] - min[1]])
     }
-    Some([min[0], min[1], max[0] - min[0], max[1] - min[1]])
 }
 
 /// Path data as a show authors it: an SVG path string (`M 0 0 L 10 0 ...`),
@@ -443,7 +442,10 @@ mod tests {
                 PathElement::Close,
             ]
         );
-        assert_eq!(bounds(path.elements()), Some([10.0, 10.0, 20.0, 10.0]));
+        assert_eq!(
+            PathElement::bounds(path.elements()),
+            Some([10.0, 10.0, 20.0, 10.0])
+        );
     }
 
     #[test]

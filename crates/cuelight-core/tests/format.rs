@@ -1,6 +1,6 @@
 //! Show format version and reporting of fields the engine ignored.
 
-use cuelight::{Engine, Error, FORMAT};
+use cuelight_core::{Engine, Error, FORMAT};
 
 #[test]
 fn a_show_without_format_is_format_1() {
@@ -78,7 +78,7 @@ fn ignored_fields_are_reported_by_path() {
 
 #[test]
 fn bundled_example_shows_load_without_warnings() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/shows");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../cuelight/examples/shows");
     for entry in std::fs::read_dir(dir).unwrap() {
         let mut path = entry.unwrap().path();
         if path.is_dir() {

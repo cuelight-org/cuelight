@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 # workspace still builds and tests natively without the web stack.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cuelight = { path = "../cuelight", version = "0.0.1" }
+cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 cuelight-loader = { path = "../cuelight-loader", version = "0.0.1" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

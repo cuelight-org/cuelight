@@ -71,7 +71,7 @@ pub enum LoadError {
     #[error("{path}: {source}")]
     Engine {
         path: PathBuf,
-        source: cuelight::Error,
+        source: cuelight_core::Error,
     },
     #[error("{path}: {message}")]
     Driver { path: PathBuf, message: String },

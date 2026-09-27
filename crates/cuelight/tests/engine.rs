@@ -1,6 +1,7 @@
 //! Structural tests: the whole trigger/variable/timeline model with no GPU.
 
-use cuelight::{Engine, Event, ResolvedShape};
+use cuelight::{Engine, ResolvedShape};
+use cuelight_core::Event;
 
 const MINIGOLF: &str = include_str!("../examples/shows/minigolf.json");
 
@@ -783,14 +784,14 @@ fn a_glow_is_light_that_adds_up_to_the_segments_own_brightness() {
         matches!(
             open.shape,
             ResolvedShape::BlendBegin {
-                blend: cuelight::Blend::Screen
+                blend: cuelight_core::Blend::Screen
             }
         ),
         "{open:?}"
     );
     assert!(matches!(close.shape, ResolvedShape::BlendEnd), "{close:?}");
     for pass in passes {
-        assert_eq!(pass.blend, cuelight::Blend::Normal, "{pass:?}");
+        assert_eq!(pass.blend, cuelight_core::Blend::Normal, "{pass:?}");
         assert_eq!(pass.color[..3], [255, 128, 64], "the segment's colour");
     }
     let halo = passes;
@@ -856,7 +857,7 @@ fn timelines_and_scenes_can_listen_to_several_triggers() {
 
 #[test]
 fn triggers_serialize_the_way_they_are_authored() {
-    use cuelight::Triggers;
+    use cuelight_core::Triggers;
     let json = |t: &Triggers| serde_json::to_string(t).unwrap();
     assert_eq!(json(&Triggers(vec![])), "null");
     assert_eq!(json(&Triggers(vec!["go".into()])), r#""go""#);
@@ -886,7 +887,7 @@ fn a_show_lists_its_triggers() {
 
 #[test]
 fn blend_is_carried_by_the_draw_list() {
-    use cuelight::Blend;
+    use cuelight_core::Blend;
     let show = r##"{ "name": "blend", "size": [8, 8], "layers": [
         { "name": "lamp", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF", "blend": "add" },
         { "name": "glow", "type": "group", "blend": "screen", "clip": { "rect": [0, 0, 4, 4] }, "children": [
@@ -1567,4 +1568,14 @@ fn an_edge_belongs_to_the_variable_not_to_the_scene() {
         1,
         "it turned on while the scene was away"
     );
+}
+
+#[test]
+fn audio_draws_nothing() {
+    let show = r#"{ "name": "t", "size": [8, 8], "layers": [
+        { "name": "thunder", "type": "audio", "sound": "thunder", "trigger": "strike" } ] }"#;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.trigger("strike");
+    assert!(engine.resolved_layers().unwrap().is_empty());
 }

@@ -15,7 +15,7 @@
 //! is MIT/Apache) instead of growing this one; only `BitmapFont::parse`
 //! would change.
 
-use crate::model::Align;
+use cuelight_core::Align;
 use std::collections::HashMap;
 
 /// One glyph's placement data from the font description.

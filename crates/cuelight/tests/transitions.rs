@@ -1,7 +1,8 @@
 //! Binding transitions: bound values ease to a new value instead of
 //! jumping, as a function of time only.
 
-use cuelight::{BitmapFont, Direction, Easing, Engine, Key, ResolvedShape, Transition};
+use cuelight::{BitmapFont, Engine, ResolvedShape};
+use cuelight_core::{Direction, Easing, Key, Transition};
 
 /// A show with one rect carrying `binding`.
 fn show(binding: &str) -> String {
