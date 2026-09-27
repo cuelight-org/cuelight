@@ -105,18 +105,18 @@
       ]
     },
     "Binding": {
-      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nNumeric properties take `variable * scale + offset`. The `text`\nproperty takes the variable as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the variable as a\nfont style name.\n\nWith `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)\nis looked up first and the mapped value, or `default` when it is not\nlisted, takes the variable's place. Without either, the binding does\nnot apply and the property keeps its base value. The order is:\n`debounce`, `map`, `threshold`, `scale` and `offset`, `transition`.",
+      "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nThe variable is read as a [`Reading`] (its fields sit directly on the\nbinding), then numeric properties take `value * scale + offset`. The\n`text` property takes the value as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the value as a\nfont style name. A reading with nothing to say leaves the property at\nits base value. The order is: `debounce`, `map`, `threshold` or\n`curve`, `scale` and `offset`, `transition`.",
       "type": "object",
       "properties": {
         "curve": {
-          "description": "Bend the value against the input instead of scaling it straight.\n\nKeys are a track's, with the input value where a track has time,\nand the same easings between them: below the first key it holds\nthe first value, above the last it holds the last. A lamp whose\nglow wants a gamma curve, a tachometer compressed at the low end,\na loudness in decibels rather than a linear gain.\n\nThis shapes value against input; a [`Transition`]'s `ease` shapes\na change over time. A binding can have both, and they do different\nthings.\n\nIt applies after `map` and before `scale` and `offset`, so the\ncurve is written in the variable's own units and `scale` stays the\nlast change of unit. It cannot be combined with `threshold`, which\nis this curve written short.",
+          "description": "Bend the value against the input instead of taking it straight.\n\nKeys are a track's, with the input value where a track has time,\nand the same easings between them: below the first key it holds\nthe first value, above the last it holds the last. A lamp whose\nglow wants a gamma curve, a tachometer compressed at the low end,\na loudness in decibels rather than a linear gain.\n\nThis shapes value against input; a [`Transition`]'s `ease` shapes\na change over time. A binding can have both, and they do different\nthings.\n\nIt applies after `map`, so the curve is written in the variable's\nown units and a binding's `scale` stays the last change of unit.\nIt cannot be combined with `threshold`, which is this curve\nwritten short.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Key"
           }
         },
         "debounce": {
-          "description": "Seconds a new value has to hold before it reaches the property;\nchanges shorter than that (a strobing lamp, a bouncing switch)\nnever show. When a show loads or a scene is entered the value\napplies at once.",
+          "description": "Seconds a new value has to hold before it is read; changes\nshorter than that (a strobing lamp, a bouncing switch) are never\nseen. When a show loads or a scene is entered the value applies\nat once.",
           "type": [
             "number",
             "null"
@@ -141,8 +141,7 @@
             {
               "type": "null"
             }
-          ],
-          "default": null
+          ]
         },
         "format": {
           "description": "How a number becomes text (text bindings only).",
@@ -150,15 +149,14 @@
           "default": "plain"
         },
         "map": {
-          "description": "Replace the variable's value by looking it up here.",
+          "description": "Replace the variable's value (as text: `1`, `2.5`, `true`,\n`attract`) by looking it up here.",
           "type": [
             "object",
             "null"
           ],
           "additionalProperties": {
             "$ref": "#/$defs/Value"
-          },
-          "default": null
+          }
         },
         "offset": {
           "type": "number",
@@ -182,7 +180,7 @@
           "type": "string"
         },
         "threshold": {
-          "description": "A level: the value becomes 1 at or above it and 0 below, before\n`scale` and `offset` apply. A lamp that lights when a brightness\npasses a half, a `visible` that follows a level.\n\nShorthand for a `curve` of two keys with a `step` ease, and read\nas exactly that curve (see [`Binding::bend`]), which is the rule\nfor any shorthand the format has: it is defined as the longer\nform it stands for, so the two cannot drift apart.",
+          "description": "A level: the value becomes 1 at or above it and 0 below. A lamp\nthat lights when a brightness passes a half, a `visible` that\nfollows a level, a condition that holds from a mark on.\n\nShorthand for a `curve` of two keys with a `step` ease, and read\nas exactly that curve (see [`Reading::bend`]), which is the rule\nfor any shorthand the format has: it is defined as the longer\nform it stands for, so the two cannot drift apart.",
           "type": [
             "number",
             "null"
@@ -1467,6 +1465,62 @@
         }
       ]
     },
+    "Reading": {
+      "description": "A value read from a variable: the one shape everything that reads a\nvariable uses, so a binding, a timeline's `when` and `while`, and\nwhatever reads a variable next take the same fields and read them in\nthe same order.\n\nThe order is `debounce`, then `map` (with `default`), then\n`threshold` or `curve`. What comes out is a value: a binding goes on\nto `scale`, `offset` and its `transition`; a condition takes it as\ntrue when it is not 0.\n\nThe name is a host variable, or for a binding failing that a value\nthe show animates itself (a condition is an edge, and the clock does\nnot yet stop where a show's own value crosses a mark, so a condition\nreads host variables only). Without a value, or with a `map` that\ndoes not list the value and no `default`, the reading has nothing to\nsay: a binding then leaves its property as it was, a condition is\nfalse.",
+      "type": "object",
+      "properties": {
+        "curve": {
+          "description": "Bend the value against the input instead of taking it straight.\n\nKeys are a track's, with the input value where a track has time,\nand the same easings between them: below the first key it holds\nthe first value, above the last it holds the last. A lamp whose\nglow wants a gamma curve, a tachometer compressed at the low end,\na loudness in decibels rather than a linear gain.\n\nThis shapes value against input; a [`Transition`]'s `ease` shapes\na change over time. A binding can have both, and they do different\nthings.\n\nIt applies after `map`, so the curve is written in the variable's\nown units and a binding's `scale` stays the last change of unit.\nIt cannot be combined with `threshold`, which is this curve\nwritten short.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Key"
+          }
+        },
+        "debounce": {
+          "description": "Seconds a new value has to hold before it is read; changes\nshorter than that (a strobing lamp, a bouncing switch) are never\nseen. When a show loads or a scene is entered the value applies\nat once.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "default": {
+          "description": "Value for variable values `map` does not list.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Value"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "map": {
+          "description": "Replace the variable's value (as text: `1`, `2.5`, `true`,\n`attract`) by looking it up here.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/Value"
+          }
+        },
+        "threshold": {
+          "description": "A level: the value becomes 1 at or above it and 0 below. A lamp\nthat lights when a brightness passes a half, a `visible` that\nfollows a level, a condition that holds from a mark on.\n\nShorthand for a `curve` of two keys with a `step` ease, and read\nas exactly that curve (see [`Reading::bend`]), which is the rule\nfor any shorthand the format has: it is defined as the longer\nform it stands for, so the two cannot drift apart.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ]
+    },
     "Reel": {
       "description": "A row of cells carrying a ring of symbols, each rolling to the symbol\nthe layer's `text` asks of it, as the wheels of an odometer, a counter\nor a departure board do. Each cell stands somewhere on the ring of its\nown, so a change moves only the cells it reaches, and `stagger` keeps\nthem from moving in lockstep.\n\nA symbol is named by a character of `charset` and drawn either as that\ncharacter in a font style of the show, which needs no artwork and\nstays sharp at any size, or as the artwork `cells` gives it.",
       "type": "object",
@@ -1945,7 +1999,7 @@
           "description": "A variable condition that (re)starts it on the rising edge, for\nhosts that send states rather than events. The edge belongs to the\nvariable, not to the scene: leaving a scene and coming back does\nnot replay it unless the condition turned true while away.",
           "anyOf": [
             {
-              "$ref": "#/$defs/When"
+              "$ref": "#/$defs/Reading"
             },
             {
               "type": "null"
@@ -1956,7 +2010,7 @@
           "description": "A variable condition it runs under: it plays while the condition\nholds and stops when it stops holding.\n\nWhat `when` cannot say. A blink that means \"this is lit\" should\nrun for as long as it is lit, and a looping timeline started on an\nedge would never stop. Unlike `when`, entering a scene starts it\nagain, since it describes a state the scene is in rather than\nsomething that happened.\n\nStopping is not finishing: it fires no `on_end`.",
           "anyOf": [
             {
-              "$ref": "#/$defs/When"
+              "$ref": "#/$defs/Reading"
             },
             {
               "type": "null"
@@ -2162,47 +2216,6 @@
       "required": [
         "name",
         "keys"
-      ]
-    },
-    "When": {
-      "description": "A condition on a variable that starts something when it becomes true.\n\nA host that only sends states - lamps going on and off, a score\ncrossing a mark, a mode taking a value - has no trigger to fire, and\nwithout this every such host has to watch its own variables and invent\ntrigger names for them, which is show logic living outside the show.\n\nThe value is read the way a binding reads one: `map` replaces it when\nit lists it, then `threshold` turns a number into 0 or 1. True is any\nvalue that is not 0, and what starts the timeline is *becoming* true,\nso a lamp that stays on plays it once rather than every frame.",
-      "type": "object",
-      "properties": {
-        "default": {
-          "description": "Value for variable values `map` does not list.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Value"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "map": {
-          "description": "Replace the variable's value by looking it up here, as on a\nbinding: `{ \"multiball\": 1 }` is true exactly in that mode.",
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": {
-            "$ref": "#/$defs/Value"
-          }
-        },
-        "threshold": {
-          "description": "A level: the value counts as true at or above it. Without one, any\nvalue that is not 0 is true.",
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        },
-        "variable": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "variable"
       ]
     }
   }

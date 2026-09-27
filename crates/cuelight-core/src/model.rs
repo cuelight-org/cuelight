@@ -1675,6 +1675,112 @@ impl Layer {
     }
 }
 
+/// A value read from a variable: the one shape everything that reads a
+/// variable uses, so a binding, a timeline's `when` and `while`, and
+/// whatever reads a variable next take the same fields and read them in
+/// the same order.
+///
+/// The order is `debounce`, then `map` (with `default`), then
+/// `threshold` or `curve`. What comes out is a value: a binding goes on
+/// to `scale`, `offset` and its `transition`; a condition takes it as
+/// true when it is not 0.
+///
+/// The name is a host variable, or for a binding failing that a value
+/// the show animates itself (a condition is an edge, and the clock does
+/// not yet stop where a show's own value crosses a mark, so a condition
+/// reads host variables only). Without a value, or with a `map` that
+/// does not list the value and no `default`, the reading has nothing to
+/// say: a binding then leaves its property as it was, a condition is
+/// false.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Reading {
+    pub variable: String,
+    /// Replace the variable's value (as text: `1`, `2.5`, `true`,
+    /// `attract`) by looking it up here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub map: Option<BTreeMap<String, Value>>,
+    /// Value for variable values `map` does not list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
+    /// A level: the value becomes 1 at or above it and 0 below. A lamp
+    /// that lights when a brightness passes a half, a `visible` that
+    /// follows a level, a condition that holds from a mark on.
+    ///
+    /// Shorthand for a `curve` of two keys with a `step` ease, and read
+    /// as exactly that curve (see [`Reading::bend`]), which is the rule
+    /// for any shorthand the format has: it is defined as the longer
+    /// form it stands for, so the two cannot drift apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<f64>,
+    /// Seconds a new value has to hold before it is read; changes
+    /// shorter than that (a strobing lamp, a bouncing switch) are never
+    /// seen. When a show loads or a scene is entered the value applies
+    /// at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debounce: Option<f64>,
+    /// Bend the value against the input instead of taking it straight.
+    ///
+    /// Keys are a track's, with the input value where a track has time,
+    /// and the same easings between them: below the first key it holds
+    /// the first value, above the last it holds the last. A lamp whose
+    /// glow wants a gamma curve, a tachometer compressed at the low end,
+    /// a loudness in decibels rather than a linear gain.
+    ///
+    /// This shapes value against input; a [`Transition`]'s `ease` shapes
+    /// a change over time. A binding can have both, and they do different
+    /// things.
+    ///
+    /// It applies after `map`, so the curve is written in the variable's
+    /// own units and a binding's `scale` stays the last change of unit.
+    /// It cannot be combined with `threshold`, which is this curve
+    /// written short.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curve: Vec<Key>,
+}
+
+impl Reading {
+    /// What `map` and `default` make of `value`: the value itself
+    /// without a map, else the mapped value, else the default. `None`
+    /// when the map does not list it and there is no default.
+    pub fn mapped(&self, value: Value) -> Option<Value> {
+        match &self.map {
+            None => Some(value),
+            Some(map) => map.get(&value.to_text()).or(self.default.as_ref()).cloned(),
+        }
+    }
+
+    /// The curve the reading bends its input through: `curve`, or the
+    /// two keys `threshold` stands for. Empty without either.
+    pub fn curve_in_effect(&self) -> std::borrow::Cow<'_, [Key]> {
+        match self.threshold {
+            // 0 up to the level, 1 from it on. Below its first key a
+            // curve holds that key's value, so where the first key sits
+            // does not matter as long as it is below the level.
+            Some(level) => std::borrow::Cow::Owned(vec![
+                Key {
+                    t: level - 1.0,
+                    v: 0.0,
+                    ease: Easing::Linear,
+                },
+                Key {
+                    t: level,
+                    v: 1.0,
+                    ease: Easing::Step,
+                },
+            ]),
+            None => std::borrow::Cow::Borrowed(&self.curve),
+        }
+    }
+
+    /// `n` bent against the input through
+    /// [`curve_in_effect`](Reading::curve_in_effect); `n` itself without
+    /// a curve.
+    pub fn bend(&self, n: f64) -> f64 {
+        sample_keys(&self.curve_in_effect(), n).unwrap_or(n)
+    }
+}
+
 /// A condition on a variable that starts something when it becomes true.
 ///
 /// A host that only sends states - lamps going on and off, a score
@@ -1682,50 +1788,35 @@ impl Layer {
 /// without this every such host has to watch its own variables and invent
 /// trigger names for them, which is show logic living outside the show.
 ///
-/// The value is read the way a binding reads one: `map` replaces it when
-/// it lists it, then `threshold` turns a number into 0 or 1. True is any
-/// value that is not 0, and what starts the timeline is *becoming* true,
-/// so a lamp that stays on plays it once rather than every frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct When {
-    pub variable: String,
-    /// Replace the variable's value by looking it up here, as on a
-    /// binding: `{ "multiball": 1 }` is true exactly in that mode.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub map: Option<BTreeMap<String, Value>>,
-    /// Value for variable values `map` does not list.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<Value>,
-    /// A level: the value counts as true at or above it. Without one, any
-    /// value that is not 0 is true.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub threshold: Option<f64>,
-}
+/// A [`Reading`], true when what it reads is not 0: `{ "variable":
+/// "mode", "map": { "multiball": 1 } }` is true exactly in that mode, and
+/// a `debounce` keeps a flickering lamp from starting the timeline over.
+/// What starts the timeline is *becoming* true, so a lamp that stays on
+/// plays it once rather than every frame.
+pub type When = Reading;
 
 /// A condition a timeline runs under, rather than starts on.
 ///
 /// Read exactly as a [`When`] is; the difference is what it does with the
 /// answer. See [`Timeline::whilst`].
-pub type While = When;
+pub type While = Reading;
 
 /// A permanent wiring of a property to a variable, evaluated every frame.
 ///
-/// Numeric properties take `variable * scale + offset`. The `text`
-/// property takes the variable as text: numbers get `scale`/`offset`
-/// applied, then `format`. The `font` property takes the variable as a
-/// font style name.
-///
-/// With `map`, the variable's value (as text: `1`, `2.5`, `true`, ...)
-/// is looked up first and the mapped value, or `default` when it is not
-/// listed, takes the variable's place. Without either, the binding does
-/// not apply and the property keeps its base value. The order is:
-/// `debounce`, `map`, `threshold`, `scale` and `offset`, `transition`.
+/// The variable is read as a [`Reading`] (its fields sit directly on the
+/// binding), then numeric properties take `value * scale + offset`. The
+/// `text` property takes the value as text: numbers get `scale`/`offset`
+/// applied, then `format`. The `font` property takes the value as a
+/// font style name. A reading with nothing to say leaves the property at
+/// its base value. The order is: `debounce`, `map`, `threshold` or
+/// `curve`, `scale` and `offset`, `transition`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Binding {
     pub property: Property,
-    pub variable: String,
+    /// How the variable is read; see [`Reading`].
+    #[serde(flatten)]
+    pub reading: Reading,
     #[serde(default = "default_scale")]
     pub scale: f64,
     #[serde(default)]
@@ -1762,81 +1853,9 @@ pub struct Binding {
     /// Words behind the value; see `prefix`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub suffix: String,
-    /// Replace the variable's value by looking it up here.
-    #[serde(default)]
-    pub map: Option<BTreeMap<String, Value>>,
-    /// Value for variable values `map` does not list.
-    #[serde(default)]
-    pub default: Option<Value>,
-    /// A level: the value becomes 1 at or above it and 0 below, before
-    /// `scale` and `offset` apply. A lamp that lights when a brightness
-    /// passes a half, a `visible` that follows a level.
-    ///
-    /// Shorthand for a `curve` of two keys with a `step` ease, and read
-    /// as exactly that curve (see [`Binding::bend`]), which is the rule
-    /// for any shorthand the format has: it is defined as the longer
-    /// form it stands for, so the two cannot drift apart.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub threshold: Option<f64>,
-    /// Seconds a new value has to hold before it reaches the property;
-    /// changes shorter than that (a strobing lamp, a bouncing switch)
-    /// never show. When a show loads or a scene is entered the value
-    /// applies at once.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub debounce: Option<f64>,
-    /// Bend the value against the input instead of scaling it straight.
-    ///
-    /// Keys are a track's, with the input value where a track has time,
-    /// and the same easings between them: below the first key it holds
-    /// the first value, above the last it holds the last. A lamp whose
-    /// glow wants a gamma curve, a tachometer compressed at the low end,
-    /// a loudness in decibels rather than a linear gain.
-    ///
-    /// This shapes value against input; a [`Transition`]'s `ease` shapes
-    /// a change over time. A binding can have both, and they do different
-    /// things.
-    ///
-    /// It applies after `map` and before `scale` and `offset`, so the
-    /// curve is written in the variable's own units and `scale` stays the
-    /// last change of unit. It cannot be combined with `threshold`, which
-    /// is this curve written short.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub curve: Vec<Key>,
     /// Ease toward a new value instead of jumping to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,
-}
-
-impl Binding {
-    /// The curve the binding bends its input through: `curve`, or the
-    /// two keys `threshold` stands for. Empty without either.
-    pub fn curve_in_effect(&self) -> std::borrow::Cow<'_, [Key]> {
-        match self.threshold {
-            // 0 up to the level, 1 from it on. Below its first key a
-            // curve holds that key's value, so where the first key sits
-            // does not matter as long as it is below the level.
-            Some(level) => std::borrow::Cow::Owned(vec![
-                Key {
-                    t: level - 1.0,
-                    v: 0.0,
-                    ease: Easing::Linear,
-                },
-                Key {
-                    t: level,
-                    v: 1.0,
-                    ease: Easing::Step,
-                },
-            ]),
-            None => std::borrow::Cow::Borrowed(&self.curve),
-        }
-    }
-
-    /// `n` bent against the input through
-    /// [`curve_in_effect`](Binding::curve_in_effect); `n` itself without
-    /// a curve.
-    pub fn bend(&self, n: f64) -> f64 {
-        sample_keys(&self.curve_in_effect(), n).unwrap_or(n)
-    }
 }
 
 /// How a bound property moves when its binding's value changes: from the

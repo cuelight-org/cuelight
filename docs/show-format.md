@@ -993,8 +993,10 @@ light, a lamp or a team color without a layer per state.
 `attract`) and uses the mapped value in its place; `default` covers values
 the map does not list, and without a default an unlisted value leaves the
 property at its base. The mapped value then goes through the same
-conversion as a plain variable (`scale`/`offset`, `format`). Highlighting
-the active player's score:
+conversion as a plain variable (`scale`/`offset`, `format`). `map` and
+`default` are part of how every reader reads a variable, not only a
+binding; see [Reading a variable](#reading-a-variable). Highlighting the
+active player's score:
 
 ```json
 { "property": "font", "variable": "player", "map": { "2": "score_active" }, "default": "score_inactive" }
@@ -1032,19 +1034,36 @@ What the show can be checked for at load is checked at load, and lands in
 `Engine::load_warnings()`. Binding or keyframing a property
 the layer's kind does not have (`font` on a shape) is rejected at load.
 
-Two more knobs sit on a binding, for inputs that are levels or that
-flicker:
+### Reading a variable
 
-- `threshold`: the value becomes 1 at or above this level and 0 below,
-  before `scale` and `offset`. A lamp whose brightness arrives as a float
-  lights at a half; with a `transition` it warms up from there. On a
-  `visible` binding it is the level the layer shows from. It is a `curve`
-  written short, and is read as exactly that curve (see below).
-- `debounce`: seconds a new value has to hold before it reaches the
-  property. Shorter changes (a strobing lamp, a switch that bounces) never
-  show. At load and on entering a scene the current value applies at once.
+Everything that reads a variable reads it the same way: a binding, a
+timeline's `when` and `while`, and whatever reads a variable next. The
+fields are the same, they sit directly on the reader, and they apply in
+the same order: `debounce`, then `map` (with `default`), then `threshold`
+or `curve`.
 
-- `curve`: bend the value against the input instead of scaling it
+- `variable`: the name read. A host variable of that name, or for a
+  binding failing that a [value the show
+  animates](#values-the-show-animates). A condition reads host variables
+  only: it is an edge, and a value the show animates crosses a mark at
+  an instant inside a frame that the clock does not stop at, so the edge
+  would land wherever the frame did. Without a value the reading has
+  nothing to say: a binding leaves its property as it was, a condition
+  is false.
+- `map` and `default`: look the value up (as text) and use what is found,
+  or the default, in its place; with a map that lists nothing and no
+  default the reading has nothing to say.
+- `threshold`: the value becomes 1 at or above this level and 0 below. A
+  lamp whose brightness arrives as a float lights at a half; with a
+  `transition` it warms up from there. On a `visible` binding it is the
+  level the layer shows from; on a condition it is where the condition
+  starts to hold. It is a `curve` written short, and is read as exactly
+  that curve (see below).
+- `debounce`: seconds a new value has to hold before it is read. Shorter
+  changes (a strobing lamp, a switch that bounces) are never seen: a
+  bound property does not move, a `when` timeline does not restart. At
+  load and on entering a scene the current value applies at once.
+- `curve`: bend the value against the input instead of taking it
   straight. Keys are a track's, with the input value where a track has
   time, and the same easings between them; below the first key it holds
   the first value, above the last it holds the last.
@@ -1070,12 +1089,14 @@ flicker:
   on `tint`, `font`, `video` or `sound` is reported as a binding that
   does nothing.
 
-The order is: `debounce`, then `map`, `threshold`, `curve`, `scale` and
-`offset`, then `transition`. So a curve is written in the variable's own
-units and `scale` stays the last change of unit.
+What comes out is a value. A binding goes on to `scale` and `offset`,
+then its `transition`, so a curve is written in the variable's own units
+and `scale` stays the last change of unit; a condition takes the value as
+true when it is not 0.
 
 ```json
 { "property": "visible", "variable": "lamp_41", "threshold": 0.5, "debounce": 0.05 }
+{ "name": "flash", "when": { "variable": "lamp_41", "threshold": 0.5, "debounce": 0.05 }, "tracks": [] }
 ```
 
 ### Transitions
@@ -1243,12 +1264,14 @@ A timeline is a keyframed animation owned by its layer:
   { "name": "flash", "when": { "variable": "lamp_12", "threshold": 0.5 }, "tracks": [] }
   ```
 
-  The value is read the way a binding reads one: `map` (with `default`)
-  replaces it when it lists it, then `threshold` turns a number into 0 or
-  1. True is anything that is not 0, so `{ "variable": "mode", "map": {
-  "multiball": 1 } }` is true exactly in that mode. What starts the
-  timeline is *becoming* true, not being true, so a lamp that stays on
-  plays its animation once; going false and true again starts it again.
+  The condition is a [reading](#reading-a-variable): the same `variable`,
+  `map`, `default`, `threshold`, `curve` and `debounce` a binding has,
+  read in the same order, and it is true when what comes out is not 0.
+  So `{ "variable": "mode", "map": { "multiball": 1 } }` is true exactly
+  in that mode, and a `debounce` keeps a flickering lamp from starting
+  the timeline over. What starts the timeline is *becoming* true, not
+  being true, so a lamp that stays on plays its animation once; going
+  false and true again starts it again.
   The edge belongs to the variable, not to the scene: leaving a scene and
   coming back does not replay it, unless the condition turned true while
   the scene was away. A condition already true when the show loads counts
