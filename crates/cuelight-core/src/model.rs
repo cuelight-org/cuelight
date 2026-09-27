@@ -2227,6 +2227,12 @@ impl Track {
 /// Nothing in a show writes one. Variables are the host's inputs, and
 /// content writing them would make ownership ambiguous and allow a
 /// variable that drives a timeline that writes that variable.
+///
+/// Timelines are the one kind of value so far. Whatever a show comes to
+/// animate or decide itself next (a timer, a counter stepped by
+/// triggers, a queue whose current item is read) is another kind of
+/// value here, read and taken over the same way: the format grows by
+/// kinds of value, never by a new top-level section per mechanism.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ShowValue {
