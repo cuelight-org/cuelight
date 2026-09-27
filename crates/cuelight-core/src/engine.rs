@@ -981,7 +981,7 @@ impl Engine {
             }
             let bound = self.in_transition(root, path, index, b).or_else(|| {
                 self.binding_value(&(root, path.to_vec(), index), b)
-                    .and_then(|value| self.convert(b, value))
+                    .and_then(|value| b.convert(value, self.show.as_ref()?))
             });
             if let Some(bound) = bound {
                 pointed = Some(bound.to_text());
@@ -2247,7 +2247,7 @@ impl Engine {
             if binding.property == Property::Tint && transition.model.is_none() {
                 let target = self
                     .binding_value(site, binding)
-                    .and_then(|value| self.convert(binding, value))
+                    .and_then(|value| binding.convert(value, show))
                     .map(|value| value.to_text())
                     .and_then(|text| parse_color(&text));
                 let Some(target) = target else {
@@ -2359,7 +2359,7 @@ impl Engine {
         if change.whole && b.decimals.is_none() {
             n = n.round();
         }
-        Some(Value::Text(worded(b, b.format.format(n, b.decimals))))
+        Some(Value::Text(b.worded(b.format.format(n, b.decimals))))
     }
 
     /// Resolve a layer property: its base value, overridden by bindings
@@ -2372,7 +2372,7 @@ impl Engine {
         for (index, b) in bindings.filter(|(_, b)| b.property == prop) {
             let bound = self.in_transition(root, path, index, b).or_else(|| {
                 self.binding_value(&(root, path.to_vec(), index), b)
-                    .and_then(|value| self.convert(b, value))
+                    .and_then(|value| b.convert(value, self.show.as_ref()?))
             });
             if let Some(bound) = bound {
                 v = bound;
@@ -2467,40 +2467,7 @@ impl Engine {
             (Property::Text, _) => return None,
             _ => value.as_number(),
         };
-        Some(scaled(b, n))
-    }
-
-    /// Turn a bound value into what the binding's property holds. `None`
-    /// leaves the property as it was.
-    fn convert(&self, b: &Binding, value: Value) -> Option<Value> {
-        match b.property {
-            Property::Text => Some(Value::Text(worded(
-                b,
-                match value {
-                    Value::Number(n) => b.format.format(scaled(b, n), b.decimals),
-                    other => other.to_text(),
-                },
-            ))),
-            Property::Visible => Some(Value::Bool(scaled(b, value.as_number()) != 0.0)),
-            // Only real colors apply, as only declared styles do.
-            Property::Tint => match value {
-                Value::Text(color) if color.is_empty() || parse_color(&color).is_some() => {
-                    Some(Value::Text(color))
-                }
-                _ => None,
-            },
-            // Any name will do: a video nobody registered simply has no
-            // frames, as an unregistered image has no pixels.
-            Property::Video | Property::Sound => Some(Value::Text(value.to_text())),
-            // Only declared font styles apply.
-            Property::Font => match value {
-                Value::Text(style) if self.show.as_ref()?.fonts.contains_key(&style) => {
-                    Some(Value::Text(style))
-                }
-                _ => None,
-            },
-            _ => Some(Value::Number(scaled(b, value.as_number()))),
-        }
+        Some(b.scaled(n))
     }
 
     /// Whether the layer at `path` shows and sounds: its `visible`, as
@@ -2663,21 +2630,6 @@ pub fn frame_key(root: Root, path: &[usize]) -> String {
         key.push_str(&format!("/{step}"));
     }
     key
-}
-
-/// A binding's number after `threshold` or `curve`, `scale` and `offset`.
-fn scaled(b: &Binding, n: f64) -> f64 {
-    // Bent against the input before any change of unit, so the curve is
-    // written in whatever the variable counts in.
-    b.reading.bend(n) * b.scale + b.offset
-}
-
-/// A text binding's value with its words round it.
-fn worded(b: &Binding, text: String) -> String {
-    match (b.prefix.is_empty(), b.suffix.is_empty()) {
-        (true, true) => text,
-        _ => format!("{}{text}{}", b.prefix, b.suffix),
-    }
 }
 
 /// The values a show animates that a binding eases from.

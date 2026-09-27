@@ -42,6 +42,12 @@
 //!
 //! No `std::time`, no I/O, no randomness: a show plays the same way
 //! everywhere, and a test can drive it to any instant and look.
+//!
+//! The math the engine applies is public as functions over the model
+//! types, for a host that draws it: [`Easing::apply`], [`sample_keys`]
+//! and [`Track::sample`], [`Reading::bend`], [`Binding::stages`] and
+//! [`Transition::step_response`]. An editor that drew them with math of
+//! its own would disagree with the engine sooner or later.
 
 mod easing;
 mod engine;
@@ -56,11 +62,11 @@ pub use engine::{
     Voice,
 };
 pub use model::{
-    parse_color, Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape, Dots, Duck,
-    Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind, Model,
-    NumberFormat, Output, OutputMode, Pass, Property, Reading, Reel, ReelCells, Retrigger, Scaling,
-    Scene, SegmentStyle, Shadow, Shape, Sheet, Show, Stroke, Tile, Timeline, Track, Transition,
-    Triggers, When, FORMAT, MAIN_BUS,
+    parse_color, sample_keys, Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape,
+    Dots, Duck, Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind,
+    Model, NumberFormat, Output, OutputMode, Pass, Property, Reading, Reel, ReelCells, Retrigger,
+    Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet, Show, Stages, Stroke, Tile, Timeline,
+    Track, Transition, Triggers, When, FORMAT, MAIN_BUS,
 };
 pub use path::{PathData, PathElement};
 pub use value::Value;

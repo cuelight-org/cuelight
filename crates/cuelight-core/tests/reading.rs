@@ -105,3 +105,70 @@ fn a_reading_is_checked_the_same_wherever_it_is() {
         bad(r#", "curve": [{ "t": 1, "v": 0 }, { "t": 0, "v": 1 }]"#).contains("in order of input")
     );
 }
+
+#[test]
+fn the_stages_of_a_binding_are_what_the_engine_applies() {
+    use cuelight_core::{Show, Value};
+    // A text binding with every stage in play: read through a map, bent,
+    // scaled, offset, formatted and worded.
+    let show = r##"{ "name": "t", "size": [8, 8], "variables": { "gear": "high" },
+      "layers": [{ "name": "readout", "type": "text", "font": "f", "text": "",
+        "bindings": [{ "property": "text", "variable": "gear",
+          "map": { "low": 10, "high": 40 }, "default": 0,
+          "curve": [{ "t": 0, "v": 0 }, { "t": 100, "v": 50 }],
+          "scale": 2, "offset": 1, "decimals": 1, "suffix": " km/h" }] }],
+      "fonts": { "f": { "file": "none" } } }"##;
+    let parsed: Show = serde_json::from_str(show).unwrap();
+    let binding = &parsed.layers[0].bindings[0];
+    let stages = binding.stages(Value::Text("high".into()), &parsed);
+    assert_eq!(stages.mapped, Some(Value::Number(40.0)));
+    assert_eq!(stages.bent, Some(20.0));
+    assert_eq!(stages.scaled, Some(41.0));
+    assert_eq!(stages.output, Some(Value::Text("41.0 km/h".into())));
+    // And the engine says the same of the layer.
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let text = engine
+        .values()
+        .unwrap()
+        .into_iter()
+        .find(|(_, property, _)| *property == Property::Text)
+        .unwrap()
+        .2;
+    assert_eq!(Some(text), stages.output);
+    // A value the map does not list stops at the default.
+    let stages = binding.stages(Value::Text("reverse".into()), &parsed);
+    assert_eq!(stages.mapped, Some(Value::Number(0.0)));
+    assert_eq!(stages.output, Some(Value::Text("1.0 km/h".into())));
+}
+
+#[test]
+fn a_transitions_step_response_is_what_the_engine_shows() {
+    use cuelight_core::Show;
+    // A lamp driven from cold to full power: the binding's opacity at
+    // 50 ms is the filament's response at 50 ms.
+    let show = r##"{ "name": "t", "size": [8, 8], "variables": { "power": 1 },
+      "layers": [{ "name": "bulb", "type": "shape", "shape": { "rect": [0, 0, 1, 1] },
+        "fill": "#FFFFFF", "opacity": 0,
+        "bindings": [{ "property": "opacity", "variable": "power",
+          "transition": { "model": "incandescent" } }] }] }"##;
+    let parsed: Show = serde_json::from_str(show).unwrap();
+    let transition = parsed.layers[0].bindings[0].transition.as_ref().unwrap();
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.advance_to(0.05);
+    let shown = engine
+        .values()
+        .unwrap()
+        .into_iter()
+        .find(|(_, property, _)| *property == Property::Opacity)
+        .unwrap()
+        .2
+        .as_number();
+    assert!(shown > 0.0 && shown < 1.0, "{shown}: on its way up");
+    assert!((shown - transition.step_response(0.0, 1.0, 0.05)).abs() < 1e-12);
+    // An eased one is the ease over its duration.
+    let eased: cuelight_core::Transition =
+        serde_json::from_str(r#"{ "duration": 2, "ease": "linear" }"#).unwrap();
+    assert_eq!(eased.step_response(10.0, 20.0, 0.5), 12.5);
+}
