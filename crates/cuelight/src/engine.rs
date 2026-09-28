@@ -154,6 +154,15 @@ pub struct FontData {
 }
 
 impl FontData {
+    /// A font for a unit test, with no registration behind it.
+    #[cfg(all(test, feature = "outline-fonts"))]
+    pub(crate) fn for_test(bytes: &'static [u8]) -> Self {
+        Self {
+            data: Arc::from(bytes),
+            revision: 0,
+        }
+    }
+
     /// Unique to this registration for as long as the process runs, so
     /// renderers can cache their font object per upload instead of
     /// comparing bytes.
