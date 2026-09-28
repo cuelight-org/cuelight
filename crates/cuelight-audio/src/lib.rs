@@ -15,7 +15,12 @@
 //!   [`Mixer::render`] fills a buffer of interleaved stereo samples.
 //!   Called in a plain loop it renders a show's sound offline, sample-exact
 //!   against the frames ([`write_wav`] saves it).
-//! - [`Output`] (feature `live`, on by default): a mixer on a sound
+//! - `WebAudio` (feature `web`, on `wasm32`): the same for a page,
+//!   through the browser's WebAudio: the show's sounds decoded by the
+//!   browser, the voice list driving buffer sources and gain nodes on
+//!   the browser's own audio thread, and the gesture that lets sound
+//!   through. Both web hosts, the player and any other page, use it.
+//! - `Output` (feature `live`, on by default): a mixer on a sound
 //!   device's own thread, fed the voice list through a queue. The device
 //!   is opened when it is built and held. Whether to build one at all is
 //!   the host's call: a show that cannot make a sound (`Show::has_sound`)
@@ -33,6 +38,8 @@ mod wav;
 
 #[cfg(feature = "live")]
 mod live;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod web;
 
 pub use cuelight_core::Voice;
 #[cfg(feature = "live")]
@@ -40,3 +47,5 @@ pub use live::Output;
 pub use mixer::Mixer;
 pub use sound::{length, Sound, SOUND_EXTENSIONS};
 pub use wav::write_wav;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub use web::WebAudio;

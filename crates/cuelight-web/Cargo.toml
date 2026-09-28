@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 cuelight = { path = "../cuelight", version = "0.0.1" }
 cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 cuelight-loader = { path = "../cuelight-loader", version = "0.0.1" }
+cuelight-audio = { path = "../cuelight-audio", version = "0.0.1", default-features = false, features = ["web"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

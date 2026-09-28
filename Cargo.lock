@@ -573,8 +573,12 @@ dependencies = [
  "cpal",
  "cuelight-core",
  "hound",
+ "js-sys",
  "log",
  "symphonia",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -636,6 +640,7 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "cuelight",
+ "cuelight-audio",
  "cuelight-core",
  "cuelight-loader",
  "futures-util",

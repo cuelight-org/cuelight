@@ -30,7 +30,7 @@
 //!
 //! Sound goes through WebAudio: the folder's `assets/sounds/` are decoded
 //! by the browser and the engine's voice list drives buffer sources and
-//! gain nodes (the `audio` module). Browsers keep audio silent until the page has
+//! gain nodes (`cuelight_audio::WebAudio`). Browsers keep audio silent until the page has
 //! been clicked or typed into; the player resumes its context on the first
 //! such gesture, and `player.audioRunning` says whether it has.
 //! `player.audioEnabled = false` silences a show and keeps it silent
@@ -45,8 +45,6 @@
 
 #![cfg(target_arch = "wasm32")]
 
-mod audio;
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
@@ -55,6 +53,7 @@ use std::sync::{Arc, Mutex};
 use cuelight::render::Presenter;
 use cuelight::vello;
 use cuelight::Engine;
+use cuelight_audio::WebAudio;
 use cuelight_core::{Event, Value};
 use cuelight_loader::{Driver, DriverPlayer, Manifest, MANIFEST_FILE};
 use vello::util::{RenderContext, RenderSurface};
@@ -180,7 +179,7 @@ struct Inner {
     on_error: Option<js_sys::Function>,
     pending_frame: Option<i32>,
     /// The page's sound, when the browser gave us an audio context.
-    audio: Option<audio::WebAudio>,
+    audio: Option<WebAudio>,
 }
 
 impl Inner {
@@ -367,7 +366,7 @@ impl CuelightPlayer {
                 .map(|file| format!("asset {file:?} was skipped: no decoder for this format")),
         );
         // Sounds: decoded by the browser, registered by duration.
-        let mut audio = match audio::WebAudio::new() {
+        let mut audio = match WebAudio::new() {
             Ok(audio) => Some(audio),
             Err(e) => {
                 warnings.push(format!("no sound: {}", js_error_text(&e)));
@@ -458,7 +457,7 @@ impl CuelightPlayer {
             .borrow()
             .audio
             .as_ref()
-            .is_some_and(audio::WebAudio::running)
+            .is_some_and(WebAudio::running)
     }
 
     /// Ask the browser to let sound through; only works from within a
@@ -484,7 +483,7 @@ impl CuelightPlayer {
             .borrow()
             .audio
             .as_ref()
-            .is_some_and(audio::WebAudio::enabled)
+            .is_some_and(WebAudio::enabled)
     }
 
     #[wasm_bindgen(setter, js_name = audioEnabled)]
