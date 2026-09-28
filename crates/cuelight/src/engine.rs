@@ -11,9 +11,10 @@ use crate::lru::ByteLru;
 use crate::output::OutputColor;
 use crate::segments;
 use cuelight_core::{
-    frame_key, parse_color, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill, Gradient,
-    Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing, Property, Reel,
-    ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced, Value, Voice,
+    frame_key, parse_color, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill, Finding,
+    Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
+    Property, Reel, ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced, Value,
+    Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -297,30 +298,44 @@ impl Engine {
     pub fn load_show(&mut self, json: &str) -> Result<(), Error> {
         let (fonts, outline_fonts) = (&self.fonts, &self.outline_fonts);
         self.core.load_show_checked(json, |show| {
-            for (name, style) in &show.fonts {
-                let problem = if outline_fonts.contains_key(&style.file) {
-                    match style.size {
-                        Some(size) if size > 0.0 => None,
-                        Some(_) => Some("needs a size above 0"),
-                        None => Some("uses an outline font and needs a size"),
-                    }
-                } else if fonts.contains_key(&style.file) && style.size.is_some() {
-                    Some("uses a bitmap font, which has one fixed size: remove size")
-                } else {
-                    None
-                };
-                if let Some(problem) = problem {
-                    return Err(Error::InvalidShow(format!("font style {name:?} {problem}")));
+            match font_style_problems(show, fonts, outline_fonts).first() {
+                Some((name, problem)) => {
+                    Err(Error::InvalidShow(format!("font style {name:?} {problem}")))
                 }
+                None => Ok(()),
             }
-            Ok(())
         })?;
+        self.loaded();
+        Ok(())
+    }
+
+    /// Load as much of a show as can be loaded, and say what could not;
+    /// see [`cuelight_core::Engine::load_show_tolerant`]. A font style
+    /// that does not fit the font it names is a finding too, and its
+    /// text is not drawn until it does.
+    pub fn load_show_tolerant(&mut self, json: &str) -> Result<Vec<Finding>, Error> {
+        let (fonts, outline_fonts) = (&self.fonts, &self.outline_fonts);
+        let findings = self
+            .core
+            .load_show_tolerant_checked(json, |show, findings| {
+                for (name, problem) in font_style_problems(show, fonts, outline_fonts) {
+                    findings.push(Finding {
+                        path: format!("fonts.{name}"),
+                        message: format!("font style {name:?} {problem}"),
+                    });
+                }
+            })?;
+        self.loaded();
+        Ok(findings)
+    }
+
+    /// What follows a show being loaded into the core.
+    fn loaded(&mut self) {
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
         self.warnings = self.core.load_warnings().to_vec();
         if let Some(show) = self.core.show() {
             quiet_artwork(show, &self.vectors, &mut self.warnings);
         }
-        Ok(())
     }
 
     /// The core this engine wraps: the show, its state and its clock,
@@ -1963,6 +1978,34 @@ fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> 
         0
     };
     [index % columns * cw, index / columns * ch, cw, ch]
+}
+
+/// Font styles held to the fonts they name: an outline font needs a
+/// size, a bitmap font has one of its own. Each style's problem, if it
+/// has one, in name order.
+fn font_style_problems<'a>(
+    show: &'a Show,
+    fonts: &BTreeMap<String, RegisteredFont>,
+    outline_fonts: &BTreeMap<String, FontData>,
+) -> Vec<(&'a str, &'static str)> {
+    let mut out = Vec::new();
+    for (name, style) in &show.fonts {
+        let problem = if outline_fonts.contains_key(&style.file) {
+            match style.size {
+                Some(size) if size > 0.0 => None,
+                Some(_) => Some("needs a size above 0"),
+                None => Some("uses an outline font and needs a size"),
+            }
+        } else if fonts.contains_key(&style.file) && style.size.is_some() {
+            Some("uses a bitmap font, which has one fixed size: remove size")
+        } else {
+            None
+        };
+        if let Some(problem) = problem {
+            out.push((name.as_str(), problem));
+        }
+    }
+    out
 }
 
 /// Warn about artwork asking for something its kind does not have.

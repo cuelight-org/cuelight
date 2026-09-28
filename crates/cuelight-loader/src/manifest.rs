@@ -8,10 +8,11 @@
 //! conventions as [`load`](crate::load) does on disk.
 
 use crate::{
-    register_font, register_image, Driver, LoadError, IMAGE_EXTENSIONS, SOUND_EXTENSIONS,
+    register_font, register_image, Driver, LoadError, Options, IMAGE_EXTENSIONS, SOUND_EXTENSIONS,
     VECTOR_EXTENSION, VIDEO_EXTENSIONS,
 };
 use cuelight::Engine;
+use cuelight_core::Finding;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -90,6 +91,10 @@ pub struct LoadedFiles {
     /// ship, whose text was not drawn. A show problem, and the same
     /// wherever it plays.
     pub missing_fonts: Vec<String>,
+    /// What a lenient load ([`Options::lenient`]) kept going past, each
+    /// with where it is: a path in the document, or a file's path in
+    /// the show. Empty after a strict load, which stops at the first.
+    pub findings: Vec<Finding>,
 }
 
 /// A sound file of a show, undecoded: the engine registers it by
@@ -111,6 +116,17 @@ pub fn load_from_memory(
     engine: &mut Engine,
     files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<LoadedFiles, LoadError> {
+    load_from_memory_with(engine, files, &Options::default())
+}
+
+/// [`load_from_memory`] with [`Options`]: lenient, it keeps going past
+/// what a strict load refuses and reports it in
+/// [`LoadedFiles::findings`].
+pub fn load_from_memory_with(
+    engine: &mut Engine,
+    files: &BTreeMap<String, Vec<u8>>,
+    options: &Options,
+) -> Result<LoadedFiles, LoadError> {
     let asset_error = |path: &str, message: String| LoadError::Asset {
         path: PathBuf::from(path),
         message,
@@ -130,6 +146,11 @@ pub fn load_from_memory(
         sounds: Vec::new(),
         skipped: Vec::new(),
         missing_fonts: Vec::new(),
+        findings: Vec::new(),
+    };
+    let mut report = Report {
+        lenient: options.lenient,
+        findings: Vec::new(),
     };
     // Artwork is converted once every font is registered, whichever
     // order the files came in: its text is drawn with the show's own
@@ -158,42 +179,49 @@ pub fn load_from_memory(
                 loaded.skipped.push(path.clone());
             }
             "assets" if IMAGE_EXTENSIONS.contains(&extension.as_str()) => {
-                register_image(engine, stem, &extension, bytes)
-                    .map_err(|e| asset_error(path, e))?;
-                loaded.images.push(stem.to_owned());
+                match register_image(engine, stem, &extension, bytes) {
+                    Ok(()) => loaded.images.push(stem.to_owned()),
+                    Err(e) => report.note(asset_error(path, e))?,
+                }
             }
             "assets" => loaded.skipped.push(path.clone()),
             "assets/fonts" if matches!(extension.as_str(), "fnt" | "ttf" | "otf") => {
                 if loaded.fonts.iter().any(|f| f == stem) {
-                    return Err(asset_error(
+                    report.note(asset_error(
                         path,
                         format!("another font in this folder is already named {stem:?}"),
-                    ));
+                    ))?;
+                    continue;
                 }
-                if extension == "fnt" {
-                    let fnt =
-                        std::str::from_utf8(bytes).map_err(|e| asset_error(path, e.to_string()))?;
-                    register_font(engine, stem, fnt, |page| {
-                        let path = format!("assets/fonts/{page}");
-                        let bytes = files.get(&path).cloned();
-                        if bytes.is_some() {
-                            pages.push(path);
-                        }
-                        bytes
-                    })
-                    .map_err(|e| asset_error(path, e))?;
+                let registered = if extension == "fnt" {
+                    match std::str::from_utf8(bytes) {
+                        Ok(fnt) => register_font(engine, stem, fnt, |page| {
+                            let path = format!("assets/fonts/{page}");
+                            let bytes = files.get(&path).cloned();
+                            if bytes.is_some() {
+                                pages.push(path);
+                            }
+                            bytes
+                        }),
+                        Err(e) => Err(e.to_string()),
+                    }
                 } else {
                     #[cfg(feature = "outline-fonts")]
-                    engine
-                        .set_outline_font(stem, bytes.clone())
-                        .map_err(|e| asset_error(path, e.to_string()))?;
+                    {
+                        engine
+                            .set_outline_font(stem, bytes.clone())
+                            .map_err(|e| e.to_string())
+                    }
                     #[cfg(not(feature = "outline-fonts"))]
                     {
                         loaded.skipped.push(path.clone());
                         continue;
                     }
+                };
+                match registered {
+                    Ok(()) => loaded.fonts.push(stem.to_owned()),
+                    Err(e) => report.note(asset_error(path, e))?,
                 }
-                loaded.fonts.push(stem.to_owned());
             }
             "assets/sounds" if SOUND_EXTENSIONS.contains(&extension.as_str()) => {
                 loaded.sounds.push(SoundFile {
@@ -218,9 +246,9 @@ pub fn load_from_memory(
     }
 
     #[cfg(feature = "svg")]
-    let named = register_named(engine, show, files, &mut loaded, &mut artwork)?;
+    let named = register_named(engine, show, files, &mut loaded, &mut report, &mut artwork)?;
     #[cfg(not(feature = "svg"))]
-    let named = register_named(engine, show, files, &mut loaded)?;
+    let named = register_named(engine, show, files, &mut loaded, &mut report)?;
     loaded.skipped.extend(
         unclaimed
             .into_iter()
@@ -233,8 +261,13 @@ pub fn load_from_memory(
     {
         let fonts = crate::SvgFonts::of(engine);
         for (name, bytes) in artwork {
-            let missing = crate::register_vector(engine, &name, &bytes, &fonts)
-                .map_err(|e| asset_error(&name, e))?;
+            let missing = match crate::register_vector(engine, &name, &bytes, &fonts) {
+                Ok(missing) => missing,
+                Err(e) => {
+                    report.note(asset_error(&name, e))?;
+                    continue;
+                }
+            };
             for family in missing {
                 if !loaded.missing_fonts.contains(&family) {
                     loaded.missing_fonts.push(family);
@@ -244,19 +277,76 @@ pub fn load_from_memory(
         }
     }
 
-    engine.load_show(show).map_err(|source| LoadError::Engine {
+    let engine_error = |source| LoadError::Engine {
         path: PathBuf::from("show.json"),
         source,
-    })?;
-    if let Some(json) = text("test-driver.json")? {
-        loaded.driver = Some(
-            Driver::from_json(json).map_err(|message| LoadError::Driver {
+    };
+    if options.lenient {
+        let findings = engine.load_show_tolerant(show).map_err(engine_error)?;
+        report.findings.extend(findings);
+    } else {
+        engine.load_show(show).map_err(engine_error)?;
+    }
+    let driver = match text("test-driver.json") {
+        Ok(Some(json)) => Driver::from_json(json)
+            .map(Some)
+            .map_err(|message| LoadError::Driver {
                 path: PathBuf::from("test-driver.json"),
                 message,
-            })?,
-        );
-    }
+            }),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e),
+    };
+    loaded.driver = match driver {
+        Ok(driver) => driver,
+        Err(e) => {
+            report.note(e)?;
+            None
+        }
+    };
+    loaded.findings = report.findings;
     Ok(loaded)
+}
+
+/// Where a load's problems go: to the caller as an error, or, lenient,
+/// to the findings, so the load can go on.
+struct Report {
+    lenient: bool,
+    findings: Vec<Finding>,
+}
+
+impl Report {
+    /// Note a problem: a finding when lenient, the error otherwise.
+    fn note(&mut self, error: LoadError) -> Result<(), LoadError> {
+        if !self.lenient {
+            return Err(error);
+        }
+        let (path, message) = match &error {
+            LoadError::Io { path, source } => (path.clone(), source.to_string()),
+            LoadError::Asset { path, message } | LoadError::Driver { path, message } => {
+                (path.clone(), message.clone())
+            }
+            LoadError::Engine { path, source } => (path.clone(), source.to_string()),
+            LoadError::NoShowDocument(_) => return Err(error),
+        };
+        self.findings.push(Finding {
+            path: path.to_string_lossy().into_owned(),
+            message,
+        });
+        Ok(())
+    }
+}
+
+/// The show a document describes, as far as it can be read: a document
+/// a strict load takes, or else what a tolerant load keeps of it, so
+/// that what the surviving layers name is still looked for.
+fn parse_show(show: &str) -> Option<cuelight_core::Show> {
+    if let Ok(parsed) = serde_json::from_str::<cuelight_core::Show>(show) {
+        return Some(parsed);
+    }
+    let mut scratch = cuelight_core::Engine::new();
+    scratch.load_show_tolerant(show).ok()?;
+    scratch.show().cloned()
 }
 
 /// Register the assets the document names by path rather than by stem.
@@ -278,9 +368,10 @@ fn register_named(
     show: &str,
     files: &BTreeMap<String, Vec<u8>>,
     loaded: &mut LoadedFiles,
+    report: &mut Report,
     #[cfg(feature = "svg")] artwork: &mut Vec<(String, Vec<u8>)>,
 ) -> Result<Vec<String>, LoadError> {
-    let Ok(parsed) = serde_json::from_str::<cuelight_core::Show>(show) else {
+    let Some(parsed) = parse_show(show) else {
         // Not a show at all; loading it will say so properly in a moment.
         return Ok(Vec::new());
     };
@@ -294,7 +385,10 @@ fn register_named(
         if kind == Asset::Video || !is_path(&name) || done.contains(&name) {
             continue;
         }
-        safe_path(&name).map_err(|message| asset_error(&name, message))?;
+        if let Err(message) = safe_path(&name) {
+            report.note(asset_error(&name, message))?;
+            continue;
+        }
         done.push(name.clone());
         let Some(bytes) = files.get(&name) else {
             // Collected rather than raised here: all of them at once beats
@@ -307,11 +401,10 @@ fn register_named(
             .map(|(_, e)| e.to_ascii_lowercase())
             .unwrap_or_default();
         match kind {
-            Asset::Image => {
-                register_image(engine, &name, &extension, bytes)
-                    .map_err(|e| asset_error(&name, e))?;
-                loaded.images.push(name);
-            }
+            Asset::Image => match register_image(engine, &name, &extension, bytes) {
+                Ok(()) => loaded.images.push(name),
+                Err(e) => report.note(asset_error(&name, e))?,
+            },
             Asset::Vector => {
                 #[cfg(feature = "svg")]
                 artwork.push((name, bytes.clone()));
@@ -324,40 +417,54 @@ fn register_named(
                 bytes: bytes.clone(),
             }),
             Asset::Font => {
-                if extension == "fnt" {
-                    let fnt = std::str::from_utf8(bytes)
-                        .map_err(|e| asset_error(&name, e.to_string()))?;
+                let registered = if extension == "fnt" {
                     let folder = name.rsplit_once('/').map_or("", |(dir, _)| dir);
-                    register_font(engine, &name, fnt, |page| {
-                        let beside = if folder.is_empty() {
-                            page.to_owned()
-                        } else {
-                            format!("{folder}/{page}")
-                        };
-                        files.get(&beside).cloned()
-                    })
-                    .map_err(|e| asset_error(&name, e))?;
+                    match std::str::from_utf8(bytes) {
+                        Ok(fnt) => register_font(engine, &name, fnt, |page| {
+                            let beside = if folder.is_empty() {
+                                page.to_owned()
+                            } else {
+                                format!("{folder}/{page}")
+                            };
+                            files.get(&beside).cloned()
+                        }),
+                        Err(e) => Err(e.to_string()),
+                    }
                 } else {
                     #[cfg(feature = "outline-fonts")]
-                    engine
-                        .set_outline_font(&name, bytes.clone())
-                        .map_err(|e| asset_error(&name, e.to_string()))?;
+                    {
+                        engine
+                            .set_outline_font(&name, bytes.clone())
+                            .map_err(|e| e.to_string())
+                    }
                     #[cfg(not(feature = "outline-fonts"))]
                     {
                         loaded.skipped.push(name);
                         continue;
                     }
+                };
+                match registered {
+                    Ok(()) => loaded.fonts.push(name),
+                    Err(e) => report.note(asset_error(&name, e))?,
                 }
-                loaded.fonts.push(name);
             }
             Asset::Video => unreachable!("clips are the host's to open"),
         }
     }
-    if !missing.is_empty() {
+    if missing.is_empty() {
+        return Ok(done);
+    }
+    if !report.lenient {
         return Err(LoadError::Asset {
             path: PathBuf::from(missing.join(", ")),
             message: format!("{} file(s) the show names are not there", missing.len()),
         });
+    }
+    for name in missing {
+        report.note(asset_error(
+            &name,
+            "the show names this file, and it is not there".into(),
+        ))?;
     }
     Ok(done)
 }
@@ -478,7 +585,7 @@ pub(crate) fn references(show: &cuelight_core::Show) -> Vec<(Asset, String)> {
 ///
 /// Used before anything is read, to decide what to read at all.
 pub(crate) fn named_files(show: &str) -> Vec<(Asset, String, Vec<String>)> {
-    let Ok(parsed) = serde_json::from_str::<cuelight_core::Show>(show) else {
+    let Some(parsed) = parse_show(show) else {
         return Vec::new();
     };
     let mut out: Vec<(Asset, String, Vec<String>)> = Vec::new();

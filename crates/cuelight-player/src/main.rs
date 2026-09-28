@@ -984,6 +984,10 @@ struct Cli {
     /// Do not open a sound device; the show plays silently.
     #[arg(long)]
     no_audio: bool,
+    /// Play what can be played of a show that does not load whole, and
+    /// log what was left out.
+    #[arg(long)]
+    lenient: bool,
 }
 
 const DEMO_SHOW: &str = include_str!("../demo/show.json");
@@ -1176,7 +1180,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let driver = match &cli.show {
         Some(path) => {
-            let loaded = cuelight_loader::load(&mut engine, path)?;
+            let mut options = cuelight_loader::Options::default();
+            options.lenient = cli.lenient;
+            let loaded = cuelight_loader::load_with(&mut engine, path, &options)?;
+            for finding in &loaded.findings {
+                log::warn!("{finding}");
+            }
             log::info!(
                 "loaded {:?}: {} image(s), {} font(s), {} sound(s)",
                 loaded.show,

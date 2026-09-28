@@ -47,13 +47,16 @@ mod pack;
 mod svg;
 
 pub use driver::{seek, Applied, Driver, DriverPlayer, Live, LiveInput, Step};
-pub use manifest::{load_from_memory, LoadedFiles, Manifest, SoundFile, MANIFEST_FILE};
+pub use manifest::{
+    load_from_memory, load_from_memory_with, LoadedFiles, Manifest, SoundFile, MANIFEST_FILE,
+};
 #[cfg(feature = "pack")]
 pub use pack::{pack, pack_bytes, read_pack, unpack, PACK_EXTENSION};
 #[cfg(feature = "svg")]
 pub use svg::{convert_svg, Artwork, SvgFonts};
 
 use cuelight::{BitmapFont, Engine};
+use cuelight_core::Finding;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -76,6 +79,30 @@ pub enum LoadError {
     },
     #[error("{path}: {message}")]
     Driver { path: PathBuf, message: String },
+}
+
+/// How a load treats what it cannot use.
+///
+/// Strict, the default, stops at the first problem and nothing loads:
+/// what `pack` and anything shipping want. Lenient keeps going, so a
+/// show being written still shows what it can: an asset that will not
+/// decode is left unregistered and its layer draws nothing, a file the
+/// show names that is not there is reported, a driver that does not
+/// parse is left out, and the engine drops what it cannot take (see
+/// [`cuelight_core::Engine::load_show_tolerant`]). Each is a
+/// [`Finding`] in [`Loaded::findings`]. Only a show with no document at
+/// all still fails.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Options {
+    pub lenient: bool,
+}
+
+impl Options {
+    /// Keep going past what a strict load refuses.
+    pub fn lenient() -> Self {
+        Self { lenient: true }
+    }
 }
 
 /// What [`load`] found besides the show it loaded into the engine.
@@ -114,6 +141,10 @@ pub struct Loaded {
     /// wherever it plays: artwork is drawn with the show's own fonts,
     /// never the machine's.
     pub missing_fonts: Vec<String>,
+    /// What a lenient load ([`Options::lenient`]) kept going past, each
+    /// with where it is: a path in the document, or a file's path in
+    /// the show. Empty after a strict load, which stops at the first.
+    pub findings: Vec<Finding>,
 }
 
 /// File extensions (lowercase) of the sound files a show folder may hold
@@ -129,6 +160,16 @@ pub const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "avi", "mov", "m4v
 /// show loads. Fields the engine ignored are available from
 /// `engine.load_warnings()` afterwards.
 pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadError> {
+    load_with(engine, path, &Options::default())
+}
+
+/// [`load`] with [`Options`]: lenient, it keeps going past what a strict
+/// load refuses and reports it in [`Loaded::findings`].
+pub fn load_with(
+    engine: &mut Engine,
+    path: impl AsRef<Path>,
+    options: &Options,
+) -> Result<Loaded, LoadError> {
     let path = path.as_ref();
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut videos: Vec<PathBuf> = Vec::new();
@@ -180,7 +221,7 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
         }
         path.to_owned()
     };
-    let loaded = load_from_memory(engine, &files).map_err(|e| match e {
+    let loaded = load_from_memory_with(engine, &files, options).map_err(|e| match e {
         // Paths inside the show are relative; say which show.
         LoadError::NoShowDocument(_) => LoadError::NoShowDocument(path.to_owned()),
         LoadError::Engine { source, .. } => LoadError::Engine {
@@ -199,6 +240,7 @@ pub fn load(engine: &mut Engine, path: impl AsRef<Path>) -> Result<Loaded, LoadE
         sounds: loaded.sounds,
         skipped: loaded.skipped,
         missing_fonts: loaded.missing_fonts,
+        findings: loaded.findings,
     })
 }
 
