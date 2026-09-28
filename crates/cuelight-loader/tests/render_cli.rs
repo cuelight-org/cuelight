@@ -178,11 +178,11 @@ fn events_say_the_instant_a_driver_step_and_an_input_landed() {
             .any(|l| l.starts_with("   0.300  driver Trigger")),
         "{out}"
     );
-    // The slide the input started at 1.0 s ends at 1.5 s, inside the
-    // frame that runs to 1.6 s; started at the frame after 1.0 s instead
-    // it would end at 1.7 s and show up a frame later.
+    // The slide the input started at 1.0 s ends at 1.5 s, and the trace
+    // says so at that instant; started at the frame after 1.0 s instead
+    // it would end at 1.7 s.
     let done: Vec<&&str> = lines.iter().filter(|l| l.contains("done")).collect();
     assert_eq!(done.len(), 2, "{out}");
-    assert!(done[1].starts_with("   1.600"), "{out}");
+    assert!(done[1].starts_with("   1.500"), "{out}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
