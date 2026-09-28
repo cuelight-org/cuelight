@@ -20,15 +20,17 @@ use std::collections::HashMap;
 
 /// One glyph's placement data from the font description.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Glyph {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    xoffset: i32,
-    yoffset: i32,
-    xadvance: i32,
-    page: usize,
+pub(crate) struct Glyph {
+    /// Where the glyph's pixels sit on its page.
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    /// Where those pixels go, from the pen and from the top of the line.
+    pub xoffset: i32,
+    pub yoffset: i32,
+    pub xadvance: i32,
+    pub page: usize,
 }
 
 /// A parsed BMFont description (`.fnt`, text format). Page images are
@@ -107,6 +109,19 @@ impl BitmapFont {
         })
     }
 
+    /// A font made in memory rather than read from a description: one
+    /// page, these glyphs, no kerning. What an outline font rasterized
+    /// into pixels becomes.
+    #[cfg(feature = "outline-fonts")]
+    pub(crate) fn from_glyphs(line_height: i32, glyphs: HashMap<char, Glyph>) -> Self {
+        Self {
+            line_height,
+            pages: vec![String::new()],
+            glyphs,
+            kerning: HashMap::new(),
+        }
+    }
+
     /// Page image file names, in page id order, as written in the
     /// description (relative to the `.fnt` file).
     pub fn pages(&self) -> &[String] {
@@ -175,7 +190,7 @@ pub(crate) struct Rgba {
 }
 
 impl Rgba {
-    fn transparent(width: u32, height: u32) -> Self {
+    pub(crate) fn transparent(width: u32, height: u32) -> Self {
         Self {
             width,
             height,
@@ -196,7 +211,7 @@ impl Rgba {
         ]
     }
 
-    fn set(&mut self, x: i32, y: i32, px: [u8; 4]) {
+    pub(crate) fn set(&mut self, x: i32, y: i32, px: [u8; 4]) {
         if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
             return;
         }

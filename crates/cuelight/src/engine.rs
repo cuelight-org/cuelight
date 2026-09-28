@@ -227,6 +227,10 @@ struct TextRaster {
 struct TextCache {
     /// Styled fonts by style name.
     styled: HashMap<String, Arc<StyledFont>>,
+    /// Outline fonts rasterized into pixels, by font name, size and the
+    /// padding round each glyph.
+    #[cfg_attr(not(feature = "outline-fonts"), allow(dead_code))]
+    pixels: HashMap<(String, u64, u32), Arc<RegisteredFont>>,
     /// Rasters by style, text, box and alignment; `None` for text that
     /// draws nothing.
     rasters: ByteLru<String, Option<Arc<TextRaster>>>,
@@ -236,6 +240,7 @@ impl Default for TextCache {
     fn default() -> Self {
         Self {
             styled: HashMap::new(),
+            pixels: HashMap::new(),
             rasters: ByteLru::new(MAX_RASTER_BYTES),
         }
     }
@@ -276,7 +281,7 @@ pub struct Engine {
     core: cuelight_core::Engine,
     images: BTreeMap<String, ImageData>,
     vectors: BTreeMap<String, Vector>,
-    fonts: BTreeMap<String, RegisteredFont>,
+    fonts: BTreeMap<String, Arc<RegisteredFont>>,
     outline_fonts: BTreeMap<String, FontData>,
     text_cache: Mutex<TextCache>,
     /// The core's load warnings and this side's own, together.
@@ -561,7 +566,7 @@ impl Engine {
             .collect::<Result<_, _>>()?;
         self.outline_fonts.remove(name);
         self.fonts
-            .insert(name.to_owned(), RegisteredFont { font, pages });
+            .insert(name.to_owned(), Arc::new(RegisteredFont { font, pages }));
         *self.text_cache.get_mut().unwrap_or_else(|e| e.into_inner()) = TextCache::default();
         Ok(())
     }
@@ -803,6 +808,7 @@ impl Engine {
             .show()
             .and_then(|show| show.fonts.get(style_name))
             .and_then(|style| Some((style, self.outline_fonts.get(&style.file)?)))
+            .filter(|(style, _)| !self.pixels(style))
         {
             let layout = crate::outline::layout(font, text, style.size?, size, align, shown)?;
             return Some(TextDraw::Glyphs {
@@ -831,8 +837,8 @@ impl Engine {
         as_shadow: bool,
     ) -> Option<Arc<TextRaster>> {
         let style = self.core.show()?.fonts.get(style_name)?;
-        let registered = self.fonts.get(&style.file)?;
         let mut cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let registered = self.registered_font(&mut cache, style)?;
         let ink = if as_shadow { "\u{1}shadow" } else { "" };
         // Every way of asking for the whole text is one entry.
         let shown = shown.min(text.chars().count());
@@ -1100,15 +1106,19 @@ impl Engine {
             return 0.0;
         };
         #[cfg(feature = "outline-fonts")]
-        if let (Some(font), Some(size)) = (self.outline_fonts.get(&style.file), style.size) {
+        if let (Some(font), Some(size), false) = (
+            self.outline_fonts.get(&style.file),
+            style.size,
+            self.pixels(style),
+        ) {
             if let Some((top, bottom, line)) = crate::outline::ink(font, size, characters) {
                 return (line - (bottom - top)) / 2.0 - top;
             }
         }
-        let Some(registered) = self.fonts.get(&style.file) else {
+        let mut cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(registered) = self.registered_font(&mut cache, style) else {
             return 0.0;
         };
-        let cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
         let styled = cache.styled.get(style_name).cloned();
         drop(cache);
         let styled = styled.unwrap_or_else(|| {
@@ -1129,6 +1139,47 @@ impl Engine {
             Some((top, bottom)) => (styled.line() - (bottom - top)) / 2.0 - top,
             None => 0.0,
         }
+    }
+
+    /// Whether `style` is drawn as exact pixels: an outline font the
+    /// style asks it of, or any outline font on a show rendered on its
+    /// own pixel grid, where nothing should sit between two pixels.
+    #[cfg(feature = "outline-fonts")]
+    fn pixels(&self, style: &cuelight_core::FontStyle) -> bool {
+        self.outline_fonts.contains_key(&style.file)
+            && style.pixels.unwrap_or_else(|| self.core.pixel_grid())
+    }
+
+    /// The bitmap font `style` draws with: the one registered under its
+    /// name, or its outline font rasterized into pixels at its size,
+    /// once, with room round each glyph for the style's border.
+    fn registered_font(
+        &self,
+        cache: &mut TextCache,
+        style: &cuelight_core::FontStyle,
+    ) -> Option<Arc<RegisteredFont>> {
+        if let Some(registered) = self.fonts.get(&style.file) {
+            return Some(registered.clone());
+        }
+        #[cfg(feature = "outline-fonts")]
+        if self.pixels(style) {
+            let size = style.size.filter(|size| *size > 0.0)?;
+            let pad = style.border.as_ref().map_or(0, |b| b.width);
+            let key = (style.file.clone(), size.to_bits(), pad);
+            if let Some(registered) = cache.pixels.get(&key) {
+                return Some(registered.clone());
+            }
+            let font = self.outline_fonts.get(&style.file)?;
+            let (font, page) = crate::pixels::rasterize(font, size, pad)?;
+            let registered = Arc::new(RegisteredFont {
+                font,
+                pages: vec![page],
+            });
+            cache.pixels.insert(key, registered.clone());
+            return Some(registered);
+        }
+        let _ = cache;
+        None
     }
 
     /// Add a reel row to the draw list: each cell a window on its ring,
@@ -2032,7 +2083,7 @@ fn sheet_cell(sheet: Sheet, image_width: u32, image_height: u32, frame: f64) -> 
 /// has one, in name order.
 fn font_style_problems<'a>(
     show: &'a Show,
-    fonts: &BTreeMap<String, RegisteredFont>,
+    fonts: &BTreeMap<String, Arc<RegisteredFont>>,
     outline_fonts: &BTreeMap<String, FontData>,
 ) -> Vec<(&'a str, &'static str)> {
     let mut out = Vec::new();
@@ -2045,6 +2096,8 @@ fn font_style_problems<'a>(
             }
         } else if fonts.contains_key(&style.file) && style.size.is_some() {
             Some("uses a bitmap font, which has one fixed size: remove size")
+        } else if fonts.contains_key(&style.file) && style.pixels == Some(true) {
+            Some("uses a bitmap font, which is pixels already: remove pixels")
         } else {
             None
         };

@@ -511,6 +511,13 @@
           "description": "Name of the font as registered by the host, by convention the font\nfile's stem: a bitmap font (the `cuelight` crate's `set_font`) or\nan outline font (its `set_outline_font`). Which kind it is\ndecides how the text is drawn; the layers using the style do not\nchange.",
           "type": "string"
         },
+        "pixels": {
+          "description": "Draw an outline font as exact pixels: its glyphs are rasterized\nonce, at `size`, with hard edges and no antialiasing, and drawn\nas a bitmap font's are, never between pixels and never\nresampled. For a pixel font shipped as the TTF it was drawn\nfrom, and for any text on a show that is rendered on its own\npixel grid (`pixel_perfect` scaling, a gray output mode), where\nthis is the default. Not for bitmap fonts, which are pixels\nalready.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "shadow": {
           "description": "A copy of the text drawn behind it, offset.",
           "anyOf": [
