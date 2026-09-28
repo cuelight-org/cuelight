@@ -40,6 +40,22 @@ number, a `tint` or `font` binding on one is reported the same way. None
 of those is an error, since a host may set something usable later, but
 each looks exactly like a feature that does not work.
 
+Loading otherwise stops at the first problem: a color that is not one, a
+layer using a font style the show does not declare, a file the show names
+that is not there. That is right for anything shipping and useless while a
+show is being written, so there is a tolerant load beside the strict one.
+`Engine::load_show_tolerant()` keeps what it can and returns a list of
+findings, each with a path in the document (`scenes[1].layers[0]`) and what
+was wrong there. Whatever cannot be understood is dropped rather than
+guessed at: a layer that does not parse or that the strict load would
+refuse, a font style with a color that is not one (and then the layers
+that used it, each with a finding of its own), a background that is not a
+color. What is loaded is exactly a show the strict load accepts. It fails
+only when there is no document at all: JSON that does not parse, no
+`size`, a newer format. The loader's `Options::lenient()` does the same
+for a show folder, adding the files it could not use to the same list,
+and `--lenient` asks for it on the player and on `cuelight-render`.
+
 Naming note: a **show** is the whole loaded document; **scenes** are the
 switchable views inside it (see [Scenes](#scenes)).
 
@@ -1514,7 +1530,9 @@ Time is walked in fixed steps of `--fps` (60 by default) from 0, so a run
 is repeatable and a frame at a given time is reached the same way however
 many were asked for. `--events` prints the show's trace, what fired,
 started, ended and turned, when and why, and needs no GPU. `--trigger 2.5:go` and `--set 0:score=1500` add inputs at a
-time, and `--no-driver` ignores the folder's driver script.
+time, and `--no-driver` ignores the folder's driver script. `--lenient`
+renders what can be rendered of a show that does not load whole, printing
+what was left out (see [Format version](#format-version)).
 
 By default a frame is the canvas at the show's own size. `--scale N`
 writes what a host would show instead, N times that size: fitted the way

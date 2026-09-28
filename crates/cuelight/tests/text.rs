@@ -126,6 +126,25 @@ fn undeclared_font_style_is_rejected() {
 }
 
 #[test]
+fn a_tolerant_load_reports_a_font_style_that_does_not_fit_its_font() {
+    let mut engine = engine();
+    // A bitmap font has one size; giving it another is refused outright,
+    // and reported by a tolerant load, which draws nothing for it.
+    let show = SHOW.replace(
+        r#""white": { "file": "blocks""#,
+        r#""white": { "file": "blocks", "size": 12"#,
+    );
+    assert_ne!(show, SHOW);
+    let err = engine.load_show(&show).unwrap_err().to_string();
+    assert!(err.contains("remove size"), "{err}");
+    let findings = engine.load_show_tolerant(&show).unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].path, "fonts.white");
+    assert!(findings[0].message.contains("remove size"), "{findings:?}");
+    assert!(engine.show().is_some());
+}
+
+#[test]
 fn keyframing_text_is_rejected() {
     let mut engine = Engine::new();
     let show = SHOW.replace(

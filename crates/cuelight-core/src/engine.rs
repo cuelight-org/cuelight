@@ -114,7 +114,7 @@ fn color_text([r, g, b, a]: [u8; 4]) -> String {
 /// A layer is named by its tree and its path of child indices down it,
 /// never by its name: names need not be unique, and a scene's layers
 /// start over from the scene.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Root {
     /// The show's own, always present layers.
     Show,
@@ -725,52 +725,95 @@ impl Engine {
         json: &str,
         check: impl FnOnce(&Show) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let invalid = |e: serde_json::Error| Error::InvalidShow(e.to_string());
-        let raw: serde_json::Value = serde_json::from_str(json).map_err(invalid)?;
-        // Refuse newer formats before interpreting anything else: their
-        // fields may mean something this engine would get wrong.
-        if let Some(found) = raw.get("format").and_then(|f| f.as_u64()) {
-            if found > u64::from(FORMAT) {
-                return Err(Error::UnsupportedFormat {
-                    found,
-                    supported: FORMAT,
-                });
-            }
+        let raw = parse_document(json)?;
+        let show = parse_show(&raw)?;
+        if let Some(problem) = problems(&show).into_iter().next() {
+            return Err(problem.error);
         }
-        let show: Show = serde_json::from_value(raw.clone()).map_err(invalid)?;
-        if show.format == 0 {
-            return Err(Error::InvalidShow("format 0 does not exist".into()));
-        }
-        parse_color(&show.background)
-            .ok_or_else(|| Error::InvalidColor(show.background.clone()))?;
-        for output in std::iter::once(&show.output)
-            .chain(show.scenes.iter().filter_map(|s| s.output.as_ref()))
-        {
-            if let Some(tint) = &output.tint {
-                parse_color(tint).ok_or_else(|| Error::InvalidColor(tint.clone()))?;
-            }
-            for pass in output.passes.iter().flatten() {
-                let Pass::Dots(dots) = pass;
-                if !(dots.size > 0.0 && dots.size <= 1.0) {
-                    return Err(Error::InvalidShow(
-                        "a dots pass needs a size above 0, up to 1".into(),
-                    ));
-                }
-                if !(0.0..=1.0).contains(&dots.glow) {
-                    return Err(Error::InvalidShow(
-                        "a dots pass needs a glow from 0 to 1".into(),
-                    ));
-                }
-                if let Some(unlit) = &dots.unlit {
-                    parse_color(unlit).ok_or_else(|| Error::InvalidColor(unlit.clone()))?;
-                }
-            }
-        }
-        validate(&show)?;
         check(&show)?;
+        self.install(&raw, show);
+        Ok(())
+    }
+
+    /// Load as much of a show as can be loaded, and say what could not.
+    ///
+    /// [`load_show`](Engine::load_show) gives up at the first problem,
+    /// which is right for anything shipping and useless while a show is
+    /// being written: one mistake and there is nothing to look at. This
+    /// keeps going. Whatever cannot be understood is dropped rather than
+    /// guessed at, and each drop is a [`Finding`] that says where:
+    ///
+    /// - a layer that does not parse, or that [`load_show`](Engine::load_show)
+    ///   would refuse, is left out of the show, with its children;
+    /// - a font style or a show value that does not parse, or a font
+    ///   style with a color that is not one, is left out, and so are the
+    ///   layers that used it, each with a finding of its own;
+    /// - a background or output tint that is not a color, or a pass with
+    ///   nonsense in it, is dropped, and the default applies.
+    ///
+    /// What is loaded is exactly a show [`load_show`](Engine::load_show)
+    /// accepts, so everything else the engine does holds for it.
+    ///
+    /// Fails only when there is no document at all: JSON that does not
+    /// parse, a show without a name or a size, or a format newer than
+    /// this engine reads. The findings come back in document order, and
+    /// [`load_warnings`](Engine::load_warnings) are collected as always.
+    /// A show that fails to load leaves the current one in place.
+    pub fn load_show_tolerant(&mut self, json: &str) -> Result<Vec<Finding>, Error> {
+        self.load_show_tolerant_checked(json, |_, _| {})
+    }
+
+    /// [`load_show_tolerant`](Engine::load_show_tolerant) with one more
+    /// look at the loaded show, for what only a host can judge (see
+    /// [`load_show_checked`](Engine::load_show_checked)). Whatever
+    /// `check` finds is a finding beside the engine's; nothing is
+    /// dropped for it, so a check that would have refused the show in
+    /// strict loading has to be one the engine can live with.
+    pub fn load_show_tolerant_checked(
+        &mut self,
+        json: &str,
+        check: impl FnOnce(&Show, &mut Vec<Finding>),
+    ) -> Result<Vec<Finding>, Error> {
+        let mut raw = parse_document(json)?;
+        let mut findings = Vec::new();
+        // Layers and scenes are blanked rather than taken out until the
+        // end, so every finding names the place the author sees, not
+        // one shifted by the drops before it.
+        let mut blanked: Vec<Site> = Vec::new();
+        salvage(&mut raw, &mut findings, &mut blanked);
+        let mut show = parse_show(&raw)?;
+        loop {
+            let problems = problems(&show);
+            if problems.is_empty() {
+                break;
+            }
+            // Dropping one thing can leave another wanting it, so the
+            // checks run again until nothing is left to drop. Later
+            // sites first, so the index of an earlier one still holds.
+            for problem in problems.iter().rev() {
+                problem.site.drop_from(&mut raw);
+            }
+            for problem in problems {
+                findings.push(problem.finding());
+                if problem.site.is_blanked() {
+                    blanked.push(problem.site);
+                }
+            }
+            show = parse_show(&raw)?;
+        }
+        remove_blanks(&mut raw, blanked);
+        show = parse_show(&raw)?;
+        debug_assert!(problems(&show).is_empty());
+        check(&show, &mut findings);
+        self.install(&raw, show);
+        Ok(findings)
+    }
+
+    /// Take a show that passed every check, replacing the current one.
+    fn install(&mut self, raw: &serde_json::Value, show: Show) {
         self.load_warnings.clear();
         if let Ok(understood) = serde_json::to_value(&show) {
-            ignored_fields(&raw, &understood, "", &mut self.load_warnings);
+            ignored_fields(raw, &understood, "", &mut self.load_warnings);
         }
         quiet_bindings(&show, &mut self.load_warnings);
         self.eased_values = eased_values(&show);
@@ -779,7 +822,6 @@ impl Engine {
         self.reel_sites = reel_sites(&show);
         self.show = Some(show);
         self.restart();
-        Ok(())
     }
 
     /// Put the loaded show back to its beginning: time 0, the first
@@ -3308,339 +3350,747 @@ fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<ReadSite>) {
     out
 }
 
+/// Parse a show document as JSON, refusing a format this engine does
+/// not read before interpreting anything else: its fields may mean
+/// something this engine would get wrong.
+fn parse_document(json: &str) -> Result<serde_json::Value, Error> {
+    let raw: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| Error::InvalidShow(e.to_string()))?;
+    if let Some(found) = raw.get("format").and_then(|f| f.as_u64()) {
+        if found > u64::from(FORMAT) {
+            return Err(Error::UnsupportedFormat {
+                found,
+                supported: FORMAT,
+            });
+        }
+    }
+    Ok(raw)
+}
+
+/// The show a parsed document describes, when it describes one at all.
+fn parse_show(raw: &serde_json::Value) -> Result<Show, Error> {
+    let show: Show =
+        serde_json::from_value(raw.clone()).map_err(|e| Error::InvalidShow(e.to_string()))?;
+    if show.format == 0 {
+        return Err(Error::InvalidShow("format 0 does not exist".into()));
+    }
+    Ok(show)
+}
+
+/// One thing wrong with a show, and where in the document it is.
+///
+/// What a strict load refuses a show for, one at a time, and what a
+/// tolerant load drops and reports, all at once. The path is the
+/// document's: `layers[2]`, `scenes[1].layers[0].children[3]`,
+/// `fonts.score`, `output.tint`, `background`. A host loading the show's
+/// files reports its own findings in the same shape, with the file's
+/// path in the show folder for the path.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Finding {
+    pub path: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for Finding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path, self.message)
+    }
+}
+
+/// Something `load_show` refuses a show for, at the place that would
+/// have to go for the show to load.
+struct Problem {
+    site: Site,
+    error: Error,
+}
+
+impl Problem {
+    fn finding(&self) -> Finding {
+        Finding {
+            path: self.site.path(),
+            message: self.error.to_string(),
+        }
+    }
+}
+
+/// A place in the document a problem is about, and that a tolerant load
+/// drops to be rid of it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Site {
+    Background,
+    /// The tint of the show's output, or of the scene's at this index.
+    Tint(Option<usize>),
+    /// A pass of the show's output, or of the scene's at this index.
+    Pass(Option<usize>, usize),
+    /// The font style of this name.
+    Font(String),
+    /// The layer at this path down this tree.
+    Layer(Root, Vec<usize>),
+    /// The scene at this index.
+    Scene(usize),
+}
+
+impl Site {
+    /// Where this is, as a path in the document.
+    fn path(&self) -> String {
+        fn output(scene: Option<usize>) -> String {
+            match scene {
+                None => "output".to_owned(),
+                Some(i) => format!("scenes[{i}].output"),
+            }
+        }
+        match self {
+            Site::Background => "background".to_owned(),
+            Site::Tint(scene) => format!("{}.tint", output(*scene)),
+            Site::Pass(scene, i) => format!("{}.passes[{i}]", output(*scene)),
+            Site::Font(name) => format!("fonts.{name}"),
+            Site::Scene(i) => format!("scenes[{i}]"),
+            Site::Layer(root, path) => {
+                let mut out = match root {
+                    Root::Show => "layers".to_owned(),
+                    Root::Scene(i) => format!("scenes[{i}].layers"),
+                };
+                for (depth, i) in path.iter().enumerate() {
+                    if depth > 0 {
+                        out.push_str(".children");
+                    }
+                    out.push_str(&format!("[{i}]"));
+                }
+                out
+            }
+        }
+    }
+
+    /// Whether dropping this leaves a blank in its place until the end,
+    /// so that the sites after it keep their indices: a layer or a
+    /// scene. Everything else is taken out on the spot.
+    fn is_blanked(&self) -> bool {
+        matches!(self, Site::Layer(..) | Site::Scene(_))
+    }
+
+    /// The list this sits in, when it is an entry of one.
+    fn list_of<'a>(
+        &self,
+        raw: &'a mut serde_json::Value,
+    ) -> Option<(&'a mut Vec<serde_json::Value>, usize)> {
+        fn output(
+            raw: &mut serde_json::Value,
+            scene: Option<usize>,
+        ) -> Option<&mut serde_json::Value> {
+            match scene {
+                None => raw.get_mut("output"),
+                Some(i) => raw.get_mut("scenes")?.get_mut(i)?.get_mut("output"),
+            }
+        }
+        let (list, index) = match self {
+            Site::Pass(scene, i) => (output(raw, *scene)?.get_mut("passes")?, *i),
+            Site::Scene(i) => (raw.get_mut("scenes")?, *i),
+            Site::Layer(root, path) => {
+                let (last, above) = path.split_last()?;
+                let mut list = match root {
+                    Root::Show => raw.get_mut("layers")?,
+                    Root::Scene(i) => raw.get_mut("scenes")?.get_mut(*i)?.get_mut("layers")?,
+                };
+                for i in above {
+                    list = list.get_mut(*i)?.get_mut("children")?;
+                }
+                (list, *last)
+            }
+            _ => return None,
+        };
+        let list = list.as_array_mut()?;
+        (index < list.len()).then_some((list, index))
+    }
+
+    /// Take this out of the document, so that what is left loads. A
+    /// layer or a scene is blanked instead (see [`Site::is_blanked`]),
+    /// and [`remove_blanks`] takes it out.
+    fn drop_from(&self, raw: &mut serde_json::Value) {
+        match self {
+            Site::Background => {
+                raw.as_object_mut().map(|show| show.remove("background"));
+            }
+            Site::Tint(scene) => {
+                let output = match scene {
+                    None => raw.get_mut("output"),
+                    Some(i) => raw
+                        .get_mut("scenes")
+                        .and_then(|s| s.get_mut(*i))
+                        .and_then(|s| s.get_mut("output")),
+                };
+                output
+                    .and_then(serde_json::Value::as_object_mut)
+                    .map(|output| output.remove("tint"));
+            }
+            Site::Font(name) => {
+                raw.get_mut("fonts")
+                    .and_then(serde_json::Value::as_object_mut)
+                    .map(|fonts| fonts.remove(name));
+            }
+            Site::Pass(..) => {
+                if let Some((list, i)) = self.list_of(raw) {
+                    list.remove(i);
+                }
+            }
+            Site::Layer(..) => {
+                if let Some((list, i)) = self.list_of(raw) {
+                    list[i] = serde_json::json!({ "name": "", "type": "group", "children": [] });
+                }
+            }
+            Site::Scene(_) => {
+                if let Some((list, i)) = self.list_of(raw) {
+                    list[i] = serde_json::json!({ "name": "", "layers": [] });
+                }
+            }
+        }
+    }
+}
+
+/// Take the blanked layers and scenes out of the document, later ones
+/// first so the index of an earlier one still holds, and layers before
+/// the scenes that hold them.
+fn remove_blanks(raw: &mut serde_json::Value, mut blanked: Vec<Site>) {
+    blanked.sort();
+    blanked.dedup();
+    let (scenes, layers): (Vec<Site>, Vec<Site>) = blanked
+        .into_iter()
+        .partition(|site| matches!(site, Site::Scene(_)));
+    for site in layers.iter().rev().chain(scenes.iter().rev()) {
+        if let Some((list, i)) = site.list_of(raw) {
+            list.remove(i);
+        }
+    }
+}
+
+/// Blank whatever does not parse and can be done without: a layer, a
+/// font style, a variable, a show value, an output, a scene. Each is
+/// tried on its own, so one that is broken does not take the document
+/// with it, and each is a finding. What is left is a document
+/// [`parse_show`] takes, or the document was never a show. Layers and
+/// scenes are blanked and listed in `blanked`, the rest taken out.
+fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &mut Vec<Site>) {
+    fn field<T: serde::de::DeserializeOwned>(
+        object: &mut serde_json::Value,
+        key: &str,
+        path: &str,
+        findings: &mut Vec<Finding>,
+    ) {
+        let Some(object) = object.as_object_mut() else {
+            return;
+        };
+        if let Some(value) = object.get(key) {
+            if let Err(e) = serde_json::from_value::<T>(value.clone()) {
+                findings.push(Finding {
+                    path: path.to_owned(),
+                    message: e.to_string(),
+                });
+                object.remove(key);
+            }
+        }
+    }
+    fn entries<T: serde::de::DeserializeOwned>(
+        map: Option<&mut serde_json::Value>,
+        path: &str,
+        findings: &mut Vec<Finding>,
+    ) {
+        let Some(map) = map.and_then(serde_json::Value::as_object_mut) else {
+            return;
+        };
+        map.retain(
+            |name, value| match serde_json::from_value::<T>(value.clone()) {
+                Ok(_) => true,
+                Err(e) => {
+                    findings.push(Finding {
+                        path: format!("{path}.{name}"),
+                        message: e.to_string(),
+                    });
+                    false
+                }
+            },
+        );
+    }
+    if let Some(list) = raw.get_mut("layers") {
+        salvage_layers(list, Root::Show, &mut Vec::new(), findings, blanked);
+    }
+    field::<Output>(raw, "output", "output", findings);
+    entries::<crate::model::FontStyle>(raw.get_mut("fonts"), "fonts", findings);
+    entries::<Value>(raw.get_mut("variables"), "variables", findings);
+    entries::<crate::model::ShowValue>(raw.get_mut("values"), "values", findings);
+    if let Some(scenes) = raw
+        .get_mut("scenes")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for (i, scene) in scenes.iter_mut().enumerate() {
+            let here = format!("scenes[{i}]");
+            field::<Output>(scene, "output", &format!("{here}.output"), findings);
+            if let Some(list) = scene.get_mut("layers") {
+                salvage_layers(list, Root::Scene(i), &mut Vec::new(), findings, blanked);
+            }
+            if let Err(e) = serde_json::from_value::<crate::model::Scene>(scene.clone()) {
+                findings.push(Finding {
+                    path: here,
+                    message: e.to_string(),
+                });
+                let site = Site::Scene(i);
+                *scene = serde_json::json!({ "name": "", "layers": [] });
+                blanked.push(site);
+            }
+        }
+    }
+}
+
+/// [`salvage`] for one list of layers: children first, and on their
+/// own, so a broken child is one blanked layer, not a blanked group.
+fn salvage_layers(
+    list: &mut serde_json::Value,
+    root: Root,
+    path: &mut Vec<usize>,
+    findings: &mut Vec<Finding>,
+    blanked: &mut Vec<Site>,
+) {
+    let Some(list) = list.as_array_mut() else {
+        return;
+    };
+    for (i, layer) in list.iter_mut().enumerate() {
+        path.push(i);
+        if let Some(children) = layer.get_mut("children") {
+            salvage_layers(children, root, path, findings, blanked);
+        }
+        if let Err(e) = serde_json::from_value::<Layer>(layer.clone()) {
+            let site = Site::Layer(root, path.clone());
+            findings.push(Finding {
+                path: site.path(),
+                message: e.to_string(),
+            });
+            *layer = serde_json::json!({ "name": "", "type": "group", "children": [] });
+            blanked.push(site);
+        }
+        path.pop();
+    }
+}
+
+/// Everything `load_show` refuses a parsed show for, in the order it
+/// checks: the show's own fields, its outputs, its font styles, then
+/// every layer in document order, with at most one problem per site.
+/// Strict loading fails on the first; tolerant loading drops every site
+/// listed and asks again.
+fn problems(show: &Show) -> Vec<Problem> {
+    let mut out = Vec::new();
+    if parse_color(&show.background).is_none() {
+        out.push(Problem {
+            site: Site::Background,
+            error: Error::InvalidColor(show.background.clone()),
+        });
+    }
+    let outputs = std::iter::once((None, &show.output)).chain(
+        show.scenes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| Some((Some(i), s.output.as_ref()?))),
+    );
+    for (scene, output) in outputs {
+        if let Some(tint) = output.tint.as_ref().filter(|t| parse_color(t).is_none()) {
+            out.push(Problem {
+                site: Site::Tint(scene),
+                error: Error::InvalidColor(tint.clone()),
+            });
+        }
+        for (i, pass) in output.passes.iter().flatten().enumerate() {
+            if let Err(error) = pass_problem(pass) {
+                out.push(Problem {
+                    site: Site::Pass(scene, i),
+                    error,
+                });
+            }
+        }
+    }
+    validate(show, &mut out);
+    out
+}
+
+/// What is wrong with a pass, if anything.
+fn pass_problem(pass: &Pass) -> Result<(), Error> {
+    let Pass::Dots(dots) = pass;
+    if !(dots.size > 0.0 && dots.size <= 1.0) {
+        return Err(Error::InvalidShow(
+            "a dots pass needs a size above 0, up to 1".into(),
+        ));
+    }
+    if !(0.0..=1.0).contains(&dots.glow) {
+        return Err(Error::InvalidShow(
+            "a dots pass needs a glow from 0 to 1".into(),
+        ));
+    }
+    if let Some(unlit) = &dots.unlit {
+        parse_color(unlit).ok_or_else(|| Error::InvalidColor(unlit.clone()))?;
+    }
+    Ok(())
+}
+
 /// Checks `load_show` does beyond parsing: colors parse, text layers use
-/// declared font styles, only numeric properties are keyframed.
-fn validate(show: &Show) -> Result<(), Error> {
-    for style in show.fonts.values() {
-        for color in std::iter::once(&style.color)
-            .chain(style.border.as_ref().map(|b| &b.color))
-            .chain(style.shadow.as_ref().map(|s| &s.color))
+/// declared font styles, only numeric properties are keyframed. One
+/// problem per font style and per layer, the first found.
+fn validate(show: &Show, out: &mut Vec<Problem>) {
+    for (name, style) in &show.fonts {
+        if let Err(error) = font_style_problem(style) {
+            out.push(Problem {
+                site: Site::Font(name.clone()),
+                error,
+            });
+        }
+    }
+    fn layers(
+        show: &Show,
+        root: Root,
+        path: &mut Vec<usize>,
+        list: &[Layer],
+        out: &mut Vec<Problem>,
+    ) {
+        for (i, layer) in list.iter().enumerate() {
+            path.push(i);
+            if let Err(error) = layer_problem(show, layer) {
+                out.push(Problem {
+                    site: Site::Layer(root, path.clone()),
+                    error,
+                });
+            }
+            layers(show, root, path, layer.children(), out);
+            path.pop();
+        }
+    }
+    layers(show, Root::Show, &mut Vec::new(), &show.layers, out);
+    for (i, scene) in show.scenes.iter().enumerate() {
+        layers(show, Root::Scene(i), &mut Vec::new(), &scene.layers, out);
+    }
+}
+
+/// What is wrong with a font style, if anything.
+fn font_style_problem(style: &crate::model::FontStyle) -> Result<(), Error> {
+    for color in std::iter::once(&style.color)
+        .chain(style.border.as_ref().map(|b| &b.color))
+        .chain(style.shadow.as_ref().map(|s| &s.color))
+    {
+        parse_color(color).ok_or_else(|| Error::InvalidColor(color.clone()))?;
+    }
+    if let Some(shadow) = &style.shadow {
+        if !shadow.offset.iter().all(|n| n.is_finite()) {
+            return Err(Error::InvalidShow(format!(
+                "font style {:?} needs a finite shadow offset",
+                style.file
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// What is wrong with a layer itself, if anything: its children are
+/// looked at on their own.
+fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
+    if let LayerKind::Shape {
+        fill: crate::model::Fill::Gradient(gradient),
+        ..
+    } = &layer.kind
+    {
+        let stops = gradient.stops();
+        let problem = if stops.is_empty() {
+            Some("needs a stop".to_owned())
+        } else if !stops.iter().all(|s| s.at.is_finite()) {
+            Some("needs finite stop positions".to_owned())
+        } else if stops.windows(2).any(|w| w[1].at < w[0].at) {
+            Some("needs its stops in order".to_owned())
+        } else if matches!(
+            gradient,
+            crate::model::Gradient::Radial { radius, .. } if !(radius.is_finite() && *radius > 0.0)
+        ) {
+            Some("needs a radius above 0".to_owned())
+        } else {
+            stops
+                .iter()
+                .find(|s| parse_color(&s.color).is_none())
+                .map(|s| format!("has a stop that is not a color: {:?}", s.color))
+        };
+        if let Some(problem) = problem {
+            return Err(Error::InvalidShow(format!(
+                "the gradient of layer {:?} {problem}",
+                layer.name
+            )));
+        }
+    }
+    if let LayerKind::Shape {
+        stroke: Some(stroke),
+        ..
+    } = &layer.kind
+    {
+        parse_color(&stroke.color).ok_or_else(|| Error::InvalidColor(stroke.color.clone()))?;
+        if !(stroke.width.is_finite() && stroke.width > 0.0) {
+            return Err(Error::InvalidShow(format!(
+                "layer {:?} needs a stroke width above 0",
+                layer.name
+            )));
+        }
+    }
+    let font = match &layer.kind {
+        LayerKind::Text { font, .. } => Some(font),
+        LayerKind::Digits {
+            display: DigitDisplay::Reel(reel),
+            ..
+        } => reel.font.as_ref(),
+        _ => None,
+    };
+    if let Some(font) = font.filter(|font| !show.fonts.contains_key(*font)) {
+        return Err(Error::InvalidShow(format!(
+            "layer {:?} uses undeclared font style {font:?}",
+            layer.name
+        )));
+    }
+    if let LayerKind::Digits {
+        display: DigitDisplay::Reel(reel),
+        ..
+    } = &layer.kind
+    {
+        let problem = if reel.charset.is_empty() {
+            Some("needs a charset with a character in it")
+        } else if !(reel.duration.is_finite() && reel.duration > 0.0) {
+            Some("needs a duration above 0")
+        } else if !reel.stagger.is_finite() || reel.stagger < 0.0 {
+            Some("needs a stagger of 0 or more")
+        } else if reel.font.is_none() && reel.cells.is_none() {
+            Some("needs a font for its characters, or cells to draw instead")
+        } else if reel
+            .cells
+            .as_ref()
+            .is_some_and(|cells| cells.len() != reel.charset.chars().count())
         {
-            parse_color(color).ok_or_else(|| Error::InvalidColor(color.clone()))?;
+            Some("needs one cell for every character of its charset")
+        } else if reel.window == 0 {
+            Some("needs a window of at least one character")
+        } else if reel
+            .step
+            .is_some_and(|step| !step.is_finite() || step <= 0.0)
+        {
+            Some("needs a step above 0, or none at all to travel in one move")
+        } else {
+            offset_problem(&reel.offset)
+        };
+        if let Some(problem) = problem {
+            return Err(Error::InvalidShow(format!(
+                "reel of layer {:?} {problem}",
+                layer.name
+            )));
         }
-        if let Some(shadow) = &style.shadow {
-            if !shadow.offset.iter().all(|n| n.is_finite()) {
+    }
+    // Properties must exist on this kind of layer; only numeric
+    // ones can be keyframed.
+    let tracks = layer.timelines.iter().flat_map(|tl| &tl.tracks);
+    let used = tracks
+        .map(|t| t.property)
+        .chain(layer.bindings.iter().map(|b| b.property));
+    for property in used {
+        if layer.base_value(property).is_none() {
+            return Err(Error::InvalidShow(format!(
+                "layer {:?} has no {property:?} property",
+                layer.name
+            )));
+        }
+    }
+    for timeline in &layer.timelines {
+        if timeline.looping && timeline.repeat.is_some() {
+            return Err(Error::InvalidShow(format!(
+                "timeline {:?} of layer {:?} sets both loop and repeat",
+                timeline.name, layer.name
+            )));
+        }
+        if let Some(track) = timeline.tracks.iter().find(|t| !t.property.is_numeric()) {
+            return Err(Error::InvalidShow(format!(
+                "timeline {:?} of layer {:?} animates {:?}, which can only be bound",
+                timeline.name, layer.name, track.property
+            )));
+        }
+        if timeline.when.is_some() && timeline.whilst.is_some() {
+            return Err(Error::InvalidShow(format!(
+                "timeline {:?} of layer {:?} sets both when and while, which \
+                 want different things of the same condition",
+                timeline.name, layer.name
+            )));
+        }
+        for (which, condition) in [("when", &timeline.when), ("while", &timeline.whilst)] {
+            if let Some(problem) = condition.as_ref().and_then(reading_problem) {
                 return Err(Error::InvalidShow(format!(
-                    "font style {:?} needs a finite shadow offset",
-                    style.file
+                    "the {which} of timeline {:?} of layer {:?} {problem}",
+                    timeline.name, layer.name
                 )));
             }
         }
     }
-    fn layers(show: &Show, list: &[Layer]) -> Result<(), Error> {
-        for layer in list {
-            if let LayerKind::Shape {
-                fill: crate::model::Fill::Gradient(gradient),
-                ..
-            } = &layer.kind
+    if let LayerKind::Audio {
+        duck: Some(duck), ..
+    }
+    | LayerKind::Video {
+        duck: Some(duck), ..
+    } = &layer.kind
+    {
+        let finite = |n: f64| n.is_finite() && n >= 0.0;
+        let problem = if duck.under.is_empty() {
+            Some("needs a bus to listen to")
+        } else if !finite(duck.to) {
+            Some("needs a gain of 0 or more to duck to")
+        } else if !finite(duck.attack) || !finite(duck.release) {
+            Some("needs an attack and release of 0 or more")
+        } else {
+            None
+        };
+        if let Some(problem) = problem {
+            return Err(Error::InvalidShow(format!(
+                "the duck of layer {:?} {problem}",
+                layer.name
+            )));
+        }
+    }
+    for binding in &layer.bindings {
+        if let Some(problem) = reading_problem(&binding.reading) {
+            return Err(Error::InvalidShow(format!(
+                "the {:?} binding of layer {:?} {problem}",
+                binding.property, layer.name
+            )));
+        }
+        if binding.decimals.is_some_and(|d| d > 15) {
+            return Err(Error::InvalidShow(format!(
+                "the {:?} binding of layer {:?} asks for more decimals than a number has",
+                binding.property, layer.name
+            )));
+        }
+        if let Some(transition) = &binding.transition {
+            let positive = |n: f64| n.is_finite() && n > 0.0;
+            let ring = transition.wrap.is_some() || transition.direction.is_some();
+            let modelled = transition.model.is_some();
+            let problem = if matches!(binding.property, Property::Font | Property::Visible) {
+                Some("is on a binding that cannot be eased")
+            } else if binding.property == Property::Tint && ring {
+                Some("sets wrap or direction, which a color has no use for")
+            } else if modelled
+                && (positive(transition.duration)
+                    || ring
+                    || transition.step.is_some()
+                    || !transition.offset.is_empty()
+                    || transition.ease != crate::easing::Easing::default())
             {
-                let stops = gradient.stops();
-                let problem = if stops.is_empty() {
-                    Some("needs a stop".to_owned())
-                } else if !stops.iter().all(|s| s.at.is_finite()) {
-                    Some("needs finite stop positions".to_owned())
-                } else if stops.windows(2).any(|w| w[1].at < w[0].at) {
-                    Some("needs its stops in order".to_owned())
-                } else if matches!(
-                    gradient,
-                    crate::model::Gradient::Radial { radius, .. } if !(radius.is_finite() && *radius > 0.0)
-                ) {
-                    Some("needs a radius above 0".to_owned())
-                } else {
-                    stops
-                        .iter()
-                        .find(|s| parse_color(&s.color).is_none())
-                        .map(|s| format!("has a stop that is not a color: {:?}", s.color))
-                };
-                if let Some(problem) = problem {
-                    return Err(Error::InvalidShow(format!(
-                        "the gradient of layer {:?} {problem}",
-                        layer.name
-                    )));
-                }
-            }
-            if let LayerKind::Shape {
-                stroke: Some(stroke),
-                ..
-            } = &layer.kind
+                Some("follows a model, which decides its own timing, shape and way round")
+            } else if !modelled
+                && (transition.kelvin.is_some()
+                    || transition.heating.is_some()
+                    || transition.cooling.is_some())
             {
-                parse_color(&stroke.color)
-                    .ok_or_else(|| Error::InvalidColor(stroke.color.clone()))?;
-                if !(stroke.width.is_finite() && stroke.width > 0.0) {
-                    return Err(Error::InvalidShow(format!(
-                        "layer {:?} needs a stroke width above 0",
-                        layer.name
-                    )));
-                }
-            }
-            let font = match &layer.kind {
-                LayerKind::Text { font, .. } => Some(font),
-                LayerKind::Digits {
-                    display: DigitDisplay::Reel(reel),
-                    ..
-                } => reel.font.as_ref(),
-                _ => None,
+                Some("shapes a filament without naming a model to follow")
+            } else if modelled
+                && [transition.kelvin, transition.heating, transition.cooling]
+                    .into_iter()
+                    .flatten()
+                    .any(|n| !positive(n))
+            {
+                Some("needs a kelvin, heating and cooling above 0")
+            } else if !modelled && !positive(transition.duration) {
+                Some("needs a duration above 0")
+            } else if transition.wrap.is_some_and(|wrap| !positive(wrap)) {
+                Some("needs a wrap above 0")
+            } else if transition.direction.is_some() && transition.wrap.is_none() {
+                Some("sets a direction, which needs wrap")
+            } else if transition.step.is_some_and(|step| !positive(step)) {
+                Some("needs a step above 0")
+            } else {
+                offset_problem(&transition.offset)
             };
-            if let Some(font) = font.filter(|font| !show.fonts.contains_key(*font)) {
+            if let Some(problem) = problem {
                 return Err(Error::InvalidShow(format!(
-                    "layer {:?} uses undeclared font style {font:?}",
-                    layer.name
+                    "transition of the {:?} binding of layer {:?} {problem}",
+                    binding.property, layer.name
                 )));
             }
-            if let LayerKind::Digits {
-                display: DigitDisplay::Reel(reel),
-                ..
-            } = &layer.kind
-            {
-                let problem = if reel.charset.is_empty() {
-                    Some("needs a charset with a character in it")
-                } else if !(reel.duration.is_finite() && reel.duration > 0.0) {
-                    Some("needs a duration above 0")
-                } else if !reel.stagger.is_finite() || reel.stagger < 0.0 {
-                    Some("needs a stagger of 0 or more")
-                } else if reel.font.is_none() && reel.cells.is_none() {
-                    Some("needs a font for its characters, or cells to draw instead")
-                } else if reel
-                    .cells
-                    .as_ref()
-                    .is_some_and(|cells| cells.len() != reel.charset.chars().count())
-                {
-                    Some("needs one cell for every character of its charset")
-                } else if reel.window == 0 {
-                    Some("needs a window of at least one character")
-                } else if reel
-                    .step
-                    .is_some_and(|step| !step.is_finite() || step <= 0.0)
-                {
-                    Some("needs a step above 0, or none at all to travel in one move")
-                } else {
-                    offset_problem(&reel.offset)
-                };
-                if let Some(problem) = problem {
-                    return Err(Error::InvalidShow(format!(
-                        "reel of layer {:?} {problem}",
-                        layer.name
-                    )));
-                }
-            }
-            // Properties must exist on this kind of layer; only numeric
-            // ones can be keyframed.
-            let tracks = layer.timelines.iter().flat_map(|tl| &tl.tracks);
-            let used = tracks
-                .map(|t| t.property)
-                .chain(layer.bindings.iter().map(|b| b.property));
-            for property in used {
-                if layer.base_value(property).is_none() {
-                    return Err(Error::InvalidShow(format!(
-                        "layer {:?} has no {property:?} property",
-                        layer.name
-                    )));
-                }
-            }
-            for timeline in &layer.timelines {
-                if timeline.looping && timeline.repeat.is_some() {
-                    return Err(Error::InvalidShow(format!(
-                        "timeline {:?} of layer {:?} sets both loop and repeat",
-                        timeline.name, layer.name
-                    )));
-                }
-                if let Some(track) = timeline.tracks.iter().find(|t| !t.property.is_numeric()) {
-                    return Err(Error::InvalidShow(format!(
-                        "timeline {:?} of layer {:?} animates {:?}, which can only be bound",
-                        timeline.name, layer.name, track.property
-                    )));
-                }
-                if timeline.when.is_some() && timeline.whilst.is_some() {
-                    return Err(Error::InvalidShow(format!(
-                        "timeline {:?} of layer {:?} sets both when and while, which \
-                         want different things of the same condition",
-                        timeline.name, layer.name
-                    )));
-                }
-                for (which, condition) in [("when", &timeline.when), ("while", &timeline.whilst)] {
-                    if let Some(problem) = condition.as_ref().and_then(reading_problem) {
-                        return Err(Error::InvalidShow(format!(
-                            "the {which} of timeline {:?} of layer {:?} {problem}",
-                            timeline.name, layer.name
-                        )));
-                    }
-                }
-            }
-            if let LayerKind::Audio {
-                duck: Some(duck), ..
-            }
-            | LayerKind::Video {
-                duck: Some(duck), ..
-            } = &layer.kind
-            {
-                let finite = |n: f64| n.is_finite() && n >= 0.0;
-                let problem = if duck.under.is_empty() {
-                    Some("needs a bus to listen to")
-                } else if !finite(duck.to) {
-                    Some("needs a gain of 0 or more to duck to")
-                } else if !finite(duck.attack) || !finite(duck.release) {
-                    Some("needs an attack and release of 0 or more")
-                } else {
-                    None
-                };
-                if let Some(problem) = problem {
-                    return Err(Error::InvalidShow(format!(
-                        "the duck of layer {:?} {problem}",
-                        layer.name
-                    )));
-                }
-            }
-            for binding in &layer.bindings {
-                if let Some(problem) = reading_problem(&binding.reading) {
-                    return Err(Error::InvalidShow(format!(
-                        "the {:?} binding of layer {:?} {problem}",
-                        binding.property, layer.name
-                    )));
-                }
-                if binding.decimals.is_some_and(|d| d > 15) {
-                    return Err(Error::InvalidShow(format!(
-                        "the {:?} binding of layer {:?} asks for more decimals than a number has",
-                        binding.property, layer.name
-                    )));
-                }
-                if let Some(transition) = &binding.transition {
-                    let positive = |n: f64| n.is_finite() && n > 0.0;
-                    let ring = transition.wrap.is_some() || transition.direction.is_some();
-                    let modelled = transition.model.is_some();
-                    let problem = if matches!(binding.property, Property::Font | Property::Visible)
-                    {
-                        Some("is on a binding that cannot be eased")
-                    } else if binding.property == Property::Tint && ring {
-                        Some("sets wrap or direction, which a color has no use for")
-                    } else if modelled
-                        && (positive(transition.duration)
-                            || ring
-                            || transition.step.is_some()
-                            || !transition.offset.is_empty()
-                            || transition.ease != crate::easing::Easing::default())
-                    {
-                        Some("follows a model, which decides its own timing, shape and way round")
-                    } else if !modelled
-                        && (transition.kelvin.is_some()
-                            || transition.heating.is_some()
-                            || transition.cooling.is_some())
-                    {
-                        Some("shapes a filament without naming a model to follow")
-                    } else if modelled
-                        && [transition.kelvin, transition.heating, transition.cooling]
-                            .into_iter()
-                            .flatten()
-                            .any(|n| !positive(n))
-                    {
-                        Some("needs a kelvin, heating and cooling above 0")
-                    } else if !modelled && !positive(transition.duration) {
-                        Some("needs a duration above 0")
-                    } else if transition.wrap.is_some_and(|wrap| !positive(wrap)) {
-                        Some("needs a wrap above 0")
-                    } else if transition.direction.is_some() && transition.wrap.is_none() {
-                        Some("sets a direction, which needs wrap")
-                    } else if transition.step.is_some_and(|step| !positive(step)) {
-                        Some("needs a step above 0")
-                    } else {
-                        offset_problem(&transition.offset)
-                    };
-                    if let Some(problem) = problem {
-                        return Err(Error::InvalidShow(format!(
-                            "transition of the {:?} binding of layer {:?} {problem}",
-                            binding.property, layer.name
-                        )));
-                    }
-                }
-                // A modelled tint takes a power level, not a colour: the
-                // filament decides what colour that is.
-                let lamp = binding
-                    .transition
-                    .as_ref()
-                    .is_some_and(|t| t.model.is_some());
-                if binding.property == Property::Tint && !lamp {
-                    let mapped = binding.reading.map.iter().flat_map(|m| m.values());
-                    for value in mapped.chain(&binding.reading.default) {
-                        let color = matches!(value, Value::Text(c) if c.is_empty()
-                            || parse_color(c).is_some());
-                        if !color {
-                            return Err(Error::InvalidShow(format!(
-                                "tint binding of layer {:?} maps to {value:?}, not a color",
-                                layer.name
-                            )));
-                        }
-                    }
-                }
-                if binding.property != Property::Font {
-                    continue;
-                }
-                let mapped = binding.reading.map.iter().flat_map(|m| m.values());
-                for value in mapped.chain(&binding.reading.default) {
-                    let known =
-                        matches!(value, Value::Text(style) if show.fonts.contains_key(style));
-                    if !known {
-                        return Err(Error::InvalidShow(format!(
-                            "font binding of layer {:?} maps to {value:?}, not a declared font style",
-                            layer.name
-                        )));
-                    }
-                }
-            }
-            if matches!(
-                layer.kind,
-                LayerKind::Group { .. } | LayerKind::Audio { .. }
-            ) && layer.anchor.is_some()
-            {
-                return Err(Error::InvalidShow(format!(
-                    "layer {:?} has an anchor, but no content box",
-                    layer.name
-                )));
-            }
-            if let LayerKind::Image {
-                tint: Some(tint), ..
-            } = &layer.kind
-            {
-                parse_color(tint).ok_or_else(|| Error::InvalidColor(tint.clone()))?;
-            }
-            if let Some(media) = layer.kind.media() {
-                let gain = match &layer.kind {
-                    LayerKind::Audio { gain, .. } | LayerKind::Video { gain, .. } => *gain,
-                    _ => 1.0,
-                };
-                let problem = if media.looping && media.repeat.is_some() {
-                    Some("sets both loop and repeat")
-                } else if !media.delay.is_finite() || media.delay < 0.0 {
-                    Some("needs a delay of 0 or more")
-                } else if media.repeat.is_some_and(|r| !r.is_finite() || r < 0.0) {
-                    Some("needs a repeat of 0 or more")
-                } else if !gain.is_finite() || gain < 0.0 {
-                    Some("needs a gain of 0 or more")
-                } else if media.retrigger == Retrigger::Overlap && media.voices == 0 {
-                    Some("needs at least one voice to overlap")
-                } else if media.retrigger == Retrigger::Overlap && media.kind == MediaKind::Video {
-                    Some("cannot overlap: a video layer shows one picture at a time")
-                } else if media.names.is_empty() {
-                    Some("names nothing to play")
-                } else if !media.rest.is_finite() || media.rest < 0.0 {
-                    Some("needs a rest of 0 or more")
-                } else {
-                    None
-                };
-                if let Some(problem) = problem {
-                    let kind = match media.kind {
-                        MediaKind::Sound => "audio",
-                        MediaKind::Video => "video",
-                    };
-                    return Err(Error::InvalidShow(format!(
-                        "{kind} layer {:?} {problem}",
-                        layer.name
-                    )));
-                }
-            }
-            layers(show, layer.children())?;
         }
-        Ok(())
+        // A modelled tint takes a power level, not a colour: the
+        // filament decides what colour that is.
+        let lamp = binding
+            .transition
+            .as_ref()
+            .is_some_and(|t| t.model.is_some());
+        if binding.property == Property::Tint && !lamp {
+            let mapped = binding.reading.map.iter().flat_map(|m| m.values());
+            for value in mapped.chain(&binding.reading.default) {
+                let color = matches!(value, Value::Text(c) if c.is_empty()
+                    || parse_color(c).is_some());
+                if !color {
+                    return Err(Error::InvalidShow(format!(
+                        "tint binding of layer {:?} maps to {value:?}, not a color",
+                        layer.name
+                    )));
+                }
+            }
+        }
+        if binding.property != Property::Font {
+            continue;
+        }
+        let mapped = binding.reading.map.iter().flat_map(|m| m.values());
+        for value in mapped.chain(&binding.reading.default) {
+            let known = matches!(value, Value::Text(style) if show.fonts.contains_key(style));
+            if !known {
+                return Err(Error::InvalidShow(format!(
+                    "font binding of layer {:?} maps to {value:?}, not a declared font style",
+                    layer.name
+                )));
+            }
+        }
     }
-    show.layer_trees().try_for_each(|tree| layers(show, tree))
+    if matches!(
+        layer.kind,
+        LayerKind::Group { .. } | LayerKind::Audio { .. }
+    ) && layer.anchor.is_some()
+    {
+        return Err(Error::InvalidShow(format!(
+            "layer {:?} has an anchor, but no content box",
+            layer.name
+        )));
+    }
+    if let LayerKind::Image {
+        tint: Some(tint), ..
+    } = &layer.kind
+    {
+        parse_color(tint).ok_or_else(|| Error::InvalidColor(tint.clone()))?;
+    }
+    if let Some(media) = layer.kind.media() {
+        let gain = match &layer.kind {
+            LayerKind::Audio { gain, .. } | LayerKind::Video { gain, .. } => *gain,
+            _ => 1.0,
+        };
+        let problem = if media.looping && media.repeat.is_some() {
+            Some("sets both loop and repeat")
+        } else if !media.delay.is_finite() || media.delay < 0.0 {
+            Some("needs a delay of 0 or more")
+        } else if media.repeat.is_some_and(|r| !r.is_finite() || r < 0.0) {
+            Some("needs a repeat of 0 or more")
+        } else if !gain.is_finite() || gain < 0.0 {
+            Some("needs a gain of 0 or more")
+        } else if media.retrigger == Retrigger::Overlap && media.voices == 0 {
+            Some("needs at least one voice to overlap")
+        } else if media.retrigger == Retrigger::Overlap && media.kind == MediaKind::Video {
+            Some("cannot overlap: a video layer shows one picture at a time")
+        } else if media.names.is_empty() {
+            Some("names nothing to play")
+        } else if !media.rest.is_finite() || media.rest < 0.0 {
+            Some("needs a rest of 0 or more")
+        } else {
+            None
+        };
+        if let Some(problem) = problem {
+            let kind = match media.kind {
+                MediaKind::Sound => "audio",
+                MediaKind::Video => "video",
+            };
+            return Err(Error::InvalidShow(format!(
+                "{kind} layer {:?} {problem}",
+                layer.name
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Warn about bindings that will quietly do nothing.

@@ -136,7 +136,8 @@ A driver file is a scripted sequence of the same commands with delays,
 standing in for a live host, optionally looping. The one next to the show
 (`test-driver.json` in a folder, `<show>.test-driver.json` beside a loose
 file) plays automatically; a second argument names another one, and
-`--no-driver` plays none.
+`--no-driver` plays none. `--lenient` plays what can be played of a show
+that does not load whole, logging what was left out.
 
 More shows live in the
 [cuelight-examples](https://github.com/francisdb/cuelight-examples)

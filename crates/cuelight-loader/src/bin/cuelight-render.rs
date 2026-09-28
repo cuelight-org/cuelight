@@ -54,6 +54,10 @@ struct Cli {
     /// Ignore the folder's driver script.
     #[arg(long)]
     no_driver: bool,
+    /// Render what can be rendered of a show that does not load whole,
+    /// and print what was left out.
+    #[arg(long)]
+    lenient: bool,
     /// Fire a trigger at a time: `--trigger 2.5:go`, repeatable.
     #[arg(long = "trigger", value_name = "TIME:NAME")]
     triggers: Vec<String>,
@@ -229,7 +233,13 @@ fn show_video_frames(
 
 fn run(cli: &Cli) -> Result<(), Stop> {
     let mut engine = Engine::new();
-    let loaded = cuelight_loader::load(&mut engine, &cli.show).map_err(|e| e.to_string())?;
+    let mut options = cuelight_loader::Options::default();
+    options.lenient = cli.lenient;
+    let loaded =
+        cuelight_loader::load_with(&mut engine, &cli.show, &options).map_err(|e| e.to_string())?;
+    for finding in &loaded.findings {
+        eprintln!("warning: {finding}");
+    }
     for name in &loaded.skipped {
         eprintln!("skipped {name}");
     }
@@ -458,6 +468,7 @@ mod tests {
             out: PathBuf::from("frames"),
             events: false,
             no_driver: false,
+            lenient: false,
             triggers: Vec::new(),
             sets: Vec::new(),
             scale: None,

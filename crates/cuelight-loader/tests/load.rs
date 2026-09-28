@@ -569,6 +569,62 @@ fn a_stem_nobody_registered_is_still_no_error() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[cfg(feature = "png")]
+#[test]
+fn a_lenient_load_keeps_going_and_says_what_it_passed() {
+    use cuelight_loader::Options;
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-lenient-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::copy(
+        shows().join("beacon/assets/orb.png"),
+        dir.join("assets/orb.png"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("assets/torn.png"), b"not a png").unwrap();
+    std::fs::write(dir.join("test-driver.json"), b"{ not a driver").unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "half", "size": [8, 8], "background": "night", "layers": [
+              { "name": "orb", "type": "image", "image": "orb" },
+              { "name": "gone", "type": "image", "image": "art/missing.png" },
+              { "name": "torn", "type": "image", "image": "torn" },
+              { "name": "odd", "type": "shape", "shape": 7 } ] }"##,
+    )
+    .unwrap();
+
+    // Strict: the first problem, and nothing loaded.
+    let mut engine = Engine::new();
+    assert!(load(&mut engine, &dir).is_err());
+    assert!(engine.show().is_none());
+
+    // Lenient: everything that can be, with every problem listed.
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_with(&mut engine, &dir, &Options::lenient()).unwrap();
+    assert_eq!(loaded.images, ["orb"]);
+    assert!(loaded.driver.is_none());
+    let paths: Vec<&str> = loaded.findings.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "assets/torn.png",
+            "art/missing.png",
+            "layers[3]",
+            "background",
+            "test-driver.json"
+        ],
+        "{:#?}",
+        loaded.findings
+    );
+    let show = engine.show().unwrap();
+    let names: Vec<&str> = show.layers.iter().map(|l| l.name.as_str()).collect();
+    // The layers whose files are missing or broken stay, drawing nothing;
+    // only the one the engine cannot take is gone.
+    assert_eq!(names, ["orb", "gone", "torn"]);
+    assert_eq!(show.background, "#000000");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[cfg(feature = "pack")]
 #[test]
 fn packing_refuses_a_show_that_names_a_file_that_is_not_there() {
