@@ -1134,6 +1134,28 @@
               "format": "uint32",
               "default": 4,
               "minimum": 0
+            },
+            "when": {
+              "description": "A variable condition that plays it on the rising edge, as a\ntimeline's `when` does; see [`Timeline::when`]. Beside\n`trigger`: either starts a play.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reading"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "while": {
+              "description": "A variable condition it plays under, as a timeline's `while`:\nit starts when the condition turns true and stops, without\n`on_end`, when it turns false. A play that ends on its own\nis not started again until the condition turns true again,\nso a one-shot sounds once per turn and a loop sounds\nthroughout. See [`Timeline::whilst`].",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reading"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -1241,6 +1263,28 @@
               "format": "uint32",
               "default": 4,
               "minimum": 0
+            },
+            "when": {
+              "description": "A variable condition that plays it on the rising edge, as a\ntimeline's `when` does; see [`Timeline::when`]. Beside\n`trigger`: either starts a play.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reading"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "while": {
+              "description": "A variable condition it plays under, as a timeline's `while`:\nit starts when the condition turns true and stops, without\n`on_end`, when it turns false. A play that ends on its own\nis not started again until the condition turns true again,\nso a one-shot sounds once per turn and a loop sounds\nthroughout. See [`Timeline::whilst`].",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reading"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [

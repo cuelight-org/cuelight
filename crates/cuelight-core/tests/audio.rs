@@ -705,3 +705,135 @@ fn a_layer_does_not_duck_under_its_own_bus() {
         bed_gain(&engine)
     );
 }
+
+#[test]
+fn a_when_condition_plays_a_sound_on_its_rising_edge() {
+    let mut engine = engine(
+        r#"{ "name": "warn", "type": "audio", "sound": "thunder",
+             "when": { "variable": "warnings", "map": { "2": 1 } } }"#,
+    );
+    engine.advance_frame(0.1);
+    assert!(voices(&engine).is_empty());
+    engine.set_variable("warnings", 2.0);
+    engine.advance_frame(0.1);
+    let v = voices(&engine);
+    assert_eq!(v.len(), 1);
+    assert_eq!(v[0].layer, "warn");
+    // Staying true is not an edge: the play goes on undisturbed.
+    engine.advance_frame(0.5);
+    assert!((voices(&engine)[0].position - 0.6).abs() < 1e-9);
+    // Turning false stops nothing; turning true again starts over.
+    engine.set_variable("warnings", 3.0);
+    engine.advance_frame(0.1);
+    assert!((voices(&engine)[0].position - 0.7).abs() < 1e-9);
+    engine.set_variable("warnings", 2.0);
+    engine.advance_frame(0.1);
+    assert!((voices(&engine)[0].position - 0.1).abs() < 1e-9);
+}
+
+#[test]
+fn a_while_condition_plays_a_loop_for_as_long_as_it_holds() {
+    let mut engine = engine(
+        r#"{ "name": "alarm", "type": "audio", "sound": "loop", "loop": true, "on_end": "done",
+             "while": { "variable": "mode", "map": { "tilt": 1 } } }"#,
+    );
+    engine.set_variable("mode", "play");
+    engine.advance_frame(0.1);
+    assert!(voices(&engine).is_empty());
+    engine.set_variable("mode", "tilt");
+    engine.advance_frame(0.1);
+    assert!(voices(&engine)[0].looping);
+    engine.advance_frame(1.0);
+    assert_eq!(voices(&engine).len(), 1);
+    // Stopping is not finishing: no `on_end`.
+    engine.set_variable("mode", "play");
+    engine.advance_frame(0.1);
+    assert!(voices(&engine).is_empty());
+    assert!(engine.drain_events().is_empty());
+    engine.set_variable("mode", "tilt");
+    engine.advance_frame(0.1);
+    assert_eq!(voices(&engine).len(), 1);
+}
+
+#[test]
+fn a_one_shot_under_while_sounds_once_per_turn() {
+    let mut engine = engine(
+        r#"{ "name": "warn", "type": "audio", "sound": "thunder", "on_end": "done",
+             "while": { "variable": "held" } }"#,
+    );
+    engine.set_variable("held", 1.0);
+    engine.advance_frame(0.1);
+    assert_eq!(voices(&engine).len(), 1);
+    // It ends on its own, and holding does not start it again.
+    engine.advance_frame(2.5);
+    assert!(voices(&engine).is_empty());
+    assert_eq!(engine.drain_events(), vec![Event::Trigger("done".into())]);
+    engine.advance_frame(1.0);
+    assert!(voices(&engine).is_empty());
+    // Turning false and true again does.
+    engine.set_variable("held", 0.0);
+    engine.advance_frame(0.1);
+    engine.set_variable("held", 1.0);
+    engine.advance_frame(0.1);
+    assert_eq!(voices(&engine).len(), 1);
+}
+
+#[test]
+fn media_conditions_belong_to_their_scene_the_way_a_timelines_do() {
+    let show = r#"{ "name": "scenes", "size": [8, 8], "scenes": [
+      { "name": "a", "trigger": "go_a", "layers": [
+        { "name": "bed", "type": "audio", "sound": "loop", "loop": true,
+          "while": { "variable": "on" } },
+        { "name": "hit", "type": "audio", "sound": "thunder",
+          "when": { "variable": "hit" } } ] },
+      { "name": "b", "trigger": "go_b", "layers": [] } ] }"#;
+    let mut engine = Engine::new();
+    engine.set_sound("thunder", 2.0).unwrap();
+    engine.set_sound("loop", 0.5).unwrap();
+    engine.load_show(show).unwrap();
+    engine.set_variable("on", 1.0);
+    engine.set_variable("hit", 1.0);
+    engine.advance_frame(0.1);
+    let names = |engine: &Engine| {
+        let mut names: Vec<String> = voices(engine).into_iter().map(|v| v.layer).collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(&engine), ["bed", "hit"]);
+    // Leaving the scene stops its sounds.
+    engine.trigger("go_b");
+    engine.advance_frame(0.1);
+    assert!(voices(&engine).is_empty());
+    // Coming back: the state starts its bed again, the edge that already
+    // happened does not replay.
+    engine.trigger("go_a");
+    engine.advance_frame(0.1);
+    assert_eq!(names(&engine), ["bed"]);
+    // Unless it turned while the scene was away.
+    engine.trigger("go_b");
+    engine.set_variable("hit", 0.0);
+    engine.advance_frame(0.1);
+    engine.set_variable("hit", 1.0);
+    engine.advance_frame(0.1);
+    engine.trigger("go_a");
+    engine.advance_frame(0.1);
+    assert_eq!(names(&engine), ["bed", "hit"]);
+}
+
+#[test]
+fn a_playhead_takes_one_condition_and_a_sound_one_it_can_read() {
+    let mut engine = Engine::new();
+    let both = show(
+        r#"{ "name": "x", "type": "audio", "sound": "thunder",
+             "when": { "variable": "a" }, "while": { "variable": "b" } }"#,
+    );
+    let err = engine.load_show(&both).unwrap_err().to_string();
+    assert!(err.contains("both when and while"), "{err}");
+    let empty =
+        show(r#"{ "name": "x", "type": "audio", "sound": "thunder", "when": { "variable": "" } }"#);
+    let err = engine.load_show(&empty).unwrap_err().to_string();
+    assert!(
+        err.contains("the when of audio layer \"x\" needs a variable"),
+        "{err}"
+    );
+}
