@@ -442,6 +442,8 @@ pub enum Which {
 pub enum Happened {
     /// A trigger fired, by the host or by the show.
     Fired { name: String, by: Firing },
+    /// The host set a variable.
+    Set { name: String, value: Value },
     /// A scene became the active one.
     Entered { scene: String, by: Cause },
     /// A timeline started, or restarted.
@@ -542,6 +544,7 @@ impl std::fmt::Display for Happened {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Happened::Fired { name, by } => write!(f, "fired {name:?} {by}"),
+            Happened::Set { name, value } => write!(f, "set {name:?} to {}", value.to_text()),
             Happened::Entered { scene, by } => write!(f, "entered scene {scene:?} {by}"),
             Happened::Started { timeline, by } => write!(f, "started {timeline} {by}"),
             Happened::Ended { timeline, held } => match held {
@@ -840,7 +843,15 @@ impl Engine {
     /// Push a named value from the host. Unknown names are accepted:
     /// content may bind to them later.
     pub fn set_variable(&mut self, name: &str, value: impl Into<Value>) {
-        self.variables.insert(name.to_owned(), value.into());
+        let value = value.into();
+        self.note(
+            self.time,
+            Happened::Set {
+                name: name.to_owned(),
+                value: value.clone(),
+            },
+        );
+        self.variables.insert(name.to_owned(), value);
     }
 
     pub fn variable(&self, name: &str) -> Option<&Value> {
@@ -1097,11 +1108,12 @@ impl Engine {
 
     /// Take the trace since the last call, oldest first: what happened
     /// inside the show and why, each at its own instant. Triggers fired
-    /// and by whom, scenes entered, timelines started (by which trigger,
-    /// at load, on entering a scene, by a condition), ended, held or
-    /// stopped, and conditions turning. A host that samples what is
-    /// playing each frame misses a run that starts and ends inside one
-    /// step; this does not.
+    /// and by whom, variables set, scenes entered, timelines started (by
+    /// which trigger, at load, on entering a scene, by a condition),
+    /// ended, held or stopped, and conditions turning. A host that
+    /// samples what is playing each frame misses a run that starts and
+    /// ends inside one step; this does not, and with the host's own
+    /// inputs in it, it is the one record of what happened to a show.
     ///
     /// Kept whether or not anyone reads it, capped at a few thousand
     /// records, so an uninterested host pays a little and never grows.
@@ -1156,6 +1168,10 @@ impl Engine {
     /// the document's base value. What the docs call precedence, answered
     /// for one property at one instant; the first with a value is the
     /// one that wins. Empty when the layer does not have the property.
+    ///
+    /// Timelines are listed for numeric properties only, since only
+    /// those can be keyframed; a text, font, tint, video or sound
+    /// property comes from its bindings and its base value.
     pub fn explain(&self, layer: &LayerPath, property: Property) -> Vec<Influence> {
         let Some(show) = &self.show else {
             return Vec::new();
