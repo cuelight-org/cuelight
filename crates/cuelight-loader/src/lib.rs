@@ -45,7 +45,7 @@ mod pack;
 #[cfg(feature = "svg")]
 mod svg;
 
-pub use driver::{seek, Driver, DriverPlayer, Live, LiveInput, Step};
+pub use driver::{seek, Applied, Driver, DriverPlayer, Live, LiveInput, Step};
 pub use manifest::{load_from_memory, LoadedFiles, Manifest, SoundFile, MANIFEST_FILE};
 #[cfg(feature = "pack")]
 pub use pack::{pack, read_pack, unpack, PACK_EXTENSION};
