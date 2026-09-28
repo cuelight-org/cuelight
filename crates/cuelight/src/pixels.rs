@@ -29,8 +29,8 @@ pub(crate) fn rasterize(font: &FontData, size: f64, pad: u32) -> Option<(BitmapF
     let metrics = font.metrics(px, LocationRef::default());
     let glyph_metrics = font.glyph_metrics(px, LocationRef::default());
     let outlines = font.outline_glyphs();
-    let (ascent, descent) = (f64::from(metrics.ascent), f64::from(metrics.descent));
-    let line_height = (ascent - descent + f64::from(metrics.leading)).round() as i32;
+    let ascent = f64::from(metrics.ascent);
+    let leading = f64::from(metrics.leading).round() as i32;
     let pad = pad as i32;
 
     // Every glyph filled, then packed on shelves left to right.
@@ -55,6 +55,27 @@ pub(crate) fn rasterize(font: &FontData, size: f64, pad: u32) -> Option<(BitmapF
             .unwrap_or_default();
         filled.push((c, advance, ink));
     }
+    // The line box is the rows the glyphs occupy, the way a bitmap
+    // font's is, not the roomier box the metrics declare: a pixel font's
+    // ascent and descent are usually a row or two past its ink, and text
+    // laid out from them sits that much low. From the highest ascender
+    // to the lowest descender of the printable ASCII characters, the
+    // text the font is for, plus the font's leading, with the baseline
+    // where the glyphs put it. A font from a foundry carries far more
+    // than that, and measured over every glyph the box comes out roomier
+    // than the metrics; whatever is outside the range keeps its own rows
+    // and hangs above or below the line, as an accented capital does in
+    // any bitmap font.
+    let (mut top, mut bottom) = (i32::MAX, i32::MIN);
+    for (_, _, ink) in filled
+        .iter()
+        .filter(|(c, _, ink)| ink.height > 0 && line_box_char(*c))
+    {
+        top = top.min(ink.top);
+        bottom = bottom.max(ink.top + ink.height as i32);
+    }
+    let (top, bottom) = if top <= bottom { (top, bottom) } else { (0, 0) };
+    let line_height = (bottom - top + leading).max(1);
     let (mut x, mut y, mut shelf) = (0u32, 0u32, 0u32);
     let mut placed: HashMap<char, (Glyph, Ink)> = HashMap::new();
     for (c, advance, ink) in filled {
@@ -74,7 +95,7 @@ pub(crate) fn rasterize(font: &FontData, size: f64, pad: u32) -> Option<(BitmapF
             width: w as i32,
             height: h as i32,
             xoffset: ink.left - pad,
-            yoffset: ink.top - pad,
+            yoffset: ink.top - top - pad,
             xadvance: advance,
             page: 0,
         };
@@ -98,6 +119,12 @@ pub(crate) fn rasterize(font: &FontData, size: f64, pad: u32) -> Option<(BitmapF
         glyphs.insert(c, glyph);
     }
     Some((BitmapFont::from_glyphs(line_height, glyphs), page))
+}
+
+/// Whether a character's ink counts towards the line box: printable
+/// ASCII, `!` to `~`.
+pub(crate) fn line_box_char(c: char) -> bool {
+    ('!'..='~').contains(&c)
 }
 
 /// A glyph's filled pixels: `width` by `height` of them, the top-left
@@ -245,8 +272,10 @@ fn fill(edges: &[[f64; 4]], ascent: f64) -> Option<Ink> {
             }
         }
     }
-    let any = pixels.iter().any(|on| *on);
-    any.then_some(Ink {
+    // Only the rows and columns that got a pixel: the outline's box
+    // reaches into a row whose centre it does not cover, and an empty
+    // edge row would count towards the line box of the whole font.
+    trim(Ink {
         left,
         top,
         width,
@@ -255,9 +284,49 @@ fn fill(edges: &[[f64; 4]], ascent: f64) -> Option<Ink> {
     })
 }
 
+/// `ink` without its empty edge rows and columns, so its box is the
+/// pixels it has; `None` when it has none.
+fn trim(ink: Ink) -> Option<Ink> {
+    let (w, h) = (ink.width as usize, ink.height as usize);
+    let at = |x: usize, y: usize| ink.pixels[y * w + x];
+    let rows: Vec<usize> = (0..h).filter(|&y| (0..w).any(|x| at(x, y))).collect();
+    let columns: Vec<usize> = (0..w).filter(|&x| (0..h).any(|y| at(x, y))).collect();
+    let (&top, &bottom) = (rows.first()?, rows.last()?);
+    let (&left, &right) = (columns.first()?, columns.last()?);
+    let (width, height) = (right - left + 1, bottom - top + 1);
+    let pixels = (0..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .map(|(x, y)| at(left + x, top + y))
+        .collect();
+    Some(Ink {
+        left: ink.left + left as i32,
+        top: ink.top + top as i32,
+        width: width as u32,
+        height: height as u32,
+        pixels,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FONT: &[u8] = include_bytes!("../tests/fonts/cuelight_test_sans.ttf");
+
+    /// The rows the printable ASCII glyphs occupy are the line: the
+    /// tallest starts on its first row and the deepest ends on its last,
+    /// whatever the metrics declare. (The test font declares 1069 up and
+    /// 293 down per 1000, which at 20 px is 27 rows for ink that spans
+    /// fewer.)
+    #[test]
+    fn the_line_box_is_the_ink_not_the_metrics() {
+        let data = FontData::for_test(FONT);
+        let (font, _) = rasterize(&data, 20.0, 0).unwrap();
+        let (top, bottom) = font.glyph_rows(line_box_char);
+        assert_eq!(top, 0);
+        assert_eq!(bottom, font.line_height());
+        assert!(font.line_height() < 27, "{}", font.line_height());
+    }
 
     /// A square from (1, 1) to (5, 5) in font space, on a line whose
     /// ascent is 8: rows 3 to 7 down from the top, columns 1 to 5.
@@ -272,15 +341,42 @@ mod tests {
         let ink = fill(&edges, 8.0).unwrap();
         assert_eq!((ink.left, ink.top, ink.width, ink.height), (1, 3, 4, 4));
         assert!(ink.pixels.iter().all(|on| *on));
-        // Half a pixel over: the centres decide, so nothing new is in.
+        // Nearly half a pixel over: the centres decide, so nothing new
+        // is in, and the box stays the four columns that are.
         let shifted: Vec<[f64; 4]> = edges
             .iter()
             .map(|&[x0, y0, x1, y1]| [x0 + 0.4, y0, x1 + 0.4, y1])
             .collect();
         let ink = fill(&shifted, 8.0).unwrap();
-        assert_eq!((ink.left, ink.width), (1, 5));
-        let rows: Vec<Vec<bool>> = ink.pixels.chunks(5).map(<[bool]>::to_vec).collect();
-        assert_eq!(rows[0], [true, true, true, true, false]);
+        assert_eq!((ink.left, ink.width), (1, 4));
+        assert!(ink.pixels.iter().all(|on| *on));
+    }
+
+    /// An outline reaching into a row it does not cover the centre of
+    /// gets no pixel there, and the box is the pixels, not the outline:
+    /// a square whose top lies 0.4 into a row starts on the row below.
+    #[test]
+    fn the_box_is_the_filled_pixels_not_the_outline() {
+        // Top edge at 0.6 rows down from the line top (y = 7.4 with an
+        // ascent of 8), so row 0's centre at 0.5 is outside it.
+        let edges = [
+            [1.0, 7.4, 4.0, 7.4],
+            [4.0, 7.4, 4.0, 4.0],
+            [4.0, 4.0, 1.0, 4.0],
+            [1.0, 4.0, 1.0, 7.4],
+        ];
+        let ink = fill(&edges, 8.0).unwrap();
+        assert_eq!((ink.left, ink.top, ink.width, ink.height), (1, 1, 3, 3));
+        assert!(ink.pixels.iter().all(|on| *on));
+        // Likewise a left edge 0.6 into a column.
+        let edges = [
+            [1.6, 8.0, 4.0, 8.0],
+            [4.0, 8.0, 4.0, 4.0],
+            [4.0, 4.0, 1.6, 4.0],
+            [1.6, 4.0, 1.6, 8.0],
+        ];
+        let ink = fill(&edges, 8.0).unwrap();
+        assert_eq!((ink.left, ink.top, ink.width, ink.height), (2, 0, 2, 4));
     }
 
     /// A ring: the hole stays empty under non-zero winding when the

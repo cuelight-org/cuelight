@@ -131,6 +131,20 @@ impl BitmapFont {
     pub fn line_height(&self) -> i32 {
         self.line_height
     }
+
+    /// The first and last rows of the line any glyph with ink among
+    /// the characters `counted` picks reaches, down from the top of the
+    /// line: `(0, line_height)` for a font whose line box is their ink.
+    #[cfg(all(test, feature = "outline-fonts"))]
+    pub(crate) fn glyph_rows(&self, counted: impl Fn(char) -> bool) -> (i32, i32) {
+        let inked = self
+            .glyphs
+            .iter()
+            .filter(|(c, g)| g.height > 0 && counted(**c));
+        inked.fold((i32::MAX, i32::MIN), |(top, bottom), (_, g)| {
+            (top.min(g.yoffset), bottom.max(g.yoffset + g.height))
+        })
+    }
 }
 
 /// Split a BMFont line into `(key, value)` pairs, the first being the tag

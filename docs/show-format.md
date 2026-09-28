@@ -993,7 +993,14 @@ no whole multiple of its design size, its edges smear. `pixels: true`
 rasterizes the font's glyphs once, at `size`, with hard edges and no
 antialiasing, and draws them the way a bitmap font is drawn: never between
 pixels, never resampled, with `border` and `shadow` as a bitmap font has
-them. On a show rendered on its own pixel grid (`pixel_perfect` scaling or
+them. Its line box is the rows its glyphs occupy, from the highest
+ascender to the lowest descender of the printable ASCII characters plus
+the font's leading, with the baseline where the glyphs put it, the way a
+bitmap font's `lineHeight` is; the roomier box a pixel font's metrics
+declare would set every line a row or two low, so a pixel TTF and its
+bitmap conversion lay out the same. Characters outside that range keep
+their own rows and hang above or below the line, as an accented capital
+does in any bitmap font. On a show rendered on its own pixel grid (`pixel_perfect` scaling or
 a gray output mode) this is the default for every outline font, since
 antialiased text is never what such a show wants; `pixels: false` asks for
 the outlines anyway. The cost is once, at first use: the characters the
