@@ -115,10 +115,12 @@ fn conditions_are_traced_as_they_turn() {
     assert_eq!(
         what,
         [
+            "0.1 set \"lamp\" to 1",
             "0.1 the when of timeline \"flash\" of layer show/0 turned true",
             "0.1 the while of timeline \"blink\" of layer show/0 turned true",
             "0.1 started timeline \"flash\" of layer show/0 as its when turned true",
             "0.1 started timeline \"blink\" of layer show/0 as its while turned true",
+            "0.2 set \"lamp\" to 0",
             "0.2 the when of timeline \"flash\" of layer show/0 turned false",
             "0.2 the while of timeline \"blink\" of layer show/0 turned false",
             "0.2 stopped timeline \"blink\" of layer show/0 as its while turned false",
