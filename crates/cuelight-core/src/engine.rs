@@ -48,6 +48,10 @@ enum Reader {
     When(usize),
     /// The `while` of the timeline at this index.
     While(usize),
+    /// The `when` of the layer's playhead (a sound or a video).
+    MediaWhen,
+    /// The `while` of the layer's playhead.
+    MediaWhile,
 }
 
 /// A debounced binding's input: the value that reached the property, and
@@ -668,6 +672,8 @@ pub struct Engine {
     /// Which timeline conditions held last frame, so becoming true can be
     /// told from staying true.
     conditions: HashMap<(Root, Vec<usize>, usize), bool>,
+    /// What each playhead's `when` or `while` last read as, by layer.
+    media_conditions: HashMap<(Root, Vec<usize>), bool>,
     /// What each pointed layer last played, so pointing one somewhere new
     /// can be told from one that simply finished.
     shown: HashMap<(Root, Vec<usize>), String>,
@@ -848,6 +854,7 @@ impl Engine {
         self.shown.clear();
         self.ducking.clear();
         self.conditions.clear();
+        self.media_conditions.clear();
         self.plays.clear();
         self.waiting.clear();
         self.events.clear();
@@ -2591,6 +2598,109 @@ impl Engine {
         for (root, path, timeline, cause) in edges {
             self.begin_timeline(root, path, timeline, self.time, cause);
         }
+        self.follow_media_conditions();
+    }
+
+    /// Play every sound and video whose `when` has just become true, or
+    /// whose `while` has, and stop those whose `while` has just become
+    /// false; the same edges a timeline's conditions are, read the same
+    /// way, with one playhead per layer where a layer has many
+    /// timelines.
+    ///
+    /// A `while` starts a play on turning true and stops it on turning
+    /// false: nothing in between. A one-shot that ends on its own while
+    /// the condition still holds is not started again, so a state does
+    /// not become a buzz; a loop plays for as long as the state does.
+    /// Stopping is not finishing and fires no `on_end`.
+    fn follow_media_conditions(&mut self) {
+        let Some(show) = &self.show else { return };
+        let showing =
+            |root: Root| root == Root::Show || Some(root) == self.active_scene.map(Root::Scene);
+        let roots: Vec<Root> = std::iter::once(Root::Show)
+            .chain((0..show.scenes.len()).map(Root::Scene))
+            .collect();
+        let mut plays: Vec<(Root, Vec<usize>)> = Vec::new();
+        let mut stops: Vec<(Root, Vec<usize>)> = Vec::new();
+        let mut now: HashMap<(Root, Vec<usize>), bool> = HashMap::new();
+        let mut forgotten: Vec<(Root, Vec<usize>)> = Vec::new();
+        for root in roots {
+            let Some(layers) = root_layers(show, root) else {
+                continue;
+            };
+            /// A playhead with a condition: where it is, and what its
+            /// `when` and `while` read as now.
+            type Conditioned = (Vec<usize>, Option<bool>, Option<bool>);
+            let mut found: Vec<Conditioned> = Vec::new();
+            fn walk(
+                engine: &Engine,
+                root: Root,
+                layers: &[Layer],
+                path: &mut Vec<usize>,
+                found: &mut Vec<Conditioned>,
+            ) {
+                for (i, layer) in layers.iter().enumerate() {
+                    path.push(i);
+                    if let Some(media) = layer.kind.media() {
+                        let holds = |reader, condition: Option<&Reading>| {
+                            let condition = condition?;
+                            Some(engine.holds(&(root, path.clone(), reader), condition))
+                        };
+                        let when = holds(Reader::MediaWhen, media.when);
+                        let whilst = holds(Reader::MediaWhile, media.whilst);
+                        if when.is_some() || whilst.is_some() {
+                            found.push((path.clone(), when, whilst));
+                        }
+                    }
+                    walk(engine, root, layer.children(), path, found);
+                    path.pop();
+                }
+            }
+            walk(self, root, layers, &mut Vec::new(), &mut found);
+            for (path, when, whilst) in found {
+                let key = (root, path.clone());
+                let was = self.media_conditions.get(&key).copied();
+                if let Some(holds) = when {
+                    // As for a timeline's `when`: away, only the fall is
+                    // remembered, so a rise while away is an edge on
+                    // return.
+                    if !showing(root) {
+                        if !holds {
+                            now.insert(key, false);
+                        }
+                        continue;
+                    }
+                    if holds && was != Some(true) {
+                        plays.push((root, path));
+                    }
+                    now.insert(key, holds);
+                } else if let Some(holds) = whilst {
+                    // A state the scene is in: away it is forgotten, so
+                    // entering the scene starts it again if it holds.
+                    if !showing(root) {
+                        forgotten.push(key);
+                        continue;
+                    }
+                    match (holds, was) {
+                        (true, Some(true)) | (false, None) | (false, Some(false)) => {}
+                        (true, _) => plays.push((root, path)),
+                        (false, Some(true)) => stops.push((root, path)),
+                    }
+                    now.insert(key, holds);
+                }
+            }
+        }
+        for key in forgotten {
+            self.media_conditions.remove(&key);
+        }
+        self.media_conditions.extend(now);
+        for (root, path) in stops {
+            self.sounding
+                .retain(|s| !(s.root == root && s.layer_path == path));
+            self.waiting.retain(|(r, p, _)| !(*r == root && *p == path));
+        }
+        for (root, path) in plays {
+            self.play(root, path, self.time);
+        }
     }
 
     /// Whether the condition at `site` reads as true right now: what it
@@ -3309,6 +3419,19 @@ fn value_conditions(show: &Show) -> Vec<(Root, Reading)> {
                 }
             }
         });
+        fn media(layers: &[Layer], show: &Show, root: Root, out: &mut Vec<(Root, Reading)>) {
+            for layer in layers {
+                if let Some(media) = layer.kind.media() {
+                    for condition in [media.when, media.whilst].into_iter().flatten() {
+                        if show.values.contains_key(&condition.variable) {
+                            out.push((root, condition.clone()));
+                        }
+                    }
+                }
+                media(layer.children(), show, root, out);
+            }
+        }
+        media(layers, show, root, &mut out);
     }
     out
 }
@@ -3335,6 +3458,17 @@ fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<ReadSite>) {
                 ];
                 for (reader, condition) in conditions {
                     if condition.as_ref().is_some_and(|c| c.debounce.is_some()) {
+                        out.1.push((root, path.clone(), reader));
+                    }
+                }
+            }
+            if let Some(media) = layer.kind.media() {
+                let conditions = [
+                    (Reader::MediaWhen, media.when),
+                    (Reader::MediaWhile, media.whilst),
+                ];
+                for (reader, condition) in conditions {
+                    if condition.is_some_and(|c| c.debounce.is_some()) {
                         out.1.push((root, path.clone(), reader));
                     }
                 }
@@ -4077,18 +4211,28 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
             Some("names nothing to play")
         } else if !media.rest.is_finite() || media.rest < 0.0 {
             Some("needs a rest of 0 or more")
+        } else if media.when.is_some() && media.whilst.is_some() {
+            Some("sets both when and while, which want different things of the same condition")
         } else {
             None
         };
+        let kind = match media.kind {
+            MediaKind::Sound => "audio",
+            MediaKind::Video => "video",
+        };
         if let Some(problem) = problem {
-            let kind = match media.kind {
-                MediaKind::Sound => "audio",
-                MediaKind::Video => "video",
-            };
             return Err(Error::InvalidShow(format!(
                 "{kind} layer {:?} {problem}",
                 layer.name
             )));
+        }
+        for (which, condition) in [("when", media.when), ("while", media.whilst)] {
+            if let Some(problem) = condition.and_then(reading_problem) {
+                return Err(Error::InvalidShow(format!(
+                    "the {which} of {kind} layer {:?} {problem}",
+                    layer.name
+                )));
+            }
         }
     }
     Ok(())
@@ -4294,6 +4438,8 @@ fn reading_at<'a>(show: &'a Show, (root, path, reader): &ReadSite) -> Option<&'a
         Reader::Binding(i) => layer.bindings.get(*i).map(|b| &b.reading),
         Reader::When(i) => layer.timelines.get(*i)?.when.as_ref(),
         Reader::While(i) => layer.timelines.get(*i)?.whilst.as_ref(),
+        Reader::MediaWhen => layer.kind.media()?.when,
+        Reader::MediaWhile => layer.kind.media()?.whilst,
     }
 }
 

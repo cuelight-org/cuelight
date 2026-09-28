@@ -750,6 +750,19 @@ pub enum LayerKind {
         /// Trigger name, or list of names, that stops it.
         #[serde(default)]
         stop: Triggers,
+        /// A variable condition that plays it on the rising edge, as a
+        /// timeline's `when` does; see [`Timeline::when`]. Beside
+        /// `trigger`: either starts a play.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<When>,
+        /// A variable condition it plays under, as a timeline's `while`:
+        /// it starts when the condition turns true and stops, without
+        /// `on_end`, when it turns false. A play that ends on its own
+        /// is not started again until the condition turns true again,
+        /// so a one-shot sounds once per turn and a loop sounds
+        /// throughout. See [`Timeline::whilst`].
+        #[serde(default, rename = "while", skip_serializing_if = "Option::is_none")]
+        whilst: Option<While>,
         /// Least seconds between one play starting and the next; a
         /// trigger that comes sooner is dropped. 0 (default) never drops.
         #[serde(default)]
@@ -810,6 +823,19 @@ pub enum LayerKind {
         /// Trigger name, or list of names, that stops it.
         #[serde(default)]
         stop: Triggers,
+        /// A variable condition that plays it on the rising edge, as a
+        /// timeline's `when` does; see [`Timeline::when`]. Beside
+        /// `trigger`: either starts a play.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        when: Option<When>,
+        /// A variable condition it plays under, as a timeline's `while`:
+        /// it starts when the condition turns true and stops, without
+        /// `on_end`, when it turns false. A play that ends on its own
+        /// is not started again until the condition turns true again,
+        /// so a one-shot sounds once per turn and a loop sounds
+        /// throughout. See [`Timeline::whilst`].
+        #[serde(default, rename = "while", skip_serializing_if = "Option::is_none")]
+        whilst: Option<While>,
         /// Least seconds between one play starting and the next; a
         /// trigger that comes sooner is dropped. 0 (default) never drops.
         #[serde(default)]
@@ -860,6 +886,10 @@ pub struct Media<'a> {
     pub pick: Pick,
     pub trigger: &'a Triggers,
     pub stop: &'a Triggers,
+    /// A condition that plays it on its rising edge.
+    pub when: Option<&'a When>,
+    /// A condition it plays under.
+    pub whilst: Option<&'a While>,
     pub autoplay: bool,
     pub looping: bool,
     pub delay: f64,
@@ -1583,6 +1613,8 @@ impl LayerKind {
                 repeat,
                 on_end,
                 stop,
+                when,
+                whilst,
                 retrigger,
                 voices,
                 rest,
@@ -1593,6 +1625,8 @@ impl LayerKind {
                 pick: *pick,
                 trigger,
                 stop,
+                when: when.as_ref(),
+                whilst: whilst.as_ref(),
                 autoplay: *autoplay,
                 looping: *looping,
                 delay: *delay,
@@ -1612,6 +1646,8 @@ impl LayerKind {
                 repeat,
                 on_end,
                 stop,
+                when,
+                whilst,
                 retrigger,
                 voices,
                 rest,
@@ -1622,6 +1658,8 @@ impl LayerKind {
                 pick: *pick,
                 trigger,
                 stop,
+                when: when.as_ref(),
+                whilst: whilst.as_ref(),
                 autoplay: *autoplay,
                 looping: *looping,
                 delay: *delay,

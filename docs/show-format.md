@@ -721,6 +721,22 @@ controlled the way a timeline is, with the same names and meanings:
   the host like a timeline's.
 - `stop` (a name or a list): a trigger that ends the play at once, without
   `on_end`.
+- `when` and `while`: a variable condition instead of a trigger, for
+  hosts that report states rather than events, meaning what they mean on
+  a [timeline](#timelines). `when` plays it on the rising edge, so a
+  warning count reaching 2 plays its sound once, and beside `trigger`
+  either starts a play. `while` plays it while the condition holds and
+  stops it, without `on_end`, when it stops holding, which is what a
+  looping bed under a mode wants. A one-shot under `while` sounds once
+  when the condition turns true and is not started again until it turns
+  true again, so a state never becomes a buzz. Video layers take both.
+
+  ```json
+  { "type": "audio", "sound": "warning_two",
+    "when": { "variable": "warnings", "map": { "2": 1 } } }
+  { "type": "audio", "sound": "alarm", "loop": true,
+    "while": { "variable": "mode", "map": { "tilt": 1 } } }
+  ```
 - `retrigger` says what the trigger does while the sound already plays:
   `restart` (default: the play so far stops and a new one begins),
   `overlap` (another play sounds on top, up to `voices` at once, default
