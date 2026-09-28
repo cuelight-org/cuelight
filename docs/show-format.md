@@ -271,6 +271,19 @@ crisp square block, which is what DMD-resolution content wants).
 `render::Presenter` honors it; hosts doing their own presentation read it
 with `Engine::scaling()` and place the frame with `render::fit`.
 
+How the canvas meets a surface of another shape is the host's to say, not
+the show's: the canvas is the show's safe area, and a layer that should
+reach the edges uses `overflow`. A host fits it inside by default, keeping
+its shape, with bars where the shapes differ (`contain`); whoever owns the
+screen may prefer to fill it, cutting the canvas edges on the long axis
+(`cover`), or to stretch it, losing the show's shape (`fill`). The names
+are the ones CSS's `object-fit` uses. Under `pixel_perfect`, `contain`
+rounds the factor down and `cover` up, and `fill` keeps a whole factor per
+axis. The player takes `--fit` and cycles the three on Tab, logging how
+many canvas pixels a `cover` cuts off; the web player takes `player.fit`.
+Offline renders are canvas-sized
+and have no fit.
+
 `passes` lists effects applied to the finished frame as it is shown, in
 order. One exists so far, `dots`, the dot matrix look: every canvas pixel
 becomes a separate dot on black.

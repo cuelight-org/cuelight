@@ -36,6 +36,12 @@
 //! `player.audioEnabled = false` silences a show and keeps it silent
 //! through later gestures; `true` lets it through again.
 //!
+//! The show is fitted inside the canvas, keeping its shape, with the
+//! canvas's own background showing beside it. `player.fit = "cover"`
+//! fills the canvas instead, cutting the canvas edges on the long axis,
+//! and `"fill"` fills it losing the show's shape; `"contain"` is the
+//! default. Whoever owns the page decides this, not the show.
+//!
 //! WebGPU only: without it `CuelightPlayer.create` rejects with a message
 //! saying so. What goes wrong on the GPU afterwards (a shader that did
 //! not compile, a validation error) stops the frames rather than drawing
@@ -50,7 +56,7 @@ use std::collections::BTreeMap;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 
-use cuelight::render::Presenter;
+use cuelight::render::{Fit, Presenter};
 use cuelight::vello;
 use cuelight::Engine;
 use cuelight_audio::WebAudio;
@@ -527,6 +533,7 @@ impl CuelightPlayer {
             size,
             surface,
             inner.engine.scaling(),
+            inner.presenter.fit(),
             [x * ratio, y * ratio],
         )?;
         let fired = inner.engine.press(at)?;
@@ -547,9 +554,27 @@ impl CuelightPlayer {
             size,
             surface,
             inner.engine.scaling(),
+            inner.presenter.fit(),
             [x * ratio, y * ratio],
         )?;
         inner.engine.pressed(at)
+    }
+
+    /// How the show is brought to the canvas: `contain`, `cover` or
+    /// `fill`, as CSS's `object-fit` names them.
+    #[wasm_bindgen(getter)]
+    pub fn fit(&self) -> String {
+        self.inner.borrow().presenter.fit().name().to_owned()
+    }
+
+    /// Bring the show to the canvas as `fit` says from the next frame
+    /// on; a word that is none of the three is refused.
+    #[wasm_bindgen(setter)]
+    pub fn set_fit(&self, fit: &str) -> Result<(), JsValue> {
+        let fit = Fit::parse(fit)
+            .ok_or_else(|| error(format!("{fit:?} is not a fit: contain, cover or fill")))?;
+        self.inner.borrow_mut().presenter.set_fit(fit);
+        Ok(())
     }
 
     /// Set a variable to a boolean, a number or a string.

@@ -672,17 +672,86 @@ fn bounds(shape: &ResolvedShape) -> Option<Rect> {
 /// With [`Scaling::PixelPerfect`] the scale is a whole number whenever
 /// the target is at least the show's size, so nearest-neighbor sampling
 /// maps every canvas pixel to an equal block.
-pub fn fit(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> (f64, f64, f64, f64) {
+/// How a host brings a canvas to a surface of another shape. A player
+/// setting, never the show's: a show's canvas is its safe area, and a
+/// layer that should reach the edges uses `overflow`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Fit {
+    /// The largest uniform scale that fits, centred: nothing is lost,
+    /// and there are bars where the shapes differ.
+    #[default]
+    Contain,
+    /// The smallest uniform scale that fills, centred: the canvas edges
+    /// on the long axis are cut off.
+    Cover,
+    /// Each axis scaled to the surface: the show's proportions are lost.
+    /// CSS's `object-fit: fill`.
+    Fill,
+}
+
+impl Fit {
+    /// The three, in the order a key cycles them.
+    pub const ALL: [Fit; 3] = [Fit::Contain, Fit::Cover, Fit::Fill];
+
+    /// The fit `name` names: `contain`, `cover` or `fill`, as CSS names them.
+    pub fn parse(name: &str) -> Option<Fit> {
+        Fit::ALL.into_iter().find(|fit| fit.name() == name)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Fit::Contain => "contain",
+            Fit::Cover => "cover",
+            Fit::Fill => "fill",
+        }
+    }
+
+    /// The one after this, round and round.
+    pub fn next(self) -> Fit {
+        let at = Fit::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Fit::ALL[(at + 1) % Fit::ALL.len()]
+    }
+}
+
+/// Where the canvas of `show` size lands on a `target` sized surface, as
+/// `(x, y, width, height)` in surface pixels, brought there as `fit`
+/// says and scaled as `scaling` says: `pixel_perfect` keeps to whole
+/// factors, rounded down to fit and up to cover, one per axis under
+/// `fill`. Under `cover` the canvas overhangs the surface, so `x` or
+/// `y` is negative and the host clips. Every edge lands on a whole
+/// pixel.
+pub fn fit(show: [u32; 2], target: [u32; 2], scaling: Scaling, fit: Fit) -> (f64, f64, f64, f64) {
     let [show_w, show_h] = show.map(f64::from);
     let [tw, th] = target.map(f64::from);
-    let mut scale = (tw / show_w).min(th / show_h);
-    if scaling == Scaling::PixelPerfect && scale >= 1.0 {
-        scale = scale.floor();
+    let whole = |scale: f64, round: fn(f64) -> f64| {
+        if scaling == Scaling::PixelPerfect && scale >= 1.0 {
+            round(scale)
+        } else {
+            scale
+        }
+    };
+    let (sx, sy) = match fit {
+        Fit::Contain => {
+            let scale = whole((tw / show_w).min(th / show_h), f64::floor);
+            (scale, scale)
+        }
+        Fit::Cover => {
+            let scale = whole((tw / show_w).max(th / show_h), f64::ceil);
+            (scale, scale)
+        }
+        Fit::Fill => (
+            whole(tw / show_w, f64::floor),
+            whole(th / show_h, f64::floor),
+        ),
+    };
+    let mut width = (show_w * sx).round().max(1.0);
+    let mut height = (show_h * sy).round().max(1.0);
+    // Never rounded up past the surface when it was meant to fit: a
+    // canvas that overhangs would be cropped rather than letterboxed.
+    if fit != Fit::Cover {
+        width = width.min(tw);
+        height = height.min(th);
     }
-    // Never rounded up past the surface: a canvas that overhangs would be
-    // cropped rather than letterboxed.
-    let width = (show_w * scale).round().min(tw).max(1.0);
-    let height = (show_h * scale).round().min(th).max(1.0);
     (
         ((tw - width) / 2.0).floor(),
         ((th - height) / 2.0).floor(),
@@ -691,9 +760,23 @@ pub fn fit(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> (f64, f64, f64
     )
 }
 
+/// How much of the canvas a `fit` on a `target` sized surface leaves
+/// out, in canvas pixels on each of the two axes: `[x, y]`, the total
+/// cut off left and right, top and bottom. Zero unless the fit is
+/// `cover`, or the surface is too small to hold a whole factor.
+pub fn cut_off(show: [u32; 2], target: [u32; 2], scaling: Scaling, fit: Fit) -> [f64; 2] {
+    let (_, _, width, height) = self::fit(show, target, scaling, fit);
+    let [show_w, show_h] = show.map(f64::from);
+    let [tw, th] = target.map(f64::from);
+    [
+        ((width - tw).max(0.0) / width * show_w).round(),
+        ((height - th).max(0.0) / height * show_h).round(),
+    ]
+}
+
 /// Where a point on a `target`-sized surface lands on the canvas, given
-/// the same `scaling` the frame was presented with; `None` when it lands
-/// in the letterbox beside the canvas rather than on it.
+/// the same `scaling` and `fit` the frame was presented with; `None`
+/// when it lands in the letterbox beside the canvas rather than on it.
 ///
 /// What a host needs to turn a click or a touch into something
 /// [`Engine::press`](crate::Engine::press) can answer, and the same
@@ -703,9 +786,10 @@ pub fn canvas_at(
     show: [u32; 2],
     target: [u32; 2],
     scaling: Scaling,
+    fit: Fit,
     [px, py]: [f64; 2],
 ) -> Option<[f64; 2]> {
-    let (x, y, width, height) = fit(show, target, scaling);
+    let (x, y, width, height) = self::fit(show, target, scaling, fit);
     let [show_w, show_h] = show.map(f64::from);
     let at = [(px - x) / width * show_w, (py - y) / height * show_h];
     let inside = (0.0..=show_w).contains(&at[0]) && (0.0..=show_h).contains(&at[1]);
@@ -1152,6 +1236,8 @@ pub struct Presented {
 pub struct Presenter {
     images: ImageCache,
     native: Option<NativeTarget>,
+    /// How the canvas is brought to the surface; see [`Fit`].
+    fit: Fit,
     /// The grille of the dots pass, for the dot size and shape it was made.
     grille: Option<(f64, DotShape, vello::peniko::ImageData)>,
 }
@@ -1242,6 +1328,18 @@ impl Presenter {
         Self::default()
     }
 
+    /// How the canvas is brought to the surface: `contain` unless the
+    /// host said otherwise.
+    pub fn fit(&self) -> Fit {
+        self.fit
+    }
+
+    /// Bring the canvas to the surface as `fit` says from the next frame
+    /// on. Whoever owns the screen decides this, not the show.
+    pub fn set_fit(&mut self, fit: Fit) {
+        self.fit = fit;
+    }
+
     /// Build what shows `engine`'s current frame in a `target` sized
     /// surface. `renderer` must be the one the host renders the returned
     /// scene with: GPU textures get registered with it.
@@ -1256,12 +1354,14 @@ impl Presenter {
         let show = engine.show().ok_or(Error::NoShow)?;
         let size = show.size;
         let (output, scaling) = (engine.output(), engine.scaling());
-        let (x, y, width, height) = fit(size, target, scaling);
+        let (x, y, width, height) = fit(size, target, scaling, self.fit);
         // Per axis, so the rounded rectangle is filled exactly; the two
-        // differ by less than a pixel over the frame.
+        // differ by less than a pixel over the frame, and under `fill`
+        // by whatever the surface's shape asks.
         let placement = Affine::translate((x, y))
             * Affine::scale_non_uniform(width / f64::from(size[0]), height / f64::from(size[1]));
-        let scale = width / f64::from(size[0]);
+        // The tighter axis: what a dot has to be made of.
+        let scale = (width / f64::from(size[0])).min(height / f64::from(size[1]));
         let dots = engine
             .passes()
             .into_iter()
@@ -1436,11 +1536,11 @@ fn gradient_brush(gradient: &crate::ResolvedGradient, opacity: f64) -> Brush {
 
 #[cfg(test)]
 mod tests {
-    use super::{fit, Scaling};
+    use super::{canvas_at, cut_off, fit, Fit, Scaling};
 
     /// Every edge of the fitted rectangle, so a fractional one shows up.
     fn edges(show: [u32; 2], target: [u32; 2], scaling: Scaling) -> [f64; 4] {
-        let (x, y, w, h) = fit(show, target, scaling);
+        let (x, y, w, h) = fit(show, target, scaling, Fit::Contain);
         [x, y, x + w, y + h]
     }
 
@@ -1448,9 +1548,84 @@ mod tests {
     fn fit_letterboxes_smoothly_by_default() {
         // 300 / 128 = 2.34: the width fills, the height is letterboxed.
         assert_eq!(
-            fit([128, 32], [300, 100], Scaling::Smooth),
+            fit([128, 32], [300, 100], Scaling::Smooth, Fit::Contain),
             (0.0, 12.0, 300.0, 75.0)
         );
+    }
+
+    #[test]
+    fn cover_fills_the_surface_and_cuts_the_long_axis() {
+        // 100 / 32 = 3.125: the height fills, the width overhangs by 100.
+        assert_eq!(
+            fit([128, 32], [300, 100], Scaling::Smooth, Fit::Cover),
+            (-50.0, 0.0, 400.0, 100.0)
+        );
+        // 32 canvas pixels of the 128 are off the surface, 16 a side.
+        assert_eq!(
+            cut_off([128, 32], [300, 100], Scaling::Smooth, Fit::Cover),
+            [32.0, 0.0]
+        );
+        assert_eq!(
+            cut_off([128, 32], [300, 100], Scaling::Smooth, Fit::Contain),
+            [0.0, 0.0]
+        );
+        // Pixel perfect rounds up to cover: 4x, overhanging both ways.
+        assert_eq!(
+            fit([128, 32], [300, 100], Scaling::PixelPerfect, Fit::Cover),
+            (-106.0, -14.0, 512.0, 128.0)
+        );
+    }
+
+    #[test]
+    fn fill_scales_each_axis_to_the_surface() {
+        assert_eq!(
+            fit([128, 32], [300, 100], Scaling::Smooth, Fit::Fill),
+            (0.0, 0.0, 300.0, 100.0)
+        );
+        // Whole factors per axis: 2x across, 3x down, centred.
+        assert_eq!(
+            fit([128, 32], [300, 100], Scaling::PixelPerfect, Fit::Fill),
+            (22.0, 2.0, 256.0, 96.0)
+        );
+    }
+
+    #[test]
+    fn a_press_lands_on_the_canvas_however_it_is_fitted() {
+        // The surface's centre is the canvas's centre under every fit,
+        // give or take the whole pixel a letterbox is rounded to.
+        for fit in Fit::ALL {
+            let [x, y] = canvas_at([128, 32], [300, 100], Scaling::Smooth, fit, [150.0, 50.0])
+                .unwrap_or_else(|| panic!("{fit:?}"));
+            assert!(
+                (x - 64.0).abs() < 0.5 && (y - 16.0).abs() < 0.5,
+                "{fit:?}: {x}, {y}"
+            );
+        }
+        // The surface's left edge is off the canvas when it is contained
+        // (letterbox), 16 canvas pixels in when it is covered.
+        assert_eq!(
+            canvas_at(
+                [128, 32],
+                [300, 100],
+                Scaling::Smooth,
+                Fit::Contain,
+                [150.0, 2.0]
+            ),
+            None
+        );
+        assert_eq!(
+            canvas_at(
+                [128, 32],
+                [300, 100],
+                Scaling::Smooth,
+                Fit::Cover,
+                [0.0, 50.0]
+            ),
+            Some([16.0, 16.0])
+        );
+        assert_eq!(Fit::parse("cover"), Some(Fit::Cover));
+        assert_eq!(Fit::parse("letterbox"), None);
+        assert_eq!(Fit::Fill.next(), Fit::Contain);
     }
 
     #[test]
@@ -1470,12 +1645,12 @@ mod tests {
     fn pixel_perfect_fit_uses_whole_pixels() {
         // 300 / 128 = 2.34 -> 2x, centered on whole pixels.
         assert_eq!(
-            fit([128, 32], [300, 100], Scaling::PixelPerfect),
+            fit([128, 32], [300, 100], Scaling::PixelPerfect, Fit::Contain),
             (22.0, 18.0, 256.0, 64.0)
         );
         // Smaller than the show: shrink (fractionally), never zero.
         assert_eq!(
-            fit([128, 32], [64, 64], Scaling::PixelPerfect),
+            fit([128, 32], [64, 64], Scaling::PixelPerfect, Fit::Contain),
             (0.0, 24.0, 64.0, 16.0)
         );
     }
