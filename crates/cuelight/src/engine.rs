@@ -12,8 +12,8 @@ use crate::output::OutputColor;
 use crate::segments;
 use cuelight_core::{
     frame_key, parse_color, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill, Gradient,
-    Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing, Property, Reel, ReelCells,
-    ResolvedValue, Root, Scaling, Shape, Sheet, Show, Value, Voice,
+    Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing, Property, Reel,
+    ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced, Value, Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -433,6 +433,21 @@ impl Engine {
     /// See [`cuelight_core::Engine::drain_events`].
     pub fn drain_events(&mut self) -> Vec<Event> {
         self.core.drain_events()
+    }
+
+    /// See [`cuelight_core::Engine::drain_trace`].
+    pub fn drain_trace(&mut self) -> Vec<Traced> {
+        self.core.drain_trace()
+    }
+
+    /// See [`cuelight_core::Engine::explain`].
+    pub fn explain(&self, layer: &LayerPath, property: Property) -> Vec<Influence> {
+        self.core.explain(layer, property)
+    }
+
+    /// See [`cuelight_core::Engine::start_timeline`].
+    pub fn start_timeline(&mut self, layer: &LayerPath, timeline: usize) -> bool {
+        self.core.start_timeline(layer, timeline)
     }
 
     /// See [`cuelight_core::Engine::time`].
