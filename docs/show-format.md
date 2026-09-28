@@ -986,6 +986,24 @@ character the font lacks shows as the font's "missing" box.
 { "fonts": { "speed": { "file": "inter_bold", "size": 180, "color": "#FFFFFF" } } }
 ```
 
+**Outline fonts as pixels.** A pixel font is usually shipped as the TTF it
+was drawn from, and drawn from its outlines it is only exact when it
+happens to land on the grid: at a half-pixel position, or a size that is
+no whole multiple of its design size, its edges smear. `pixels: true`
+rasterizes the font's glyphs once, at `size`, with hard edges and no
+antialiasing, and draws them the way a bitmap font is drawn: never between
+pixels, never resampled, with `border` and `shadow` as a bitmap font has
+them. On a show rendered on its own pixel grid (`pixel_perfect` scaling or
+a gray output mode) this is the default for every outline font, since
+antialiased text is never what such a show wants; `pixels: false` asks for
+the outlines anyway. The cost is once, at first use: the characters the
+font has, at `size` pixels each. The same TTF then serves an HD show and a
+dot display, and nothing generated needs to be kept.
+
+```json
+{ "fonts": { "score": { "file": "tiny5", "size": 8, "pixels": true } } }
+```
+
 ## Bindings
 
 A binding wires a layer property to a variable, evaluated every frame:

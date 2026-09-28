@@ -418,6 +418,16 @@ pub struct FontStyle {
     /// A copy of the text drawn behind it, offset.
     #[serde(default)]
     pub shadow: Option<Shadow>,
+    /// Draw an outline font as exact pixels: its glyphs are rasterized
+    /// once, at `size`, with hard edges and no antialiasing, and drawn
+    /// as a bitmap font's are, never between pixels and never
+    /// resampled. For a pixel font shipped as the TTF it was drawn
+    /// from, and for any text on a show that is rendered on its own
+    /// pixel grid (`pixel_perfect` scaling, a gray output mode), where
+    /// this is the default. Not for bitmap fonts, which are pixels
+    /// already.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pixels: Option<bool>,
 }
 
 /// A copy of the text drawn behind it, offset by a few pixels: the

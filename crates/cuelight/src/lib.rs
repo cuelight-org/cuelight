@@ -51,6 +51,8 @@ mod lru;
 #[cfg(feature = "outline-fonts")]
 mod outline;
 mod output;
+#[cfg(feature = "outline-fonts")]
+mod pixels;
 mod segments;
 
 pub use engine::{

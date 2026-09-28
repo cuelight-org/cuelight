@@ -179,3 +179,88 @@ fn a_shadow_needs_a_color_and_a_finite_offset() {
     let bad = SHOW.replace(r##""color": "#00000080""##, r#""color": "not a color""#);
     assert!(Engine::new().load_show(&bad).is_err());
 }
+
+/// The bitmap a layer resolved to: its place, its size, and every
+/// alpha value its pixels use.
+fn bitmap(engine: &Engine, name: &str) -> ([f64; 4], Vec<u8>) {
+    let layers = engine.resolved_layers().unwrap();
+    let layer = layers.iter().find(|l| l.name == name).unwrap();
+    match &layer.shape {
+        ResolvedShape::Bitmap {
+            image,
+            x,
+            y,
+            width,
+            height,
+        } => {
+            let mut alphas: Vec<u8> = image.pixels.chunks(4).map(|px| px[3]).collect();
+            alphas.sort_unstable();
+            alphas.dedup();
+            ([*x, *y, *width, *height], alphas)
+        }
+        other => panic!("{name}: {other:?}"),
+    }
+}
+
+#[test]
+fn an_outline_font_asked_for_as_pixels_is_drawn_as_a_bitmap_font() {
+    let show = r##"{
+      "name": "pixels", "size": [200, 100],
+      "fonts": {
+        "dots": { "file": "sans", "size": 20, "pixels": true, "color": "#FF8000" },
+        "smooth": { "file": "sans", "size": 20 }
+      },
+      "layers": [
+        { "name": "hard", "type": "text", "font": "dots", "text": "A1", "x": 10, "y": 20, "align": "top_left" },
+        { "name": "soft", "type": "text", "font": "smooth", "text": "A1", "x": 10, "y": 60, "align": "top_left" }
+      ]
+    }"##;
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(show).unwrap();
+    // Hard edges: a pixel is in or out, and the glyphs sit on whole
+    // pixels of the canvas.
+    let ([x, y, w, h], alphas) = bitmap(&engine, "hard");
+    assert_eq!(alphas, [0, 255]);
+    assert!(x.fract() == 0.0 && y.fract() == 0.0, "{x}, {y}");
+    assert!(w > 10.0 && h > 8.0 && w < 40.0 && h < 30.0, "{w}x{h}");
+    // At size 20 the two glyphs advance 12.8 and 11.4: rounded to whole
+    // pixels, the raster is 13 wide plus the second glyph's ink.
+    assert!((x - 10.0).abs() < 3.0, "{x}");
+    // The same font, not asked for as pixels, stays an outline.
+    let _ = run(&engine, "soft");
+}
+
+#[test]
+fn on_a_pixel_grid_outline_fonts_are_pixels_unless_told_otherwise() {
+    let show = r##"{
+      "name": "grid", "size": [200, 100], "output": { "scaling": "pixel_perfect" },
+      "fonts": {
+        "plain": { "file": "sans", "size": 20 },
+        "outlined": { "file": "sans", "size": 20, "pixels": false }
+      },
+      "layers": [
+        { "name": "plain", "type": "text", "font": "plain", "text": "1", "x": 10, "y": 20 },
+        { "name": "outlined", "type": "text", "font": "outlined", "text": "1", "x": 10, "y": 60 }
+      ]
+    }"##;
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(show).unwrap();
+    let (_, alphas) = bitmap(&engine, "plain");
+    assert_eq!(alphas, [0, 255]);
+    let _ = run(&engine, "outlined");
+    // A bitmap font is pixels already; asking is a mistake.
+    let mut engine = Engine::new();
+    let fnt = "info face=\"b\" size=3\ncommon lineHeight=4 base=3 scaleW=2 scaleH=3 pages=1\npage id=0 file=\"b_0.png\"\nchar id=49 x=0 y=0 width=2 height=3 xoffset=0 yoffset=0 xadvance=3 page=0\n";
+    engine
+        .set_font(
+            "blocks",
+            cuelight::BitmapFont::parse(fnt).unwrap(),
+            vec![(2, 3, vec![255; 24])],
+        )
+        .unwrap();
+    let bad = r##"{ "name": "b", "size": [8, 8], "fonts": { "f": { "file": "blocks", "pixels": true } } }"##;
+    let err = engine.load_show(bad).unwrap_err().to_string();
+    assert!(err.contains("remove pixels"), "{err}");
+}
