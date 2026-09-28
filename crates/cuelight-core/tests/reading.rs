@@ -132,9 +132,9 @@ fn the_stages_of_a_binding_are_what_the_engine_applies() {
         .values()
         .unwrap()
         .into_iter()
-        .find(|(_, property, _)| *property == Property::Text)
+        .find(|row| row.property == Property::Text)
         .unwrap()
-        .2;
+        .value;
     assert_eq!(Some(text), stages.output);
     // A value the map does not list stops at the default.
     let stages = binding.stages(Value::Text("reverse".into()), &parsed);
@@ -161,9 +161,9 @@ fn a_transitions_step_response_is_what_the_engine_shows() {
         .values()
         .unwrap()
         .into_iter()
-        .find(|(_, property, _)| *property == Property::Opacity)
+        .find(|row| row.property == Property::Opacity)
         .unwrap()
-        .2
+        .value
         .as_number();
     assert!(shown > 0.0 && shown < 1.0, "{shown}: on its way up");
     assert!((shown - transition.step_response(0.0, 1.0, 0.05)).abs() < 1e-12);
