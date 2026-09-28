@@ -51,7 +51,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use cuelight::render::Presenter;
+use cuelight::render::{Fit, Presenter};
 use cuelight::vello;
 use cuelight::Engine;
 use cuelight_audio::{Output, Sound};
@@ -363,6 +363,27 @@ impl App {
     /// or go back to a window. Borderless rather than exclusive fullscreen:
     /// it is what Wayland offers, and it leaves the display's mode alone
     /// everywhere else.
+    /// Bring the show to the window as `fit` says, and say what that
+    /// loses: under `cover` a show placed exactly is cut, and its author
+    /// wants to know how much a screen of this shape costs it.
+    fn set_fit(&mut self, fit: Fit) {
+        self.presenter.set_fit(fit);
+        let mut lost = String::new();
+        if let (Some(show), Some(state)) = (self.engine.show(), &self.state) {
+            let size = state.window.inner_size();
+            let [x, y] = cuelight::render::cut_off(
+                show.size,
+                [size.width, size.height],
+                self.engine.scaling(),
+                fit,
+            );
+            if x > 0.0 || y > 0.0 {
+                lost = format!(": {x} px across and {y} px down are off the screen");
+            }
+        }
+        log::info!("fit: {}{lost}", fit.name());
+    }
+
     fn set_fullscreen(&mut self, fullscreen: bool) {
         self.fullscreen = fullscreen;
         let Some(state) = &self.state else { return };
@@ -482,6 +503,7 @@ impl App {
             show,
             [size.width, size.height],
             self.engine.scaling(),
+            self.presenter.fit(),
             pointer,
         );
         let Some(trigger) = at.and_then(|at| self.engine.press(at)) else {
@@ -853,6 +875,7 @@ impl ApplicationHandler for App {
                         event_loop.exit();
                     }
                     Key::Named(NamedKey::F11) => self.set_fullscreen(!self.fullscreen),
+                    Key::Named(NamedKey::Tab) => self.set_fit(self.presenter.fit().next()),
                     Key::Character(c) if c.eq_ignore_ascii_case("f") => {
                         self.set_fullscreen(!self.fullscreen);
                     }
@@ -988,6 +1011,30 @@ struct Cli {
     /// log what was left out.
     #[arg(long)]
     lenient: bool,
+    /// How the show is brought to the window: `contain` (fit inside it,
+    /// keeping its shape), `cover` (fill it, cutting the edges on the
+    /// long axis) or `fill` (fill it, losing its shape). Tab cycles
+    /// them while playing.
+    #[arg(long, value_enum, default_value_t = FitArg::Contain)]
+    fit: FitArg,
+}
+
+/// [`Fit`] as a command line word.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum FitArg {
+    Contain,
+    Cover,
+    Fill,
+}
+
+impl From<FitArg> for Fit {
+    fn from(fit: FitArg) -> Self {
+        match fit {
+            FitArg::Contain => Fit::Contain,
+            FitArg::Cover => Fit::Cover,
+            FitArg::Fill => Fit::Fill,
+        }
+    }
 }
 
 const DEMO_SHOW: &str = include_str!("../demo/show.json");
@@ -1290,6 +1337,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         fps: common::Fps::new(),
         presenter: Presenter::new(),
     };
+    app.set_fit(cli.fit.into());
     let event_loop = EventLoop::new()?;
     event_loop.run_app(&mut app)?;
     log::info!("event loop finished, exiting");

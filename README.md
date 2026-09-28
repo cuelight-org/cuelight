@@ -137,7 +137,9 @@ standing in for a live host, optionally looping. The one next to the show
 (`test-driver.json` in a folder, `<show>.test-driver.json` beside a loose
 file) plays automatically; a second argument names another one, and
 `--no-driver` plays none. `--lenient` plays what can be played of a show
-that does not load whole, logging what was left out.
+that does not load whole, logging what was left out. `--fit cover` fills
+the window with the show instead of fitting it inside, `--fit fill`
+fills it losing the show's shape, and Tab cycles the three while playing.
 
 More shows live in the
 [cuelight-examples](https://github.com/francisdb/cuelight-examples)
