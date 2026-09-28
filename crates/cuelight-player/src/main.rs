@@ -511,8 +511,8 @@ impl App {
             return;
         };
         let was_done = driver.is_done();
-        for step in driver.advance(self.engine.core_mut(), dt) {
-            match step {
+        for applied in driver.advance(self.engine.core_mut(), dt) {
+            match applied.step {
                 Step::Trigger { trigger } => log::info!("driver fires action {trigger:?}"),
                 Step::Set { set } => {
                     for (name, value) in set {

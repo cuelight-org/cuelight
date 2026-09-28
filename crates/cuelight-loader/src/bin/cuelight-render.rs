@@ -333,17 +333,26 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     let mut time = 0.0;
     let mut steps = 0u64;
     let mut frames = 0;
-    loop {
-        while inputs.peek().is_some_and(|i| i.at <= time) {
-            match inputs.next().expect("peeked").what {
-                Step::Trigger { trigger } => engine.trigger(&trigger),
-                Step::Set { set } => {
-                    for (name, value) in set {
-                        engine.set_variable(&name, value);
-                    }
+    // An input is applied at its own instant, with the driver's steps
+    // due before it applied first, the way a seek replays: the same
+    // path a driver step takes, so a trigger asked for at 1.0 s starts
+    // what it starts at 1.0 s whatever the frame rate.
+    let apply = |engine: &mut Engine, input: Input| {
+        engine.advance_to(input.at);
+        match input.what {
+            Step::Trigger { trigger } => engine.trigger(&trigger),
+            Step::Set { set } => {
+                for (name, value) in set {
+                    engine.set_variable(&name, value);
                 }
-                _ => {}
             }
+            _ => {}
+        }
+    };
+    loop {
+        // What is due on the frame itself, before it is drawn.
+        while inputs.peek().is_some_and(|i| i.at <= time) {
+            apply(&mut engine, inputs.next().expect("peeked"));
         }
         // A frame is due once the clock has reached it.
         while times.peek().is_some_and(|t| *t <= time + step / 2.0) {
@@ -388,19 +397,33 @@ fn run(cli: &Cli) -> Result<(), Stop> {
         if time >= last {
             break;
         }
-        if let Some(driver) = &mut driver {
-            for played in driver.advance(engine.core_mut(), step) {
-                if cli.events {
-                    say(&format!("{time:8.3}  driver {played:?}"))?;
-                }
-            }
-        }
         steps += 1;
         // Multiplied, not accumulated, and handed to the engine as the
         // instant to land on rather than as a delta, so a run at one
         // frame rate reaches a given time in exactly the state a run at
         // another does.
-        time = steps as f64 * step;
+        let next = steps as f64 * step;
+        // Inputs inside the frame, each at its instant, the driver's
+        // steps due before each one first; then the driver to the
+        // frame's end.
+        let mut drive = |engine: &mut Engine, to: f64| -> Result<(), Stop> {
+            if let Some(driver) = &mut driver {
+                let dt = to - engine.time();
+                for played in driver.advance(engine.core_mut(), dt) {
+                    if cli.events {
+                        say(&format!("{:8.3}  driver {:?}", played.at, played.step))?;
+                    }
+                }
+            }
+            Ok(())
+        };
+        while inputs.peek().is_some_and(|i| i.at < next) {
+            let input = inputs.next().expect("peeked");
+            drive(&mut engine, input.at)?;
+            apply(&mut engine, input);
+        }
+        drive(&mut engine, next)?;
+        time = next;
         engine.advance_to(time);
     }
     if frames > 0 {

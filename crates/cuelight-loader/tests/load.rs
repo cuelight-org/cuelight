@@ -1,5 +1,5 @@
 use cuelight::Engine;
-use cuelight_loader::{load, Driver, DriverPlayer, Live, LoadError, Step};
+use cuelight_loader::{load, Applied, Driver, DriverPlayer, Live, LoadError, Step};
 use std::path::PathBuf;
 
 fn shows() -> PathBuf {
@@ -62,21 +62,43 @@ fn driver_applies_steps_as_time_passes() {
     let mut engine = Engine::new();
     load(&mut engine, shows().join("minigolf.json")).unwrap();
     let mut player = DriverPlayer::new(driver);
-    let applied = player.advance(engine.core_mut(), 0.25);
-    assert!(matches!(applied.as_slice(), [Step::Set { .. }]));
+    // A host: the script over each frame, then the clock to its end.
+    let frame = |player: &mut DriverPlayer, engine: &mut Engine, to: f64| {
+        let dt = to - engine.time();
+        let applied = player.advance(engine.core_mut(), dt);
+        engine.advance_to(to);
+        applied
+    };
+    let applied = frame(&mut player, &mut engine, 0.25);
+    assert!(matches!(
+        applied.as_slice(),
+        [Applied {
+            step: Step::Set { .. },
+            ..
+        }]
+    ));
     assert_eq!(engine.variable("score").unwrap().as_number(), 5.0);
-    assert!(player.advance(engine.core_mut(), 0.5).is_empty());
-    // crossing the 1.0s wait fires the trigger
-    let applied = player.advance(engine.core_mut(), 0.5);
+    assert!(frame(&mut player, &mut engine, 0.75).is_empty());
+    // crossing the 1.0s wait fires the trigger, at 1.0 s
+    let applied = frame(&mut player, &mut engine, 1.25);
     assert_eq!(
         applied,
-        [Step::Trigger {
-            trigger: "go".into()
+        [Applied {
+            at: 1.0,
+            step: Step::Trigger {
+                trigger: "go".into()
+            }
         }]
     );
     // and after the last wait the script starts over
-    let applied = player.advance(engine.core_mut(), 0.5);
-    assert!(matches!(applied.as_slice(), [Step::Set { .. }]));
+    let applied = frame(&mut player, &mut engine, 1.75);
+    assert!(matches!(
+        applied.as_slice(),
+        [Applied {
+            step: Step::Set { .. },
+            ..
+        }]
+    ));
     assert!(!player.is_done());
 }
 

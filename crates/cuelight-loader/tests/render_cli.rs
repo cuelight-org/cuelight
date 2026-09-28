@@ -120,3 +120,69 @@ fn a_video_layer_draws_the_frame_it_is_playing() {
     near(pixel(&out.join("t0000.500.png"), 100, 32), [0, 0, 0]);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A show folder with one slide started by `go` that says when it ends,
+/// and a driver that fires `go` at 0.3 s. No video, no GPU: `--events`
+/// is enough to see when things happened.
+fn slide(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("cuelight-render-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "slide", "size": [8, 8],
+          "layers": [{ "name": "b", "type": "shape", "shape": { "rect": [0, 0, 8, 8] },
+                       "fill": "#FFFFFF", "x": 0,
+                       "timelines": [{ "name": "slide", "trigger": "go", "on_end": "done",
+                         "tracks": [{ "property": "x",
+                                      "keys": [{ "t": 0, "v": 0 }, { "t": 0.5, "v": 8 }] }] }] }] }"##,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("test-driver.json"),
+        r#"{ "steps": [{ "wait": 0.3 }, { "trigger": "go" }] }"#,
+    )
+    .unwrap();
+    dir
+}
+
+#[test]
+fn events_say_the_instant_a_driver_step_and_an_input_landed() {
+    let dir = slide("instants");
+    // At 2.5 fps the frames fall on 0, 0.4, 0.8, ...: neither the
+    // driver's 0.3 s nor the input's 1.0 s is a frame.
+    let run = Command::new(env!("CARGO_BIN_EXE_cuelight-render"))
+        .arg(&dir)
+        .args([
+            "--events",
+            "--fps",
+            "2.5",
+            "--until",
+            "2",
+            "--trigger",
+            "1.0:go",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let out = String::from_utf8_lossy(&run.stdout);
+    let lines: Vec<&str> = out.lines().collect();
+    // The driver's step is reported at its own instant, not the frame's
+    // start.
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("   0.300  driver Trigger")),
+        "{out}"
+    );
+    // The slide the input started at 1.0 s ends at 1.5 s, inside the
+    // frame that runs to 1.6 s; started at the frame after 1.0 s instead
+    // it would end at 1.7 s and show up a frame later.
+    let done: Vec<&&str> = lines.iter().filter(|l| l.contains("done")).collect();
+    assert_eq!(done.len(), 2, "{out}");
+    assert!(done[1].starts_with("   1.600"), "{out}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

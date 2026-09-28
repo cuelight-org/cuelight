@@ -145,8 +145,9 @@ impl DriverPlayer {
     /// at the same instant whatever the frame rate. The engine is left
     /// at the last step's instant; call `Engine::advance_to` with the
     /// end of the frame afterwards, as for any frame. Returns the steps
-    /// that were applied, for hosts that log them.
-    pub fn advance(&mut self, engine: &mut Engine, dt: f64) -> Vec<Step> {
+    /// that were applied, each with its instant, for hosts that log
+    /// them.
+    pub fn advance(&mut self, engine: &mut Engine, dt: f64) -> Vec<Applied> {
         let start = engine.time();
         let end = start + dt.max(0.0);
         let mut applied = Vec::new();
@@ -195,10 +196,21 @@ impl DriverPlayer {
                     }
                 }
             }
-            applied.push(step);
+            applied.push(Applied {
+                at: at.min(end),
+                step,
+            });
         }
         applied
     }
+}
+
+/// A step a [`DriverPlayer`] applied, and the instant on the show's
+/// clock it applied it at.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Applied {
+    pub at: f64,
+    pub step: Step,
 }
 
 /// One thing a host told a show while it played.
