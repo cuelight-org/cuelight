@@ -160,8 +160,14 @@ fn print_menu(engine: &Engine, actions: &[String]) {
         println!("actions: none declared");
     } else {
         println!("actions:");
+        let listeners = show.listeners();
         for (i, action) in actions.iter().enumerate() {
-            println!("  {}) {action}", i + 1);
+            let heard = match listeners.get(action) {
+                Some(cuelight_core::Listened::Opens(scene)) => format!("  (opens {scene:?})"),
+                Some(cuelight_core::Listened::Scene(scene)) => format!("  (in {scene:?})"),
+                _ => String::new(),
+            };
+            println!("  {}) {action}{heard}", i + 1);
         }
     }
     if !show.scenes.is_empty() {
