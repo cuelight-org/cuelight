@@ -639,9 +639,12 @@ impl Engine {
     }
 
     /// The layers drawn under `at`, topmost first, by the same test a
-    /// press uses: a rect and a circle exact, anything else by its box;
-    /// hidden, clipped-away and covered layers excluded. Empty over
-    /// nothing. An editor selects by clicking with this.
+    /// press uses: a rect and a circle exact, anything else by its box.
+    /// Every layer with something under the point is listed, the ones
+    /// drawn over it first and the ones it covers after; a hidden layer
+    /// and one clipped away at that point draw nothing there and are
+    /// not. Empty over nothing. An editor selects by clicking with this,
+    /// and reaches what lies behind by walking down the list.
     pub fn layers_at(&self, at: [f64; 2]) -> Vec<LayerPath> {
         let Ok(drawn) = self.drawn() else {
             return Vec::new();
