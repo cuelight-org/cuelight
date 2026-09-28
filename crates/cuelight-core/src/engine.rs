@@ -431,6 +431,31 @@ pub enum Cause {
     /// The host asked for it by itself, with
     /// [`start_timeline`](Engine::start_timeline).
     Host,
+    /// A binding pointed the layer at it: its `video` or `sound` took a
+    /// new name.
+    Pointed,
+}
+
+/// Why a play of a sound or a clip is over; see [`Happened::Over`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Ending {
+    /// It ran to its end, its repeats included, and fired this `on_end`
+    /// if it names one.
+    Finished { on_end: Option<String> },
+    /// This `stop` trigger fired.
+    Stop(String),
+    /// Its `while` turned false.
+    While,
+    /// Its trigger fired again and its `retrigger` is `restart`.
+    Retriggered,
+    /// A newer play took its place: more than the layer's `voices` were
+    /// sounding at once.
+    Voices,
+    /// Its scene was left.
+    SceneLeft,
+    /// A binding pointed the layer at something else.
+    Pointed,
 }
 
 /// Which of a timeline's two conditions.
@@ -461,6 +486,26 @@ pub enum Happened {
         timeline: TimelineRef,
         condition: Which,
         holds: bool,
+    },
+    /// A sound or a clip began a play: on this layer, of this asset,
+    /// with the id [`Engine::voices`] and [`Engine::videos`] report it
+    /// under, and why.
+    Played {
+        layer: LayerPath,
+        name: String,
+        media: String,
+        id: u64,
+        by: Cause,
+    },
+    /// A play of a sound or a clip is over, and how: finished, or
+    /// stopped short one way or another. The same `id` its start was
+    /// traced with.
+    Over {
+        layer: LayerPath,
+        name: String,
+        media: String,
+        id: u64,
+        by: Ending,
     },
 }
 
@@ -540,6 +585,22 @@ impl std::fmt::Display for Cause {
             Cause::When => write!(f, "as its when turned true"),
             Cause::While => write!(f, "as its while turned true"),
             Cause::Host => write!(f, "asked for by the host"),
+            Cause::Pointed => write!(f, "as a binding pointed the layer at it"),
+        }
+    }
+}
+
+impl std::fmt::Display for Ending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ending::Finished { on_end: Some(name) } => write!(f, "finished, firing {name:?}"),
+            Ending::Finished { on_end: None } => write!(f, "finished"),
+            Ending::Stop(name) => write!(f, "stopped on {name:?}"),
+            Ending::While => write!(f, "stopped as its while turned false"),
+            Ending::Retriggered => write!(f, "started over"),
+            Ending::Voices => write!(f, "gave way to a newer play"),
+            Ending::SceneLeft => write!(f, "stopped as its scene was left"),
+            Ending::Pointed => write!(f, "stopped as its layer was pointed elsewhere"),
         }
     }
 }
@@ -569,6 +630,20 @@ impl std::fmt::Display for Happened {
                 };
                 write!(f, "the {which} of {timeline} turned {holds}")
             }
+            Happened::Played {
+                layer,
+                name,
+                media,
+                by,
+                ..
+            } => write!(f, "played {media:?} on layer {name:?} ({layer}) {by}"),
+            Happened::Over {
+                layer,
+                name,
+                media,
+                by,
+                ..
+            } => write!(f, "{media:?} on layer {name:?} ({layer}) {by}"),
         }
     }
 }
@@ -685,7 +760,7 @@ pub struct Engine {
     /// [`Retrigger::Queue`](crate::model::Retrigger::Queue). Each holds
     /// the asset asked for, so a queue of different clips stays a queue
     /// of different clips.
-    waiting: Vec<(Root, Vec<usize>, Option<String>)>,
+    waiting: Vec<(Root, Vec<usize>, Option<String>, Cause)>,
     /// Scrambles the picks that are meant to vary; see
     /// [`Engine::set_seed`].
     seed: u64,
@@ -862,7 +937,7 @@ impl Engine {
         self.time = 0.0;
         self.active_scene = scenes.then_some(0);
         self.start_matching(Some(Root::Show), self.time, Want::Autoplay, &Cause::Load);
-        self.play_autoplay(Root::Show);
+        self.play_autoplay(Root::Show, &Cause::Load);
         if let Some(scene) = self.active_scene {
             let name = self.scene_name(scene);
             self.note(
@@ -878,7 +953,7 @@ impl Engine {
                 Want::Autoplay,
                 &Cause::Load,
             );
-            self.play_autoplay(Root::Scene(scene));
+            self.play_autoplay(Root::Scene(scene), &Cause::Load);
         }
     }
 
@@ -1307,13 +1382,14 @@ impl Engine {
                 (stop.contains(name), trigger.contains(name))
             }) {
                 if stops {
-                    self.sounding
-                        .retain(|s| !(s.root == root && s.layer_path == path));
+                    let ending = Ending::Stop(name.to_owned());
+                    self.end_plays(at, ending, |s| s.root == root && s.layer_path == path);
                     // Whatever was waiting its turn is not owed a turn.
-                    self.waiting.retain(|(r, p, _)| !(*r == root && *p == path));
+                    self.waiting
+                        .retain(|(r, p, ..)| !(*r == root && *p == path));
                 }
                 if plays {
-                    self.play(root, path, at);
+                    self.play(root, path, at, cause.clone());
                 }
             }
         }
@@ -1503,8 +1579,9 @@ impl Engine {
         out
     }
 
-    /// Start the autoplay sounds and videos of `root`.
-    fn play_autoplay(&mut self, root: Root) {
+    /// Start the autoplay sounds and videos of `root`, `by` the load or
+    /// the scene entered.
+    fn play_autoplay(&mut self, root: Root, by: &Cause) {
         let Some(layers) = self.show.as_ref().and_then(|show| root_layers(show, root)) else {
             return;
         };
@@ -1521,19 +1598,19 @@ impl Engine {
         }
         walk(layers, &mut Vec::new(), &mut starts);
         for path in starts {
-            self.play(root, path, self.time);
+            self.play(root, path, self.time, by.clone());
         }
     }
 
     /// Play the audio layer at `path`, as its `retrigger` says when it
     /// already plays.
-    fn play(&mut self, root: Root, path: Vec<usize>, at: f64) {
-        self.start(root, path, None, at);
+    fn play(&mut self, root: Root, path: Vec<usize>, at: f64, by: Cause) {
+        self.start(root, path, None, at, by);
     }
 
     /// Start a play of the layer at `path`, of `asked` when the caller
-    /// has already settled which asset it wants.
-    fn start(&mut self, root: Root, path: Vec<usize>, asked: Option<String>, at: f64) {
+    /// has already settled which asset it wants, `by` whatever asked.
+    fn start(&mut self, root: Root, path: Vec<usize>, asked: Option<String>, at: f64, by: Cause) {
         let layer = self
             .show
             .as_ref()
@@ -1553,7 +1630,7 @@ impl Engine {
         }
         let mine = |s: &Sounding| s.root == root && s.layer_path == path;
         match retrigger {
-            Retrigger::Restart => self.sounding.retain(|s| !mine(s)),
+            Retrigger::Restart => self.end_plays(at, Ending::Retriggered, mine),
             Retrigger::Ignore if self.sounding.iter().any(mine) => return,
             Retrigger::Ignore => {}
             Retrigger::Queue if self.sounding.iter().any(mine) => {
@@ -1563,11 +1640,11 @@ impl Engine {
                 let waiting = self
                     .waiting
                     .iter()
-                    .filter(|(r, p, _)| *r == root && *p == path)
+                    .filter(|(r, p, ..)| *r == root && *p == path)
                     .count();
                 if waiting < voices.max(1) {
                     let asked = self.media_name(root, &path);
-                    self.waiting.push((root, path, Some(asked)));
+                    self.waiting.push((root, path, Some(asked), by));
                 }
                 return;
             }
@@ -1577,12 +1654,12 @@ impl Engine {
                 // stands first.
                 let mut over = (self.sounding.iter().filter(|s| mine(s)).count() + 1)
                     .saturating_sub(voices.max(1));
-                self.sounding.retain(|s| {
+                self.end_plays(at, Ending::Voices, |s| {
                     if over > 0 && mine(s) {
                         over -= 1;
-                        return false;
+                        return true;
                     }
-                    true
+                    false
                 });
             }
         }
@@ -1592,6 +1669,17 @@ impl Engine {
         let played = self.plays.entry((root, path.clone())).or_default();
         played.count += 1;
         played.at = at;
+        let (layer, name) = self.play_ref(root, &path);
+        self.note(
+            at,
+            Happened::Played {
+                layer,
+                name,
+                media: playing.clone(),
+                id: self.next_voice,
+                by,
+            },
+        );
         self.sounding.push(Sounding {
             root,
             layer_path: path,
@@ -1599,6 +1687,40 @@ impl Engine {
             started: at,
             playing,
         });
+    }
+
+    /// Where a play is, for the trace: the layer's path and its name.
+    fn play_ref(&self, root: Root, path: &[usize]) -> (LayerPath, String) {
+        let name = self
+            .show
+            .as_ref()
+            .and_then(|show| root_layers(show, root))
+            .and_then(|layers| layer_at(layers, path))
+            .map(|layer| layer.name.clone())
+            .unwrap_or_default();
+        (LayerPath::new(root, path.to_vec()), name)
+    }
+
+    /// End every play `gone` picks, at the instant `at`, `by` whatever
+    /// ended them, and say so in the trace.
+    fn end_plays(&mut self, at: f64, by: Ending, mut gone: impl FnMut(&Sounding) -> bool) {
+        let (ended, kept): (Vec<Sounding>, Vec<Sounding>) = std::mem::take(&mut self.sounding)
+            .into_iter()
+            .partition(|s| gone(s));
+        self.sounding = kept;
+        for s in ended {
+            let (layer, name) = self.play_ref(s.root, &s.layer_path);
+            self.note(
+                at,
+                Happened::Over {
+                    layer,
+                    name,
+                    media: s.playing,
+                    id: s.id,
+                    by: by.clone(),
+                },
+            );
+        }
     }
 
     /// The clip running on the video layer at `path`, if one is.
@@ -1681,7 +1803,7 @@ impl Engine {
         );
         self.playing.retain(|p| p.owner.root() == Root::Show);
         // Leaving a scene stops its sounds.
-        self.sounding.retain(|s| s.root == Root::Show);
+        self.end_plays(self.time, Ending::SceneLeft, |s| s.root != Root::Show);
         self.waiting.retain(|(root, ..)| *root == Root::Show);
         // A scene's properties start at their values, like at load.
         self.transitions.retain(|(root, ..), _| *root == Root::Show);
@@ -1694,9 +1816,9 @@ impl Engine {
             Some(Root::Scene(scene)),
             self.time,
             Want::Autoplay,
-            &Cause::Entered(name),
+            &Cause::Entered(name.clone()),
         );
-        self.play_autoplay(Root::Scene(scene));
+        self.play_autoplay(Root::Scene(scene), &Cause::Entered(name));
     }
 
     /// Advance time by `dt` seconds: running timelines and sounds
@@ -1967,31 +2089,54 @@ impl Engine {
                     let mine: Vec<_> = self
                         .waiting
                         .iter()
-                        .filter(|(r, p, _)| *r == root && *p == path)
+                        .filter(|(r, p, ..)| *r == root && *p == path)
                         .collect();
                     let asked = mine
                         .last()
-                        .is_some_and(|(.., name)| name.as_deref() == Some(now.as_str()));
+                        .is_some_and(|(_, _, name, _)| name.as_deref() == Some(now.as_str()));
                     let waiting = mine.len();
                     if !asked && waiting < self.voices_of(root, &path) {
-                        self.waiting.push((root, path, Some(now)));
+                        self.waiting.push((root, path, Some(now), Cause::Pointed));
                     }
                 }
                 _ => {
+                    let (layer, name) = self.play_ref(root, &path);
+                    let (was, old_id) = (self.sounding[i].playing.clone(), self.sounding[i].id);
+                    self.next_voice += 1;
+                    let id = self.next_voice;
                     let play = &mut self.sounding[i];
                     play.playing = now.clone();
                     play.started = self.time;
-                    self.next_voice += 1;
-                    play.id = self.next_voice;
+                    play.id = id;
                     // Being pointed somewhere new in place is still a
                     // play of that clip: without this the layer would be
                     // told to start it again the moment it ended.
-                    self.shown.insert((root, path), now);
+                    self.shown.insert((root, path), now.clone());
+                    self.note(
+                        self.time,
+                        Happened::Over {
+                            layer: layer.clone(),
+                            name: name.clone(),
+                            media: was,
+                            id: old_id,
+                            by: Ending::Pointed,
+                        },
+                    );
+                    self.note(
+                        self.time,
+                        Happened::Played {
+                            layer,
+                            name,
+                            media: now,
+                            id,
+                            by: Cause::Pointed,
+                        },
+                    );
                 }
             }
         }
         for (root, path) in self.repointed() {
-            self.play(root, path, self.time);
+            self.play(root, path, self.time, Cause::Pointed);
         }
         self.time = to;
         let now = self.time;
@@ -2050,14 +2195,14 @@ impl Engine {
         // A play ends when its time is up; a play of an unregistered sound
         // has no end yet.
         let time = self.time;
-        let mut ended: Vec<usize> = Vec::new();
+        let mut ended: Vec<(usize, f64)> = Vec::new();
         // The instant each layer fell idle, for whatever is queued behind
         // it: its turn starts where the play before it stopped.
         let mut freed: Vec<(Root, Vec<usize>, f64)> = Vec::new();
         for (i, s) in self.sounding.iter().enumerate() {
             let layer = root_layers(show, s.root).and_then(|l| layer_at(l, &s.layer_path));
             let Some(media) = layer.and_then(|layer| layer.kind.media()) else {
-                ended.push(i);
+                ended.push((i, time));
                 continue;
             };
             if media.looping {
@@ -2070,7 +2215,7 @@ impl Engine {
             let plays = media.repeat.unwrap_or(1.0).max(0.0);
             let ends = s.started + media.delay.max(0.0) + duration * plays;
             if time + SAME_INSTANT >= ends {
-                ended.push(i);
+                ended.push((i, ends));
                 freed.push((s.root, s.layer_path.clone(), ends));
                 on_end.extend(media.on_end.map(|name| {
                     let layer = LayerPath::new(s.root, s.layer_path.clone());
@@ -2078,33 +2223,54 @@ impl Engine {
                 }));
             }
         }
-        for i in ended.into_iter().rev() {
+        // Noted in the order they started, which is how a log reads;
+        // taken out from the back, so the indices hold.
+        for (i, ends) in &ended {
+            let s = &self.sounding[*i];
+            let (layer, name) = self.play_ref(s.root, &s.layer_path);
+            let on_end = self
+                .media_at(s.root, &s.layer_path)
+                .and_then(|m| m.on_end.map(str::to_owned));
+            noted.push((
+                *ends,
+                Happened::Over {
+                    layer,
+                    name,
+                    media: s.playing.clone(),
+                    id: s.id,
+                    by: Ending::Finished { on_end },
+                },
+            ));
+        }
+        for (i, _) in ended.into_iter().rev() {
             self.sounding.remove(i);
+        }
+        // Written before anything that follows from them: a play whose
+        // turn came because another ended is traced after that end.
+        for (at, what) in noted {
+            self.note(at, what);
         }
         // A layer that has just fallen idle takes the next play waiting
         // for it, in the order the triggers arrived.
-        let mut turn: Vec<(Root, Vec<usize>, Option<String>)> = Vec::new();
-        self.waiting.retain(|(root, path, asked)| {
+        let mut turn: Vec<(Root, Vec<usize>, Option<String>, Cause)> = Vec::new();
+        self.waiting.retain(|(root, path, asked, by)| {
             let busy = self
                 .sounding
                 .iter()
                 .any(|s| s.root == *root && s.layer_path == *path);
-            let taken = turn.iter().any(|(r, p, _)| r == root && p == path);
+            let taken = turn.iter().any(|(r, p, ..)| r == root && p == path);
             if busy || taken {
                 return true;
             }
-            turn.push((*root, path.clone(), asked.clone()));
+            turn.push((*root, path.clone(), asked.clone(), by.clone()));
             false
         });
-        for (root, path, asked) in turn {
+        for (root, path, asked, by) in turn {
             let at = freed
                 .iter()
                 .find(|(r, p, _)| *r == root && *p == path)
                 .map_or(self.time, |(.., ends)| *ends);
-            self.start(root, path, asked, at);
-        }
-        for (at, what) in noted {
-            self.note(at, what);
+            self.start(root, path, asked, at, by);
         }
         for (name, at, by) in on_end {
             self.fire(&name, at, by);
@@ -2619,7 +2785,7 @@ impl Engine {
         let roots: Vec<Root> = std::iter::once(Root::Show)
             .chain((0..show.scenes.len()).map(Root::Scene))
             .collect();
-        let mut plays: Vec<(Root, Vec<usize>)> = Vec::new();
+        let mut plays: Vec<(Root, Vec<usize>, Cause)> = Vec::new();
         let mut stops: Vec<(Root, Vec<usize>)> = Vec::new();
         let mut now: HashMap<(Root, Vec<usize>), bool> = HashMap::new();
         let mut forgotten: Vec<(Root, Vec<usize>)> = Vec::new();
@@ -2670,7 +2836,7 @@ impl Engine {
                         continue;
                     }
                     if holds && was != Some(true) {
-                        plays.push((root, path));
+                        plays.push((root, path, Cause::When));
                     }
                     now.insert(key, holds);
                 } else if let Some(holds) = whilst {
@@ -2682,7 +2848,7 @@ impl Engine {
                     }
                     match (holds, was) {
                         (true, Some(true)) | (false, None) | (false, Some(false)) => {}
-                        (true, _) => plays.push((root, path)),
+                        (true, _) => plays.push((root, path, Cause::While)),
                         (false, Some(true)) => stops.push((root, path)),
                     }
                     now.insert(key, holds);
@@ -2694,12 +2860,14 @@ impl Engine {
         }
         self.media_conditions.extend(now);
         for (root, path) in stops {
-            self.sounding
-                .retain(|s| !(s.root == root && s.layer_path == path));
-            self.waiting.retain(|(r, p, _)| !(*r == root && *p == path));
+            self.end_plays(self.time, Ending::While, |s| {
+                s.root == root && s.layer_path == path
+            });
+            self.waiting
+                .retain(|(r, p, ..)| !(*r == root && *p == path));
         }
-        for (root, path) in plays {
-            self.play(root, path, self.time);
+        for (root, path, by) in plays {
+            self.play(root, path, self.time, by);
         }
     }
 
