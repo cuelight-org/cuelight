@@ -29,7 +29,8 @@
 //! ```
 //!
 //! The same folder travels as one file: `myshow.cuelight`, a zip of its
-//! contents (the `cuelight-pack` tool writes it, [`pack`] is the call).
+//! contents (the `cuelight-pack` tool writes it, [`pack`] is the call, and
+//! [`pack_bytes`] does the same from files held in memory).
 //!
 //! Where bytes come from and how they become pixels are separate concerns.
 //! Image formats are decoded by extension in [`decode_image`], each behind
@@ -48,7 +49,7 @@ mod svg;
 pub use driver::{seek, Applied, Driver, DriverPlayer, Live, LiveInput, Step};
 pub use manifest::{load_from_memory, LoadedFiles, Manifest, SoundFile, MANIFEST_FILE};
 #[cfg(feature = "pack")]
-pub use pack::{pack, read_pack, unpack, PACK_EXTENSION};
+pub use pack::{pack, pack_bytes, read_pack, unpack, PACK_EXTENSION};
 #[cfg(feature = "svg")]
 pub use svg::{convert_svg, Artwork, SvgFonts};
 

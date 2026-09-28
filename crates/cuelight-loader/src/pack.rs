@@ -25,22 +25,47 @@ fn zip_error(path: &Path, e: impl std::fmt::Display) -> LoadError {
 /// [`Manifest`] lists (nothing else: no manifest, no stray files). Returns
 /// how many files went in.
 ///
-/// The show is loaded first and the pack is refused if it does not load,
-/// so a corrupt asset cannot be shipped: packing only moves bytes and
-/// would not otherwise notice.
+/// The folder is read into memory and packed with [`pack_bytes`], so the
+/// same check applies: a show that does not load is refused.
 pub fn pack(dir: impl AsRef<Path>, out: impl AsRef<Path>) -> Result<usize, LoadError> {
     let (dir, out) = (dir.as_ref(), out.as_ref());
-    check(dir)?;
     let manifest = Manifest::for_dir(dir)?;
-    let file = std::fs::File::create(out).map_err(|source| LoadError::Io {
+    let mut files = BTreeMap::new();
+    for name in &manifest.files {
+        files.insert(name.clone(), crate::read(&dir.join(name))?);
+    }
+    let bytes = pack_bytes(&files).map_err(|e| match e {
+        // Paths inside the show are relative; say which show.
+        LoadError::NoShowDocument(_) => LoadError::NoShowDocument(dir.to_owned()),
+        LoadError::Engine { source, .. } => LoadError::Engine {
+            path: dir.join("show.json"),
+            source,
+        },
+        other => other,
+    })?;
+    std::fs::write(out, bytes).map_err(|source| LoadError::Io {
         path: out.to_owned(),
         source,
     })?;
-    let mut writer = zip::ZipWriter::new(std::io::BufWriter::new(file));
-    for name in &manifest.files {
-        let path = dir.join(name);
-        let bytes = crate::read(&path)?;
-        let extension = crate::extension(&path);
+    Ok(files.len())
+}
+
+/// Pack a show held in memory into the bytes of a `.cuelight` file:
+/// `files` maps paths relative to the show folder (`show.json`,
+/// `assets/orb.png`, ...) to their bytes, as [`unpack`] and
+/// [`load_from_memory`](crate::load_from_memory) take them, and every
+/// entry goes in. For a host without a disk: an editor in a browser opens
+/// a pack from bytes and hands one back as a download.
+///
+/// The show is loaded first and the pack is refused if it does not load,
+/// so a corrupt asset cannot be shipped: packing only moves bytes and
+/// would not otherwise notice.
+pub fn pack_bytes(files: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, LoadError> {
+    check(files)?;
+    let here = Path::new("pack");
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, bytes) in files {
+        let extension = crate::extension(Path::new(name));
         let method = if STORED.contains(&extension.as_str()) {
             zip::CompressionMethod::Stored
         } else {
@@ -49,23 +74,20 @@ pub fn pack(dir: impl AsRef<Path>, out: impl AsRef<Path>) -> Result<usize, LoadE
         let options = zip::write::SimpleFileOptions::default().compression_method(method);
         writer
             .start_file(name, options)
-            .and_then(|()| writer.write_all(&bytes).map_err(Into::into))
-            .map_err(|e| zip_error(out, e))?;
+            .and_then(|()| writer.write_all(bytes).map_err(Into::into))
+            .map_err(|e| zip_error(here, e))?;
     }
-    writer
-        .finish()
-        .and_then(|mut w| w.flush().map_err(Into::into))
-        .map_err(|e| zip_error(out, e))?;
-    Ok(manifest.files.len())
+    let cursor = writer.finish().map_err(|e| zip_error(here, e))?;
+    Ok(cursor.into_inner())
 }
 
-/// Refuse a show folder that would pack into something that cannot load.
+/// Refuse files that would pack into something that cannot load.
 ///
 /// Loading is the check: it decodes every asset, so a corrupt one fails
 /// here rather than in whatever opens the pack. Packing itself only moves
 /// bytes and would not notice.
-fn check(dir: &Path) -> Result<(), LoadError> {
-    crate::load(&mut cuelight::Engine::new(), dir).map(|_| ())
+fn check(files: &BTreeMap<String, Vec<u8>>) -> Result<(), LoadError> {
+    crate::load_from_memory(&mut cuelight::Engine::new(), files).map(|_| ())
 }
 
 /// The files of a packed show, by their path in the folder, from the
