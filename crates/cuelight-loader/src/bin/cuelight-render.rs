@@ -388,10 +388,11 @@ fn run(cli: &Cli) -> Result<(), Stop> {
             }
         }
         if cli.events {
-            for event in engine.drain_events() {
-                // The engine's own clock, not the frame clock: an event
-                // that landed part way through a frame says when.
-                say(&format!("{:8.3}  {event:?}", engine.time()))?;
+            // The show's trace: each record at the instant it happened
+            // on the show's own clock, not the frame that noticed it,
+            // and with its cause.
+            for traced in engine.drain_trace() {
+                say(&format!("{:8.3}  {}", traced.at, traced.what))?;
             }
         }
         if time >= last {
