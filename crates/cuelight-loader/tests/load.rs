@@ -414,6 +414,36 @@ fn a_packed_show_loads_like_its_folder() {
 
 #[cfg(feature = "pack")]
 #[test]
+fn a_show_packs_from_memory_and_comes_back_the_same() {
+    let dir = shows().join("beacon");
+    let mut files = std::collections::BTreeMap::new();
+    for name in cuelight_loader::Manifest::for_dir(&dir).unwrap().files {
+        files.insert(name.clone(), std::fs::read(dir.join(&name)).unwrap());
+    }
+    let bytes = cuelight_loader::pack_bytes(&files).unwrap();
+    // The bytes are a pack like the one written from disk, and unpack to
+    // the files that went in.
+    assert_eq!(cuelight_loader::unpack(&bytes).unwrap(), files);
+    let mut engine = Engine::new();
+    let loaded = cuelight_loader::load_from_memory(&mut engine, &files).unwrap();
+    assert_eq!(loaded.images, ["orb"]);
+    assert!(engine.show().is_some());
+
+    // A broken show is refused rather than packed.
+    files.insert("show.json".into(), b"{ \"name\": \"b\" }".to_vec());
+    assert!(matches!(
+        cuelight_loader::pack_bytes(&files),
+        Err(LoadError::Engine { .. })
+    ));
+    files.remove("show.json");
+    assert!(matches!(
+        cuelight_loader::pack_bytes(&files),
+        Err(LoadError::NoShowDocument(_))
+    ));
+}
+
+#[cfg(feature = "pack")]
+#[test]
 fn a_zip_wrapping_the_folder_unpacks_too() {
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(Vec::new());
