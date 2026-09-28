@@ -373,11 +373,14 @@ impl StyledFont {
         f64::from(self.font.line_height)
     }
 
+    /// Only the first `shown` characters are drawn (line breaks count);
+    /// the rest keep their room in the layout.
     pub fn rasterize(
         &self,
         text: &str,
         container: Option<[f64; 2]>,
         align: Align,
+        shown: usize,
     ) -> Option<(Rgba, [i32; 2], [f64; 2])> {
         let (block_w, block_h) = self.measure(text);
         let [cw, ch] = container.unwrap_or([f64::from(block_w), f64::from(block_h)]);
@@ -387,6 +390,7 @@ impl StyledFont {
 
         // Glyph placements relative to the container origin.
         let mut placed: Vec<(i32, i32, &Glyph)> = Vec::new();
+        let mut index = 0;
         for (i, line) in lines.iter().enumerate() {
             let x0 = if per_line {
                 let (lx, _) = align.offset(f64::from(self.line_width(line)), 0.0, cw, 0.0);
@@ -400,11 +404,16 @@ impl StyledFont {
             for c in line.chars() {
                 if let Some(glyph) = self.glyph(c) {
                     let kern = self.kerning(previous, c);
-                    placed.push((x0 + pen + glyph.xoffset + kern, y0 + glyph.yoffset, glyph));
+                    if index < shown {
+                        placed.push((x0 + pen + glyph.xoffset + kern, y0 + glyph.yoffset, glyph));
+                    }
                     pen += glyph.xadvance + self.extra_advance + kern;
                 }
                 previous = c;
+                index += 1;
             }
+            // The break between lines is a character too.
+            index += 1;
         }
         let placed: Vec<_> = placed
             .into_iter()
@@ -510,7 +519,9 @@ kerning first=65 second=66 amount=-1
     #[test]
     fn rasterizes_tinted_glyphs() {
         let font = styled(None);
-        let (bitmap, offset, container) = font.rasterize("A", None, Align::TopLeft).unwrap();
+        let (bitmap, offset, container) = font
+            .rasterize("A", None, Align::TopLeft, usize::MAX)
+            .unwrap();
         assert_eq!((bitmap.width, bitmap.height), (2, 3));
         assert_eq!(offset, [0, 0]);
         assert_eq!(container, [3.0, 4.0]);
@@ -524,7 +535,9 @@ kerning first=65 second=66 amount=-1
         // Only the glyph rectangle is copied, so the border shows where
         // the page leaves room inside it (BMFont padding); here 'B''s
         // rectangle includes the border pixels around 'A''s column 1.
-        let (bitmap, _, _) = font.rasterize("B", None, Align::TopLeft).unwrap();
+        let (bitmap, _, _) = font
+            .rasterize("B", None, Align::TopLeft, usize::MAX)
+            .unwrap();
         assert_eq!(bitmap.get(0, 0), [255, 0, 0, 255]);
         assert_eq!(bitmap.get(1, 0), [0, 0, 255, 255]);
     }
@@ -533,17 +546,19 @@ kerning first=65 second=66 amount=-1
     fn aligns_block_and_lines_in_container() {
         let font = styled(None);
         let (_, offset, container) = font
-            .rasterize("A", Some([9.0, 8.0]), Align::Center)
+            .rasterize("A", Some([9.0, 8.0]), Align::Center, usize::MAX)
             .unwrap();
         assert_eq!(container, [9.0, 8.0]);
         // block 3x4 centered in 9x8
         assert_eq!(offset, [3, 2]);
         let (_, offset, _) = font
-            .rasterize("A", Some([9.0, 8.0]), Align::BottomRight)
+            .rasterize("A", Some([9.0, 8.0]), Align::BottomRight, usize::MAX)
             .unwrap();
         assert_eq!(offset, [6, 4]);
         // Multi-line, centered: the narrow second line centers on its own.
-        let (bitmap, offset, _) = font.rasterize("AA\nA", None, Align::Center).unwrap();
+        let (bitmap, offset, _) = font
+            .rasterize("AA\nA", None, Align::Center, usize::MAX)
+            .unwrap();
         assert_eq!(offset, [0, 0]);
         // line widths 6 and 3: the second line starts at floor(1.5)
         assert_eq!(bitmap.get(0, 4), [0, 0, 0, 0]);

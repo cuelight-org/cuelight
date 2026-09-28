@@ -93,14 +93,22 @@ const DOT: u16 = 0x80;
 /// The segment mask of each of `digits` cells showing `text`. A `.` or `,`
 /// lights the dot of the cell before it rather than taking a cell of its
 /// own (unless there is none, or its dot is already lit). Text that does
-/// not fit is cut at the far side of `justify`.
-pub fn masks(style: SegmentStyle, text: &str, digits: usize, justify: Justify) -> Vec<u16> {
+/// not fit is cut at the far side of `justify`. Only the first `shown`
+/// characters light anything; the rest keep their cells dark.
+pub fn masks(
+    style: SegmentStyle,
+    text: &str,
+    digits: usize,
+    justify: Justify,
+    shown: usize,
+) -> Vec<u16> {
     let mut cells: Vec<u16> = Vec::new();
-    for c in text.chars() {
+    for (i, c) in text.chars().enumerate() {
         let m = mask(style, c);
+        let lit = if i < shown { m } else { 0 };
         match cells.last_mut() {
-            Some(last) if m == DOT && *last & DOT == 0 => *last |= DOT,
-            _ => cells.push(m),
+            Some(last) if m == DOT && *last & DOT == 0 => *last |= lit,
+            _ => cells.push(lit),
         }
     }
     match justify {
@@ -433,17 +441,41 @@ mod tests {
     #[test]
     fn masks_justify_cut_and_fold_dots() {
         let seven = SegmentStyle::Numeric7;
-        assert_eq!(masks(seven, "12", 4, Justify::Left), [0x06, 0x5B, 0, 0]);
-        assert_eq!(masks(seven, "12", 4, Justify::Right), [0, 0, 0x06, 0x5B]);
+        let all = usize::MAX;
+        assert_eq!(
+            masks(seven, "12", 4, Justify::Left, all),
+            [0x06, 0x5B, 0, 0]
+        );
+        assert_eq!(
+            masks(seven, "12", 4, Justify::Right, all),
+            [0, 0, 0x06, 0x5B]
+        );
         // too long: left keeps the start, right keeps the end
-        assert_eq!(masks(seven, "123", 2, Justify::Left), [0x06, 0x5B]);
-        assert_eq!(masks(seven, "123", 2, Justify::Right), [0x5B, 0x4F]);
+        assert_eq!(masks(seven, "123", 2, Justify::Left, all), [0x06, 0x5B]);
+        assert_eq!(masks(seven, "123", 2, Justify::Right, all), [0x5B, 0x4F]);
         // the separator lights the previous cell's dot
         assert_eq!(
-            masks(seven, "1,2", 3, Justify::Right),
+            masks(seven, "1,2", 3, Justify::Right, all),
             [0, 0x06 | 0x80, 0x5B]
         );
-        assert_eq!(masks(seven, ".", 1, Justify::Left), [0x80]);
+        assert_eq!(masks(seven, ".", 1, Justify::Left, all), [0x80]);
+    }
+
+    #[test]
+    fn hidden_characters_keep_their_cells_dark() {
+        let seven = SegmentStyle::Numeric7;
+        // Revealed one at a time, each keeps the cell it will have.
+        assert_eq!(masks(seven, "1,2", 3, Justify::Right, 0), [0, 0, 0]);
+        assert_eq!(masks(seven, "1,2", 3, Justify::Right, 1), [0, 0x06, 0]);
+        assert_eq!(
+            masks(seven, "1,2", 3, Justify::Right, 2),
+            [0, 0x06 | 0x80, 0]
+        );
+        assert_eq!(
+            masks(seven, "1,2", 3, Justify::Right, 3),
+            [0, 0x06 | 0x80, 0x5B]
+        );
+        assert_eq!(masks(seven, "12", 4, Justify::Left, 1), [0x06, 0, 0, 0]);
     }
 
     #[test]

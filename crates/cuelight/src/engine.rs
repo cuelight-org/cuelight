@@ -11,8 +11,8 @@ use crate::lru::ByteLru;
 use crate::output::OutputColor;
 use crate::segments;
 use cuelight_core::{
-    frame_key, parse_color, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill, Finding,
-    Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
+    frame_key, parse_color, revealed, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill,
+    Finding, Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
     Property, Reel, ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced, Value,
     Voice,
 };
@@ -772,7 +772,7 @@ impl Engine {
                     None => {
                         let text = self.core.text(root, layer, path, Property::Text);
                         let font = self.core.text(root, layer, path, Property::Font);
-                        match self.text_draw(&font, &text, None, *align)? {
+                        match self.text_draw(&font, &text, None, *align, usize::MAX)? {
                             TextDraw::Bitmap(raster) => raster.container,
                             TextDraw::Glyphs { container, .. } => container,
                         }
@@ -787,12 +787,15 @@ impl Engine {
     /// How `text` in font style `style_name` gets drawn: a glyph run for an
     /// outline font, a raster for a bitmap font. `None` when the style's
     /// font is not registered (or is an outline font without a `size`).
+    /// Only the first `shown` characters are drawn; the rest keep their
+    /// room.
     fn text_draw(
         &self,
         style_name: &str,
         text: &str,
         size: Option<[f64; 2]>,
         align: Align,
+        shown: usize,
     ) -> Option<TextDraw> {
         #[cfg(feature = "outline-fonts")]
         if let Some((style, font)) = self
@@ -801,7 +804,7 @@ impl Engine {
             .and_then(|show| show.fonts.get(style_name))
             .and_then(|style| Some((style, self.outline_fonts.get(&style.file)?)))
         {
-            let layout = crate::outline::layout(font, text, style.size?, size, align)?;
+            let layout = crate::outline::layout(font, text, style.size?, size, align, shown)?;
             return Some(TextDraw::Glyphs {
                 font: font.clone(),
                 size: style.size?,
@@ -809,7 +812,7 @@ impl Engine {
                 container: layout.container,
             });
         }
-        self.text_raster(style_name, text, size, align, false)
+        self.text_raster(style_name, text, size, align, shown, false)
             .map(TextDraw::Bitmap)
     }
 
@@ -824,13 +827,16 @@ impl Engine {
         text: &str,
         size: Option<[f64; 2]>,
         align: Align,
+        shown: usize,
         as_shadow: bool,
     ) -> Option<Arc<TextRaster>> {
         let style = self.core.show()?.fonts.get(style_name)?;
         let registered = self.fonts.get(&style.file)?;
         let mut cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
         let ink = if as_shadow { "\u{1}shadow" } else { "" };
-        let key = format!("{style_name}{ink}\u{1}{text}\u{1}{size:?}\u{1}{align:?}");
+        // Every way of asking for the whole text is one entry.
+        let shown = shown.min(text.chars().count());
+        let key = format!("{style_name}{ink}\u{1}{text}\u{1}{size:?}\u{1}{align:?}\u{1}{shown}");
         if let Some(raster) = cache.rasters.get(&key) {
             return raster.clone();
         }
@@ -862,7 +868,7 @@ impl Engine {
             })
             .clone();
         let raster = styled
-            .rasterize(text, size, align)
+            .rasterize(text, size, align, shown)
             .map(|(rgba, offset, container)| {
                 Arc::new(TextRaster {
                     image: ImageData::generated(rgba),
@@ -877,8 +883,10 @@ impl Engine {
 
     /// Add `text` in font style `style_name` to the draw list, laid out in
     /// a box of `size` (the text's own size when `None`) whose top-left
-    /// corner sits at the item's origin. Text layers and the characters of
-    /// a reel both come through here.
+    /// corner sits at the item's origin, drawing only its first `shown`
+    /// characters. Text layers and the characters of a reel both come
+    /// through here.
+    #[allow(clippy::too_many_arguments)]
     fn push_text(
         &self,
         out: &mut Vec<ResolvedLayer>,
@@ -887,6 +895,7 @@ impl Engine {
         text: &str,
         size: Option<[f64; 2]>,
         align: Align,
+        shown: usize,
     ) {
         let Placed {
             name,
@@ -907,7 +916,7 @@ impl Engine {
             let [sx, sy] = s.offset;
             (rgba(&s.color), sx * scale, sy * scale)
         });
-        match self.text_draw(style_name, text, size, align) {
+        match self.text_draw(style_name, text, size, align, shown) {
             Some(TextDraw::Bitmap(raster)) => {
                 let mut bitmap = |raster: &Arc<TextRaster>, dx: f64, dy: f64, alpha: f64| {
                     let [ox, oy] = raster.offset;
@@ -933,7 +942,9 @@ impl Engine {
                 // shadow is a second rasterization; its alpha rides on the
                 // layer's opacity.
                 if let Some(([.., a], dx, dy)) = shadow {
-                    if let Some(behind) = self.text_raster(style_name, text, size, align, true) {
+                    if let Some(behind) =
+                        self.text_raster(style_name, text, size, align, shown, true)
+                    {
                         bitmap(&behind, dx, dy, f64::from(a) / 255.0);
                     }
                 }
@@ -1125,12 +1136,16 @@ impl Engine {
     /// slid by how far between the two it is. A cell whose character is
     /// not on the ring shows nothing.
     #[allow(clippy::too_many_arguments)]
+    /// Only the cells of the first `shown` characters are drawn; the
+    /// rest stay empty.
+    #[allow(clippy::too_many_arguments)]
     fn push_reel(
         &self,
         out: &mut Vec<ResolvedLayer>,
         placed: &Placed,
         reel: &Reel,
         text: &str,
+        shown: usize,
         [width, height]: [f64; 2],
         (count, justify): (usize, Justify),
         positions: Vec<f64>,
@@ -1156,8 +1171,19 @@ impl Engine {
             (None, Some(font)) => self.ink_centring(font, &ring) * scale,
             _ => 0.0,
         };
+        // Which character of the text a cell holds: with `right`, the
+        // text sits against the far end of the row.
+        let characters = text.chars().count();
+        let character_of = |cell: usize| match justify {
+            Justify::Right if characters >= count => Some(cell + characters - count),
+            Justify::Right => cell.checked_sub(count - characters),
+            _ => Some(cell),
+        };
         for (i, character) in row_cells(text, count, justify).into_iter().enumerate() {
             if character.is_none_or(|c| !ring.contains(&c)) {
+                continue;
+            }
+            if character_of(i).is_none_or(|c| c >= shown) {
                 continue;
             }
             let position = positions.get(i).copied().unwrap_or_default();
@@ -1198,7 +1224,15 @@ impl Engine {
                     (None, Some(font)) => {
                         let mut buffer = [0u8; 4];
                         let character = ring[on].encode_utf8(&mut buffer);
-                        self.push_text(out, &placed, font, character, Some(cell), Align::Center);
+                        self.push_text(
+                            out,
+                            &placed,
+                            font,
+                            character,
+                            Some(cell),
+                            Align::Center,
+                            usize::MAX,
+                        );
                     }
                     (None, None) => {}
                 }
@@ -1512,6 +1546,8 @@ impl Engine {
                         ..
                     } => {
                         let text = self.core.text(root, layer, path, Property::Text);
+                        let shown =
+                            revealed(&text, self.core.number(root, layer, path, Property::Reveal));
                         let placed = Placed {
                             overflow,
                             name: &layer.name,
@@ -1540,7 +1576,7 @@ impl Engine {
                                         parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone()))
                                     })
                                     .transpose()?;
-                                let masks = segments::masks(*style, &text, cells.0, cells.1);
+                                let masks = segments::masks(*style, &text, cells.0, cells.1, shown);
                                 // Where the frame is made on the canvas's own
                                 // pixel grid, segments keep to it.
                                 let snap =
@@ -1687,6 +1723,7 @@ impl Engine {
                                 &placed,
                                 reel,
                                 &text,
+                                shown,
                                 [*width, *height],
                                 cells,
                                 self.core.reel_positions(root, path, reel),
@@ -1696,6 +1733,8 @@ impl Engine {
                     LayerKind::Text { size, align, .. } => {
                         let text = self.core.text(root, layer, path, Property::Text);
                         let font = self.core.text(root, layer, path, Property::Font);
+                        let shown =
+                            revealed(&text, self.core.number(root, layer, path, Property::Reveal));
                         let placed = Placed {
                             overflow,
                             name: &layer.name,
@@ -1706,7 +1745,15 @@ impl Engine {
                             blend: layer.blend,
                             transform,
                         };
-                        self.push_text(&mut built.items, &placed, &font, &text, *size, *align);
+                        self.push_text(
+                            &mut built.items,
+                            &placed,
+                            &font,
+                            &text,
+                            *size,
+                            *align,
+                            shown,
+                        );
                     }
                 }
                 if let Some(press) = &layer.press {

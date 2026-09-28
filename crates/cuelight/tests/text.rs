@@ -23,9 +23,11 @@ const SHOW: &str = r##"{
     "cast": { "file": "blocks", "color": "#FFFFFF",
               "shadow": { "color": "#000000", "offset": [1, 1] } }
   },
-  "variables": { "score": 1500 },
+  "variables": { "score": 1500, "typed": 0 },
   "layers": [
     { "name": "label", "type": "text", "font": "red", "text": "10", "x": 2, "y": 1, "align": "top_left" },
+    { "name": "typed", "type": "text", "font": "white", "text": "150", "size": [16, 8], "reveal": 0,
+      "bindings": [{ "property": "reveal", "variable": "typed" }] },
     { "name": "boxed", "type": "text", "font": "white", "text": "1", "size": [9, 8], "x": 20 },
     { "name": "cast", "type": "text", "font": "cast", "text": "1", "x": 4, "y": 2, "align": "top_left" },
     {
@@ -97,6 +99,31 @@ fn text_centers_in_its_box_by_default() {
     // "1" measures 3x4; centered in 9x8 -> offset (3, 2)
     let (x, y, w, h, _) = bitmap(&engine, "boxed");
     assert_eq!((x, y, w, h), (23.0, 2.0, 2.0, 3.0));
+}
+
+#[test]
+fn revealed_text_keeps_the_room_of_what_is_still_hidden() {
+    let mut engine = engine();
+    // Nothing shows, and nothing is drawn.
+    let drawn = |engine: &Engine| {
+        engine
+            .resolved_layers()
+            .unwrap()
+            .iter()
+            .any(|l| l.name == "typed")
+    };
+    assert!(!drawn(&engine));
+    // "150" measures 9 wide by advance, centred in 16: it starts at 3.
+    // One character in, that character sits where it will when the rest
+    // has arrived.
+    engine.set_variable("typed", 0.34);
+    assert_eq!(bitmap(&engine, "typed"), (3.0, 2.0, 2.0, 3.0, [255; 4]));
+    engine.set_variable("typed", 0.67);
+    assert_eq!(bitmap(&engine, "typed").2, 5.0);
+    engine.set_variable("typed", 1.0);
+    assert_eq!(bitmap(&engine, "typed"), (3.0, 2.0, 8.0, 3.0, [255; 4]));
+    // A layer that says nothing about it shows everything.
+    assert_eq!(bitmap(&engine, "label").2, 5.0);
 }
 
 #[test]

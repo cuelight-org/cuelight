@@ -63,11 +63,11 @@ pub use engine::{
     Traced, VideoInfo, Voice, Which, SAME_INSTANT,
 };
 pub use model::{
-    parse_color, sample_keys, Align, Binding, Blend, Border, DigitDisplay, Direction, DotShape,
-    Dots, Duck, Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind, Media, MediaKind,
-    Model, NumberFormat, Output, OutputMode, Pass, Property, Reading, Reel, ReelCells, Retrigger,
-    Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet, Show, Stages, Stroke, Tile, Timeline,
-    Track, Transition, Triggers, When, FORMAT, MAIN_BUS,
+    parse_color, revealed, sample_keys, Align, Binding, Blend, Border, DigitDisplay, Direction,
+    DotShape, Dots, Duck, Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind, Media,
+    MediaKind, Model, NumberFormat, Output, OutputMode, Pass, Property, Reading, Reel, ReelCells,
+    Retrigger, Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet, Show, Stages, Stroke, Tile,
+    Timeline, Track, Transition, Triggers, When, FORMAT, MAIN_BUS,
 };
 pub use path::{PathData, PathElement};
 pub use value::Value;

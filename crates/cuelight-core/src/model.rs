@@ -687,6 +687,15 @@ pub enum LayerKind {
         size: Option<[f64; 2]>,
         #[serde(default)]
         align: Align,
+        /// How much of the text shows, as a share of its characters from
+        /// 0 to 1: the first `reveal` of them are drawn, the rest keep
+        /// their room and are not, so a line neither reflows nor
+        /// re-centres as it types. A numeric property like `opacity`,
+        /// keyframed for a typewriter, bound for a dialogue box a host
+        /// advances. Every character counts, spaces and line breaks
+        /// too, so a pause can be written into the text.
+        #[serde(default = "default_scale")]
+        reveal: f64,
     },
     /// A row of `digits` equal cells across `size` `[width, height]`
     /// (top-left at the layer's x/y) showing `text`, one character per
@@ -700,6 +709,10 @@ pub enum LayerKind {
         #[serde(default)]
         justify: Justify,
         display: DigitDisplay,
+        /// How much of the text shows, as on a text layer: the cells of
+        /// the characters past it stay dark or empty.
+        #[serde(default = "default_scale")]
+        reveal: f64,
     },
     /// A video the host registered under `video` with its duration and
     /// size ([`Engine::set_video`](crate::Engine::set_video)), played the
@@ -1431,6 +1444,9 @@ pub enum Property {
     Text,
     /// The font style of a text layer; bindable, not animatable.
     Font,
+    /// The share of a text or digits layer's characters that show, 0 to
+    /// 1; see [`revealed`].
+    Reveal,
     /// The video a video layer plays; bindable, not animatable. Binding
     /// it lets one layer show whatever it is pointed at, rather than
     /// needing a layer per clip.
@@ -1456,6 +1472,20 @@ pub enum Property {
     /// `#RRGGBBAA`; bindable, not animatable. An empty value leaves the
     /// image alone.
     Tint,
+}
+
+/// How many of `text`'s characters a `reveal` of `share` shows: the
+/// share of them, rounded down, so the next character snaps in the
+/// instant the share reaches it, the way a typewriter does. Shares
+/// outside 0 to 1 show none or all.
+pub fn revealed(text: &str, share: f64) -> usize {
+    let count = text.chars().count();
+    if share.is_nan() || share >= 1.0 {
+        return count;
+    }
+    // A little slack, so a share written as a fraction of the count
+    // (0.3 of 10) reaches the character it means.
+    ((share.max(0.0) * count as f64 + 1e-9).floor() as usize).min(count)
 }
 
 impl Property {
@@ -1631,6 +1661,10 @@ impl Layer {
                 Value::Text(text.clone())
             }
             (Property::Font, LayerKind::Text { font, .. }) => Value::Text(font.clone()),
+            (
+                Property::Reveal,
+                LayerKind::Text { reveal, .. } | LayerKind::Digits { reveal, .. },
+            ) => Value::Number(*reveal),
             (Property::Video, LayerKind::Video { video, .. }) => {
                 Value::Text(video.first().to_owned())
             }
@@ -1662,6 +1696,7 @@ impl Layer {
             (
                 Property::Text
                 | Property::Font
+                | Property::Reveal
                 | Property::Frame
                 | Property::Gain
                 | Property::Tint
