@@ -61,12 +61,15 @@ pub(crate) fn ink(font: &FontData, size: f64, characters: &[char]) -> Option<(f6
     (top <= bottom).then_some((top, bottom, line))
 }
 
+/// Only the first `shown` characters get a glyph (line breaks count);
+/// the rest keep their room in the layout.
 pub(crate) fn layout(
     font: &FontData,
     text: &str,
     size: f64,
     container: Option<[f64; 2]>,
     align: Align,
+    shown: usize,
 ) -> Option<Layout> {
     let font = FontRef::new(&font.data).ok()?;
     let px = Size::new(size as f32);
@@ -106,6 +109,7 @@ pub(crate) fn layout(
     let per_line = lines.len() > 1 && !align.is_left();
 
     let mut glyphs = Vec::new();
+    let mut index = 0;
     for (i, (line, width)) in lines.iter().enumerate() {
         let x0 = if per_line {
             align.offset(*width, 0.0, cw, 0.0).0
@@ -113,11 +117,17 @@ pub(crate) fn layout(
             bx
         };
         let baseline = by + line_height * i as f64 + ascent;
-        glyphs.extend(line.iter().map(|&(id, pen)| PlacedGlyph {
-            id,
-            x: x0 + pen,
-            y: baseline,
-        }));
+        glyphs.extend(
+            line.iter()
+                .take(shown.saturating_sub(index))
+                .map(|&(id, pen)| PlacedGlyph {
+                    id,
+                    x: x0 + pen,
+                    y: baseline,
+                }),
+        );
+        // The break between lines is a character too.
+        index += line.len() + 1;
     }
     Some(Layout {
         glyphs,

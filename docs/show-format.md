@@ -499,11 +499,28 @@ Layer kinds:
   Multi-line text aligns each line on its own within the box width.
   The `text` property can be bound (see [Bindings](#bindings)) but not
   keyframed.
+
+  `reveal` (default 1) is how much of the text shows, as a share of its
+  characters from 0 to 1: the first `reveal` of them are drawn and the
+  rest keep their room, so a line neither reflows nor re-centres as it
+  types. The next character snaps in the instant the share reaches it,
+  the way a typewriter does. It is a numeric property like `opacity`,
+  keyframed for text that types itself out, bound for a dialogue box the
+  host advances. Every character counts, spaces and line breaks too, so a
+  pause can be written into the text as spaces:
+
+  ```json
+  { "type": "text", "text": "$ cuelight-render deck/ --events", "font": "code", "reveal": 0,
+    "timelines": [{ "name": "type", "trigger": "go", "hold": true,
+      "tracks": [{ "property": "reveal", "keys": [{ "t": 0, "v": 0 }, { "t": 1.2, "v": 1 }] }] }] }
+  ```
 - `digits`: a row of `digits` equal cells across `size` `[width, height]`
   (top-left at the layer's x/y) showing `text`, one character per cell.
   `justify` is `left` (default) or `right`, as scores are shown; text that
   does not fit is cut at the other side. `text` can be bound like a text
-  layer's. How a cell is drawn is up to `display`:
+  layer's, and `reveal` (default 1) means what it means there: the cells
+  of the characters past it stay dark or empty. How a cell is drawn is up
+  to `display`:
 
   ```json
   { "type": "digits", "digits": 16, "size": [128, 16], "text": "HELLO",
@@ -950,7 +967,8 @@ A binding wires a layer property to a variable, evaluated every frame:
 
 means `opacity = score * 0.001 + 0.2`. Animatable/bindable properties:
 `x`, `y`, `opacity`, `scale`, `scale_x`, `scale_y`, `rotation`, `frame`
-for sprite sheet images, and `gain` for groups and audio layers. `visible`, a video layer's `video` and an audio layer's `sound` can be
+for sprite sheet images, `reveal` for text and digits layers, and `gain`
+for groups and audio layers. `visible`, a video layer's `video` and an audio layer's `sound` can be
 bound but not keyframed.
 
 A text or digits layer's `text` property can be bound too: the variable's text as

@@ -952,6 +952,12 @@
             "font": {
               "type": "string"
             },
+            "reveal": {
+              "description": "How much of the text shows, as a share of its characters from\n0 to 1: the first `reveal` of them are drawn, the rest keep\ntheir room and are not, so a line neither reflows nor\nre-centres as it types. A numeric property like `opacity`,\nkeyframed for a typewriter, bound for a dialogue box a host\nadvances. Every character counts, spaces and line breaks\ntoo, so a pause can be written into the text.",
+              "type": "number",
+              "format": "double",
+              "default": 1.0
+            },
             "size": {
               "type": [
                 "array",
@@ -994,6 +1000,12 @@
             "justify": {
               "$ref": "#/$defs/Justify",
               "default": "left"
+            },
+            "reveal": {
+              "description": "How much of the text shows, as on a text layer: the cells of\nthe characters past it stay dark or empty.",
+              "type": "number",
+              "format": "double",
+              "default": 1.0
             },
             "size": {
               "type": "array",
@@ -1427,6 +1439,11 @@
           "description": "The font style of a text layer; bindable, not animatable.",
           "type": "string",
           "const": "font"
+        },
+        {
+          "description": "The share of a text or digits layer's characters that show, 0 to\n1; see [`revealed`].",
+          "type": "string",
+          "const": "reveal"
         },
         {
           "description": "The video a video layer plays; bindable, not animatable. Binding\nit lets one layer show whatever it is pointed at, rather than\nneeding a layer per clip.",
