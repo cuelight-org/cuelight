@@ -7,6 +7,7 @@
 //! await init();
 //! const player = await CuelightPlayer.create(canvas, "shows/beacon/");
 //! player.actions();            // ["go", ...]
+//! player.listeners();          // { go: { where: "anywhere" }, slide_2: { where: "opens", scene: "two" }, ... }
 //! player.trigger("go");
 //! player.set("score", 1200);
 //! player.onEvent((event) => console.log(event));
@@ -599,6 +600,32 @@ impl CuelightPlayer {
         let inner = self.inner.borrow();
         let show = inner.engine.show().expect("show loaded");
         show.triggers().into_iter().collect()
+    }
+
+    /// Where each trigger is listened to, as an object by name: `{ where:
+    /// "opens", scene }` for one that enters a scene, `{ where: "scene",
+    /// scene }` for one only that scene hears, and `{ where: "anywhere" }`
+    /// for the rest, so a page can group its buttons and dim the ones the
+    /// active scene is not listening to. Keys and presses that fire a
+    /// trigger nobody hears are listed too, as heard anywhere.
+    pub fn listeners(&self) -> JsValue {
+        use cuelight_core::Listened;
+        let inner = self.inner.borrow();
+        let object = js_sys::Object::new();
+        for (name, listened) in inner.engine.show().expect("show loaded").listeners() {
+            let place = js_sys::Object::new();
+            let (at, scene) = match &listened {
+                Listened::Opens(scene) => ("opens", Some(scene)),
+                Listened::Scene(scene) => ("scene", Some(scene)),
+                Listened::Anywhere => ("anywhere", None),
+            };
+            let _ = js_sys::Reflect::set(&place, &"where".into(), &at.into());
+            if let Some(scene) = scene {
+                let _ = js_sys::Reflect::set(&place, &"scene".into(), &scene.as_str().into());
+            }
+            let _ = js_sys::Reflect::set(&object, &name.into(), &place);
+        }
+        object.into()
     }
 
     /// The show's variables with their current values, as an object.

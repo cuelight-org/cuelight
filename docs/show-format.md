@@ -1525,6 +1525,16 @@ timeline can be previewed alone. Everything else, including where variable value
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 
+What a host can offer as the show's actions is `Show::triggers()`, every
+trigger name the show listens to, and `Show::listeners()` says where each
+is heard, so the buttons can be grouped and the ones the active scene is
+not listening to dimmed: a trigger that enters a scene *opens* it, one the
+show's own layers hear, or more than one scene does, is heard *anywhere*,
+and one only a scene's layers hear belongs to that *scene*. Keys and
+presses that fire a trigger nobody hears are listed as heard anywhere.
+The player marks its menu with these, and the web player hands them out
+as `player.listeners()`.
+
 The clock moves with `advance_to(instant)` or `advance_frame(dt)`. A host
 that can say what time it is should say so: `advance_frame` adds the
 delta to where the clock already is, and `previous + delta` is not the

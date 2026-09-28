@@ -1543,6 +1543,18 @@ impl Property {
     }
 }
 
+/// Where a trigger is listened to; see [`Show::listeners`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Listened {
+    /// Firing it enters this scene.
+    Opens(String),
+    /// The show's own layers hear it, or more than one scene does, or
+    /// nothing does and a key or a press fires it.
+    Anywhere,
+    /// Only this scene hears it.
+    Scene(String),
+}
+
 impl Show {
     /// Every trigger name the show listens to: what enters its scenes,
     /// what starts its timelines and what plays or stops its sounds, in
@@ -1578,6 +1590,87 @@ impl Show {
         }
         for layers in self.layer_trees() {
             timelines(layers, &mut out);
+        }
+        out
+    }
+
+    /// Where each trigger is listened to, by name: what [`triggers`](Show::triggers)
+    /// lists, and the triggers the show's keys and presses fire, so a
+    /// host can group its actions and dim the ones the active scene is
+    /// not listening to.
+    ///
+    /// A trigger that enters a scene is [`Listened::Opens`] whatever else
+    /// hears it. One heard by the show's own layers, or by more than one
+    /// scene, is [`Listened::Anywhere`], and so is one nothing hears but
+    /// a key or a press fires. One only a scene's layers hear is
+    /// [`Listened::Scene`]. Heard means a timeline's `trigger`, a sound's
+    /// or video's `trigger` and `stop`, and a reel's `spin`.
+    pub fn listeners(&self) -> BTreeMap<String, Listened> {
+        fn heard(layers: &[Layer], out: &mut Vec<String>, fired: &mut Vec<String>) {
+            for layer in layers {
+                for timeline in &layer.timelines {
+                    out.extend(timeline.trigger.iter().map(str::to_owned));
+                }
+                if let Some(media) = layer.kind.media() {
+                    out.extend(
+                        media
+                            .trigger
+                            .iter()
+                            .chain(media.stop.iter())
+                            .map(str::to_owned),
+                    );
+                }
+                if let LayerKind::Digits {
+                    display: DigitDisplay::Reel(reel),
+                    ..
+                } = &layer.kind
+                {
+                    out.extend(reel.spin.iter().map(str::to_owned));
+                }
+                if let Some(press) = &layer.press {
+                    fired.push(press.trigger.clone());
+                }
+                heard(layer.children(), out, fired);
+            }
+        }
+        let mut out: BTreeMap<String, Listened> = BTreeMap::new();
+        // Fired by an input rather than heard: an action all the same.
+        let mut fired: Vec<String> = self.input.keys.values().cloned().collect();
+        fired.extend(self.input.press.clone());
+        let mut everywhere: Vec<String> = Vec::new();
+        heard(&self.layers, &mut everywhere, &mut fired);
+        // By the scenes, one at a time, so a name two of them share is
+        // told from one only one has.
+        let mut by_scene: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+        for scene in &self.scenes {
+            let mut names = Vec::new();
+            heard(&scene.layers, &mut names, &mut fired);
+            for name in names {
+                let scenes = by_scene.entry(name).or_default();
+                if !scenes.contains(&scene.name.as_str()) {
+                    scenes.push(&scene.name);
+                }
+            }
+        }
+        for name in fired {
+            out.insert(name, Listened::Anywhere);
+        }
+        for (name, scenes) in by_scene {
+            let listened = match scenes.as_slice() {
+                [only] => Listened::Scene((*only).to_owned()),
+                _ => Listened::Anywhere,
+            };
+            out.insert(name, listened);
+        }
+        for name in everywhere {
+            out.insert(name, Listened::Anywhere);
+        }
+        // Entering a scene is what firing it does, whoever else hears it;
+        // the first scene that answers is the one entered.
+        for scene in self.scenes.iter().rev() {
+            for name in scene.trigger.iter() {
+                out.insert(name.to_owned(), Listened::Opens(scene.name.clone()));
+            }
         }
         out
     }
