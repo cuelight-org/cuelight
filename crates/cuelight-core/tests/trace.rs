@@ -226,3 +226,179 @@ fn explain_ranks_every_source_of_a_property() {
     );
     let _ = Which::When;
 }
+
+/// A sound with a trigger, a stop and an `on_end`, and a looping bed
+/// under a condition.
+const SOUNDS: &str = r##"{ "name": "s", "size": [8, 8], "layers": [
+    { "name": "thunder", "type": "audio", "sound": "thunder", "trigger": "strike",
+      "stop": "hush", "on_end": "rumbled" },
+    { "name": "bed", "type": "audio", "sound": "loop", "loop": true,
+      "while": { "variable": "storm" } } ] }"##;
+
+fn played(trace: &[cuelight_core::Traced]) -> Vec<String> {
+    trace
+        .iter()
+        .filter(|t| matches!(t.what, Happened::Played { .. } | Happened::Over { .. }))
+        .map(|t| format!("{:.2} {}", t.at, t.what))
+        .collect()
+}
+
+#[test]
+fn a_play_is_traced_from_its_start_to_its_end_with_why() {
+    let mut engine = Engine::new();
+    engine.set_sound("thunder", 2.0).unwrap();
+    engine.set_sound("loop", 0.5).unwrap();
+    engine.load_show(SOUNDS).unwrap();
+    engine.drain_trace();
+    engine.trigger("strike");
+    engine.advance_to(3.0);
+    let trace = engine.drain_trace();
+    assert_eq!(
+        played(&trace),
+        [
+            "0.00 played \"thunder\" on layer \"thunder\" (show/0) on \"strike\", fired by the host",
+            "2.00 \"thunder\" on layer \"thunder\" (show/0) finished, firing \"rumbled\"",
+        ]
+    );
+    // The start and the end carry the same id, the one the host hears
+    // the play under.
+    let ids: Vec<u64> = trace
+        .iter()
+        .filter_map(|t| match &t.what {
+            Happened::Played { id, by, .. } => {
+                assert!(matches!(by, Cause::Trigger { .. }));
+                Some(*id)
+            }
+            Happened::Over { id, by, .. } => {
+                assert_eq!(
+                    *by,
+                    cuelight_core::Ending::Finished {
+                        on_end: Some("rumbled".into())
+                    }
+                );
+                Some(*id)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], ids[1]);
+    // The end is traced before the trigger it fires.
+    let order: Vec<&str> = trace
+        .iter()
+        .filter_map(|t| match &t.what {
+            Happened::Over { .. } => Some("over"),
+            Happened::Fired { name, .. } if name == "rumbled" => Some("fired"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["over", "fired"]);
+}
+
+#[test]
+fn a_play_stopped_short_says_what_stopped_it() {
+    let mut engine = Engine::new();
+    engine.set_sound("thunder", 2.0).unwrap();
+    engine.set_sound("loop", 0.5).unwrap();
+    engine.load_show(SOUNDS).unwrap();
+    engine.drain_trace();
+    engine.trigger("strike");
+    engine.advance_to(0.5);
+    engine.trigger("hush");
+    engine.set_variable("storm", 1.0);
+    engine.advance_to(1.0);
+    engine.set_variable("storm", 0.0);
+    engine.advance_to(1.5);
+    engine.trigger("strike");
+    engine.advance_to(1.6);
+    engine.trigger("strike");
+    engine.advance_to(1.7);
+    assert_eq!(
+        played(&engine.drain_trace()),
+        [
+            "0.00 played \"thunder\" on layer \"thunder\" (show/0) on \"strike\", fired by the host",
+            "0.50 \"thunder\" on layer \"thunder\" (show/0) stopped on \"hush\"",
+            "0.50 played \"loop\" on layer \"bed\" (show/1) as its while turned true",
+            "1.00 \"loop\" on layer \"bed\" (show/1) stopped as its while turned false",
+            "1.50 played \"thunder\" on layer \"thunder\" (show/0) on \"strike\", fired by the host",
+            "1.60 \"thunder\" on layer \"thunder\" (show/0) started over",
+            "1.60 played \"thunder\" on layer \"thunder\" (show/0) on \"strike\", fired by the host",
+        ]
+    );
+}
+
+#[test]
+fn a_queued_play_is_traced_after_the_end_it_waited_for_and_by_what_queued_it() {
+    let show = r##"{ "name": "q", "size": [8, 8], "layers": [
+        { "name": "tune", "type": "audio", "sound": "loop", "retrigger": "queue",
+          "trigger": "play", "on_end": "done" } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_sound("loop", 0.5).unwrap();
+    engine.load_show(show).unwrap();
+    engine.drain_trace();
+    engine.trigger("play");
+    engine.advance_to(0.1);
+    engine.trigger("play");
+    engine.advance_to(0.6);
+    assert_eq!(
+        played(&engine.drain_trace()),
+        [
+            "0.00 played \"loop\" on layer \"tune\" (show/0) on \"play\", fired by the host",
+            "0.50 \"loop\" on layer \"tune\" (show/0) finished, firing \"done\"",
+            "0.50 played \"loop\" on layer \"tune\" (show/0) on \"play\", fired by the host",
+        ]
+    );
+}
+
+#[test]
+fn plays_that_end_together_are_traced_in_the_order_they_started() {
+    let show = r##"{ "name": "v", "size": [8, 8], "layers": [
+        { "name": "a", "type": "audio", "sound": "loop", "trigger": "go" },
+        { "name": "b", "type": "audio", "sound": "loop", "trigger": "go" },
+        { "name": "c", "type": "audio", "sound": "loop", "trigger": "go" } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_sound("loop", 0.5).unwrap();
+    engine.load_show(show).unwrap();
+    engine.drain_trace();
+    engine.trigger("go");
+    engine.advance_to(1.0);
+    let lines = played(&engine.drain_trace());
+    let layers: Vec<&str> = lines
+        .iter()
+        .map(|l| {
+            l.split("on layer ")
+                .nth(1)
+                .unwrap()
+                .split(' ')
+                .next()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(
+        layers,
+        ["\"a\"", "\"b\"", "\"c\"", "\"a\"", "\"b\"", "\"c\""]
+    );
+}
+
+#[test]
+fn a_play_past_the_voices_gives_way_and_says_so() {
+    let show = r##"{ "name": "o", "size": [8, 8], "layers": [
+        { "name": "coin", "type": "audio", "sound": "thunder", "trigger": "drop",
+          "retrigger": "overlap", "voices": 1 } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_sound("thunder", 2.0).unwrap();
+    engine.load_show(show).unwrap();
+    engine.drain_trace();
+    engine.trigger("drop");
+    engine.advance_to(0.3);
+    engine.trigger("drop");
+    engine.advance_to(0.4);
+    assert_eq!(
+        played(&engine.drain_trace()),
+        [
+            "0.00 played \"thunder\" on layer \"coin\" (show/0) on \"drop\", fired by the host",
+            "0.30 \"thunder\" on layer \"coin\" (show/0) gave way to a newer play",
+            "0.30 played \"thunder\" on layer \"coin\" (show/0) on \"drop\", fired by the host",
+        ]
+    );
+}

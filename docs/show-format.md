@@ -1516,7 +1516,8 @@ editor or a debugger: `drain_trace()` hands back what happened since the
 last call and why, each at its own instant (a trigger fired and by whom,
 a scene entered, a timeline started by which trigger, at load, on
 entering a scene or by its condition, ended, held or stopped, a
-condition turning); `explain(layer, property)` lists every source the
+condition turning, a sound or a clip played and why, and its play over,
+finished or stopped short and how); `explain(layer, property)` lists every source the
 property takes its value from now, strongest first, which is the
 [precedence](#property-precedence) answered for one property at one
 instant; and `start_timeline(layer, index)` starts one timeline on its
@@ -1604,7 +1605,7 @@ cuelight-render dmd/ --at 2 --scale 4 -o frames/
 Time is walked in fixed steps of `--fps` (60 by default) from 0, so a run
 is repeatable and a frame at a given time is reached the same way however
 many were asked for. `--events` prints the show's trace, what fired,
-started, ended and turned, when and why, and needs no GPU. `--trigger 2.5:go` and `--set 0:score=1500` add inputs at a
+started, played, ended and turned, when and why, and needs no GPU. `--trigger 2.5:go` and `--set 0:score=1500` add inputs at a
 time, and `--no-driver` ignores the folder's driver script. `--lenient`
 renders what can be rendered of a show that does not load whole, printing
 what was left out (see [Format version](#format-version)).
