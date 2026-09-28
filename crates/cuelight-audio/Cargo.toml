@@ -15,11 +15,33 @@ hound = "3.5"
 cpal = { version = "0.18", optional = true }
 log = "0.4"
 
+# The browser's WebAudio, for the `web` feature; the crate is otherwise
+# the same on wasm32, so a web host decodes and mixes nothing itself.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioParam",
+    "AudioScheduledSourceNode",
+    "BaseAudioContext",
+    "GainNode",
+] }
+
 [features]
 default = ["live"]
 # Play through a sound device (cpal). Off for hosts that only render to a
 # file or mix themselves.
 live = ["dep:cpal"]
+# Play through the browser's WebAudio (`WebAudio`), on wasm32. Web hosts
+# turn `live` off: there is no sound device to open in a page.
+web = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
 
 [dev-dependencies]
 hound = "3.5"

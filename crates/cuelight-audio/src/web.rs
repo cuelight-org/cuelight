@@ -1,6 +1,11 @@
 //! Sound through the browser's WebAudio: the engine's voice list mapped
 //! onto buffer sources and gain nodes, which already run on the browser's
 //! own audio thread, so there is nothing to mix here.
+//!
+//! The same shape as the native `Output`: the show's
+//! sounds are registered first, by decoding them here, then what
+//! `Engine::voices()` says is applied each frame. The `web` feature, on
+//! `wasm32` only.
 
 use cuelight_core::Voice;
 use std::collections::HashMap;
