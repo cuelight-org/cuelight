@@ -962,7 +962,11 @@ so the layers using it do not change.
 **Bitmap fonts**, in the [BMFont](https://www.angelcode.com/products/bmfont/doc/file_format.html)
 text format common for pixel fonts: the host parses the `.fnt` with
 `BitmapFont::parse` and registers it with its page images through
-`Engine::set_font`. They have one fixed size (setting `size` is an error),
+`Engine::set_font`. The `padding` its `info` line declares, the room
+inside every glyph's rect that a border is drawn into, is drawn with the
+glyph but is not ink: a block is measured and characters are centred on
+what is inside it, so a padded atlas and the same font rasterized from its
+TrueType file lay out the same. They have one fixed size (setting `size` is an error),
 `color` multiplies the glyph colors (white keeps the font's own), and a
 border also widens each character's advance by two widths. Text is
 rasterized on the CPU pixel for pixel from the font pages, never
