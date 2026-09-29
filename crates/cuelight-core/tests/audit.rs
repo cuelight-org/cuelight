@@ -157,3 +157,16 @@ fn a_document_is_audited_at_the_paths_it_was_written_with() {
     assert_eq!(audited.show.layers[1].name, "");
     assert!(cuelight_core::audit_document("[]").is_err());
 }
+
+#[test]
+fn a_part_hidden_for_good_is_leaving_an_element_out_not_dead_weight() {
+    let show = r##"{ "name": "p", "size": [8, 8], "layers": [
+      { "name": "girl", "type": "image", "image": "girl", "parts": [
+        { "id": "basket", "visible": false },
+        { "id": "hood", "opacity": 0 } ] },
+      { "name": "gone", "type": "image", "image": "girl", "visible": false } ] }"##;
+    let found = findings(show);
+    let paths: Vec<&str> = found.iter().map(|(p, ..)| p.as_str()).collect();
+    // The layer still is; the parts are not.
+    assert_eq!(paths, ["layers[1]"], "{found:#?}");
+}
