@@ -56,7 +56,7 @@ mod pixels;
 mod segments;
 
 pub use engine::{
-    AssetError, Engine, FontData, FrameProfile, ImageData, LayerCost, PlacedGlyph,
+    AssetError, Engine, FontData, FrameProfile, ImageData, LayerCost, PlacedGlyph, Pressed,
     ResolvedGradient, ResolvedGradientKind, ResolvedLayer, ResolvedShape, TextStats, Tiled,
     Transform, Vector, VectorPath,
 };

@@ -497,6 +497,8 @@ pub enum Happened {
         id: u64,
         by: Cause,
     },
+    /// A press asked for this web address to be opened.
+    Opened { url: String },
     /// A play of a sound or a clip is over, and how: finished, or
     /// stopped short one way or another. The same `id` its start was
     /// traced with.
@@ -609,6 +611,7 @@ impl std::fmt::Display for Happened {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Happened::Fired { name, by } => write!(f, "fired {name:?} {by}"),
+            Happened::Opened { url } => write!(f, "opened {url:?} on a press"),
             Happened::Set { name, value } => write!(f, "set {name:?} to {}", value.to_text()),
             Happened::Entered { scene, by } => write!(f, "entered scene {scene:?} {by}"),
             Happened::Started { timeline, by } => write!(f, "started {timeline} {by}"),
@@ -656,6 +659,9 @@ pub enum Event {
     /// The show fired this trigger itself (a timeline's or a sound's
     /// `on_end`). Triggers the host fires are not echoed back.
     Trigger(String),
+    /// A press landed on a layer that opens this web address. The host
+    /// decides what to do with it: the players open it in the browser.
+    Open { url: String },
 }
 
 /// Events kept while the host does not drain them; the oldest are dropped
@@ -941,6 +947,25 @@ impl Engine {
     /// typos. Keys starting with `$` (like `$schema`) are never reported.
     pub fn load_warnings(&self) -> &[String] {
         &self.load_warnings
+    }
+
+    /// Say a press asked for `url` to be opened: reported through
+    /// [`drain_events`](Engine::drain_events) as [`Event::Open`] and
+    /// traced, for the host that owns the press to act on. Nothing in
+    /// the show changes.
+    pub fn open_link(&mut self, url: &str) {
+        self.note(
+            self.time,
+            Happened::Opened {
+                url: url.to_owned(),
+            },
+        );
+        if self.events.len() == MAX_PENDING_EVENTS {
+            self.events.pop_front();
+        }
+        self.events.push_back(Event::Open {
+            url: url.to_owned(),
+        });
     }
 
     /// Push a named value from the host. Unknown names are accepted:
@@ -4486,6 +4511,23 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
             if !known {
                 return Err(Error::InvalidShow(format!(
                     "font binding of layer {:?} maps to {value:?}, not a declared font style",
+                    layer.name
+                )));
+            }
+        }
+    }
+    if let Some(press) = &layer.press {
+        if press.trigger.is_none() && press.open.is_none() {
+            return Err(Error::InvalidShow(format!(
+                "the press of layer {:?} neither fires a trigger nor opens a link",
+                layer.name
+            )));
+        }
+        if let Some(url) = press.open.as_deref() {
+            let web = url.starts_with("http://") || url.starts_with("https://");
+            if !web {
+                return Err(Error::InvalidShow(format!(
+                    "the press of layer {:?} opens {url:?}, which is not an http or https address",
                     layer.name
                 )));
             }

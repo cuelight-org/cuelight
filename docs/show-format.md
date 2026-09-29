@@ -200,17 +200,35 @@ counts as inside is the shape for a rect or a circle and the box it
 fills for anything else, which is enough for a lever, a word or a
 button, and predictable.
 
-A press fires a trigger and nothing else. That keeps the show's inputs
-one-way: a press is the same thing a host firing that trigger would be,
-so a show stays a function of its triggers and its clock, and pressing
-the same things at the same times gives the same show. It is also what
-lets a host record presses and keys and replay them, which is how
-scrubbing keeps working while a show is being played with
-(`cuelight_loader::Live`, see [Host contract](#host-contract)).
+A press may also open a web address, beside the trigger it fires or
+instead of one:
 
-Hosts: `Engine::key(name)` and `Engine::press([x, y])` fire, and hand
-back the trigger they fired so a host can log or record it;
-`Engine::pressed([x, y])` asks without firing, for a pointer cursor.
+```json
+{ "name": "order", "type": "text", "text": "Order online", "font": "menu",
+  "press": { "open": "https://example.com/order" } }
+```
+
+Only `http` and `https` addresses, so a show cannot point a kiosk at a
+local file or a custom scheme; anything else is a load error, as is a
+`press` that neither fires nor opens. The engine opens nothing itself:
+the address is reported as an event (`Event::Open`) and traced, and the
+host decides. The web player opens it in a new tab, inside the pointer
+event that was the press, since a browser allows a new tab only from
+the gesture itself; the native player hands it to the system's browser.
+
+Otherwise a press fires a trigger and nothing else. That keeps the
+show's inputs one-way: a press is the same thing a host firing that
+trigger would be, so a show stays a function of its triggers and its
+clock, and pressing the same things at the same times gives the same
+show. It is also what lets a host record presses and keys and replay
+them, which is how scrubbing keeps working while a show is being played
+with (`cuelight_loader::Live`, see [Host contract](#host-contract)).
+
+Hosts: `Engine::key(name)` fires and hands back the trigger it fired;
+`Engine::press([x, y])` does what the layer under the point does and
+hands back what that was, the trigger and the address, so a host can
+log or record it and open the address its own way;
+`Engine::pressed([x, y])` asks without doing, for a pointer cursor.
 Presses are in canvas coordinates, which `render::canvas_at` works out
 from a point on the surface.
 

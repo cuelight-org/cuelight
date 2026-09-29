@@ -150,6 +150,33 @@ fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
     }
 }
 
+/// Hand a web address to the system's default browser.
+fn open_link(url: &str) {
+    #[cfg(target_os = "linux")]
+    let opened = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let opened = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let opened = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let opened: std::io::Result<std::process::Child> = Err(std::io::Error::other(
+        "no way to open a browser on this system",
+    ));
+    match opened {
+        Err(e) => log::warn!("could not open {url:?}: {e}"),
+        // Reaped on a thread of its own: the launcher returns at once,
+        // and a child nobody waits for stays a zombie until the player
+        // exits, which on a box that runs for weeks adds up.
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+    }
+}
+
 fn print_menu(engine: &Engine, actions: &[String]) {
     let show = engine.show().expect("show loaded");
     println!(
@@ -512,11 +539,17 @@ impl App {
             self.presenter.fit(),
             pointer,
         );
-        let Some(trigger) = at.and_then(|at| self.engine.press(at)) else {
+        let Some(pressed) = at.and_then(|at| self.engine.press(at)) else {
             return;
         };
-        log::info!("press fired {trigger:?}");
-        self.live.record(self.engine.time(), trigger);
+        if let Some(trigger) = pressed.trigger {
+            log::info!("press fired {trigger:?}");
+            self.live.record(self.engine.time(), trigger);
+        }
+        if let Some(url) = pressed.open {
+            log::info!("press opens {url:?}");
+            open_link(&url);
+        }
     }
 
     /// Put the show `by` seconds from where it is, forwards or backwards,
