@@ -469,6 +469,15 @@ Layer kinds:
   behind white artwork, one sprite or icon reused in several colors, a
   worn look over a clean texture).
 
+  `sampling` says how an image's pixels are read when it is drawn at
+  another size: `smooth` (default) filters them, and `nearest` draws each
+  source pixel as a block with hard edges, at any scale and rotation, so
+  pixel art, a pattern from a tiny tile or a mosaic stays crisp in a smooth
+  show. It is the layer's own choice, whatever the show's `scaling`; a
+  block's edges are still smoothed where they are not upright or level. A
+  reel whose `cells` are images takes it too. It means nothing to vector
+  artwork.
+
   An image drawn at less than half its pixels is resampled: the renderer
   keeps reduced copies of it, halved and averaged, and samples the one
   nearest the size it is drawn at, so a high-contrast edge lands between

@@ -520,6 +520,7 @@ fn build_scene(
                 width,
                 height,
                 tile,
+                nearest,
             } => {
                 // Skipped by resolved_layers when unregistered, so the
                 // lookup only misses if the host raced a removal.
@@ -539,7 +540,9 @@ fn build_scene(
                 // with the red one beside it invents a magenta that is
                 // not in it.
                 let [a, b, ..] = placement.as_coeffs();
-                let onto = match engine.pixel_grid() {
+                // Nor is an image asked to be read without filtering: its
+                // pixels are the point.
+                let onto = match engine.pixel_grid() || nearest {
                     true => f64::MAX,
                     false => tile_w * (a * a + b * b).sqrt(),
                 };
@@ -551,6 +554,9 @@ fn build_scene(
                         tile_h / f64::from(pixels.height),
                     );
                 let mut brush = ImageBrush::new(pixels).with_alpha(layer.opacity as f32);
+                if nearest {
+                    brush = brush.with_quality(vello::peniko::ImageQuality::Low);
+                }
                 if tile.is_some() {
                     brush = brush.with_extend(Extend::Repeat);
                 }

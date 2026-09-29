@@ -116,7 +116,8 @@ fn image_layers_resolve_with_host_pixels() {
             y: 6.0,
             width: 2.0,
             height: 2.0,
-            tile: None
+            tile: None,
+            nearest: false
         }
     );
     match &layers[1].shape {
