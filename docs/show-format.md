@@ -954,6 +954,18 @@ pictures and loses the sound, which is what a looping backdrop wants.
 `Show::has_sound()` does not count video layers: whether a clip is heard
 is the host's to know, not the document's.
 
+In the browser the web player plays clips through `<video>` elements,
+one per video layer that plays, and copies their frames on the GPU into
+the renderer, so a clip composites like any image. A browser allows that
+copy only for a clip from the page's own origin, or one served with
+CORS: a show fetched from elsewhere plays its sound and draws no
+picture. The element's own
+sound is the soundtrack: its volume follows the play's voice, so `gain`,
+the groups above and ducking apply, but a bus does not; it stays muted
+until the first gesture lets sound through. Every clip's length is read
+before the clock starts. A browser decodes only a handful of clips at
+once, so a show meant for the web wants few video layers playing.
+
 ## Fonts
 
 ```json
