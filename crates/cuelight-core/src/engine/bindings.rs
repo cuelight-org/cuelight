@@ -66,8 +66,8 @@ impl ColorChange {
     /// Where the color has reached, `progress` of the way along.
     fn value_at(&self, progress: f64) -> [u8; 4] {
         let mut out = [0u8; 4];
-        for (i, channel) in out.iter_mut().enumerate() {
-            let (from, to) = (f64::from(self.start[i]), f64::from(self.target[i]));
+        for ((channel, from), to) in out.iter_mut().zip(self.start).zip(self.target) {
+            let (from, to) = (f64::from(from), f64::from(to));
             *channel = (from + (to - from) * progress).round().clamp(0.0, 255.0) as u8;
         }
         out

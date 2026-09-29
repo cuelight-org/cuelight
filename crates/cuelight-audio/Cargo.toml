@@ -45,3 +45,6 @@ web = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sy
 
 [dev-dependencies]
 hound = "3.5"
+
+[lints]
+workspace = true

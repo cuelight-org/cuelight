@@ -7,7 +7,9 @@ use super::*;
 /// motion added on top of a move, so they run forward from 0 and have to
 /// come back to where they started.
 fn offset_problem(offset: &[crate::model::Key]) -> Option<&'static str> {
-    if offset.windows(2).any(|pair| pair[1].t < pair[0].t)
+    if offset
+        .windows(2)
+        .any(|pair| matches!(pair, [a, b] if b.t < a.t))
         || offset.iter().any(|k| k.t.is_nan() || k.t < 0.0)
     {
         return Some("needs offset keys in time order, from 0 on");
@@ -199,7 +201,7 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
             Some("needs a stop".to_owned())
         } else if !stops.iter().all(|s| s.at.is_finite()) {
             Some("needs finite stop positions".to_owned())
-        } else if stops.windows(2).any(|w| w[1].at < w[0].at) {
+        } else if stops.windows(2).any(|w| matches!(w, [a, b] if b.at < a.at)) {
             Some("needs its stops in order".to_owned())
         } else if matches!(
             gradient,
@@ -771,7 +773,11 @@ fn reading_problem(reading: &Reading) -> Option<&'static str> {
     {
         return Some("needs finite curve keys");
     }
-    if !reading.curve.windows(2).all(|w| w[0].t <= w[1].t) {
+    if !reading
+        .curve
+        .windows(2)
+        .all(|w| matches!(w, [a, b] if a.t <= b.t))
+    {
         return Some("needs its curve keys in order of input");
     }
     None

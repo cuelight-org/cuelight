@@ -116,7 +116,9 @@ impl Engine {
             let ring_length = reel.ring();
             for (i, character) in wanted.into_iter().enumerate() {
                 let Some(character) = character else { continue };
-                let change = &mut records[i];
+                let Some(change) = records.get_mut(i) else {
+                    continue;
+                };
                 // Where it is heading, as a place on the ring: a cell that
                 // is already going there carries on, unless the row was
                 // told to spin.

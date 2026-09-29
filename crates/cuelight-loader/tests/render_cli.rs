@@ -4,6 +4,8 @@
 //! the frames; without either the test says so and passes, the way the
 //! renderer's own tests do.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
 #![cfg(feature = "render-cli")]
 
 use std::path::{Path, PathBuf};

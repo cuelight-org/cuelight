@@ -1,6 +1,9 @@
 //! Binding transitions: bound values ease to a new value instead of
 //! jumping, as a function of time only.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{BitmapFont, Engine, ResolvedShape};
 use cuelight_core::{Direction, Easing, Key, Transition};
 

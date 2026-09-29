@@ -1,5 +1,8 @@
 //! Video layers: a playhead the host decodes for, and the frame it draws.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape};
 use cuelight_core::Event;
 

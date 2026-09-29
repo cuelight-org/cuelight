@@ -1,5 +1,8 @@
 //! Text layers: bitmap font registration, layout, text bindings.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{BitmapFont, Engine, ResolvedShape};
 use cuelight_core::NumberFormat;
 

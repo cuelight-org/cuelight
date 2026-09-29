@@ -11,6 +11,9 @@
 //! `size`, so they stay crisp on hidpi displays where the window surface
 //! outresolves the 480x270 canvas.
 
+// An example keeps to the point: what fails, fails with a message.
+#![allow(clippy::expect_used, clippy::indexing_slicing)]
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

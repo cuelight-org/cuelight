@@ -219,20 +219,19 @@ impl Clip {
         // Decoded by now? Take delivery; the frames are wanted right away.
         #[cfg(feature = "ffmpeg-process")]
         if matches!(&self.source, Source::Decoding(work) if work.is_finished()) {
-            let Source::Decoding(work) = std::mem::replace(&mut self.source, Source::Idle) else {
-                unreachable!("just matched")
-            };
-            self.source = match work.join() {
-                Ok(Ok(video)) => Source::Whole(video),
-                Ok(Err(e)) => {
-                    log::warn!("{:?}: {e}", self.path);
-                    Source::Idle
-                }
-                Err(_) => {
-                    log::warn!("{:?}: decoding gave up", self.path);
-                    Source::Idle
-                }
-            };
+            if let Source::Decoding(work) = std::mem::replace(&mut self.source, Source::Idle) {
+                self.source = match work.join() {
+                    Ok(Ok(video)) => Source::Whole(video),
+                    Ok(Err(e)) => {
+                        log::warn!("{:?}: {e}", self.path);
+                        Source::Idle
+                    }
+                    Err(_) => {
+                        log::warn!("{:?}: decoding gave up", self.path);
+                        Source::Idle
+                    }
+                };
+            }
         }
         match &mut self.source {
             // Nothing to show yet, as before a host registers an image.

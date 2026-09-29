@@ -86,10 +86,11 @@ pub(crate) fn runs(polygons: &[Vec<[f64; 2]>]) -> Vec<[i64; 3]> {
     let edges: Vec<[f64; 4]> = polygons
         .iter()
         .flat_map(|points| {
-            (0..points.len()).map(move |i| {
-                let (a, b) = (points[i], points[(i + 1) % points.len()]);
-                [a[0], a[1], b[0], b[1]]
-            })
+            // Each point with the next, the last with the first.
+            points
+                .iter()
+                .zip(points.iter().cycle().skip(1))
+                .map(|(a, b)| [a[0], a[1], b[0], b[1]])
         })
         .filter(|[_, y0, _, y1]| y0 != y1)
         .collect();
@@ -115,13 +116,16 @@ pub(crate) fn runs(polygons: &[Vec<[f64; 2]>]) -> Vec<[i64; 3]> {
         crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut winding = 0;
         for pair in crossings.windows(2) {
-            winding += pair[0].1;
+            let &[(x0, up), (x1, _)] = pair else {
+                continue;
+            };
+            winding += up;
             if winding == 0 {
                 continue;
             }
             // Every pixel whose centre lies between the two crossings.
-            let from = (pair[0].0 - 0.5).ceil() as i64;
-            let to = (pair[1].0 - 0.5).ceil() as i64;
+            let from = (x0 - 0.5).ceil() as i64;
+            let to = (x1 - 0.5).ceil() as i64;
             if to > from {
                 // A run touching the last one on this row joins it.
                 match out.last_mut() {

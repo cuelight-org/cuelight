@@ -1,5 +1,8 @@
 //! Binding extras: a bindable visible, thresholds and debounce.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape};
 
 fn show(layers: &str) -> String {
@@ -93,9 +96,9 @@ fn debounce_ignores_short_changes() {
         r#"{{ "name": "bulb", {BOX},
              "bindings": [ {{ "property": "x", "variable": "lamp", "scale": 10, "debounce": 0.1 }} ] }}"#
     ));
-    let x = |e: &Engine| match e.resolved_layers().unwrap()[0].shape {
-        ResolvedShape::Rect { x, .. } => x,
-        _ => unreachable!(),
+    let x = |e: &Engine| match &e.resolved_layers().unwrap()[0].shape {
+        ResolvedShape::Rect { x, .. } => *x,
+        other => panic!("not a rect: {other:?}"),
     };
     // The value at load applies at once.
     engine.advance_frame(0.0);
@@ -127,9 +130,9 @@ fn debounce_feeds_the_transition() {
              "bindings": [ {{ "property": "x", "variable": "lamp", "scale": 10, "debounce": 0.1,
                               "transition": {{ "duration": 1.0 }} }} ] }}"#
     ));
-    let x = |e: &Engine| match e.resolved_layers().unwrap()[0].shape {
-        ResolvedShape::Rect { x, .. } => x,
-        _ => unreachable!(),
+    let x = |e: &Engine| match &e.resolved_layers().unwrap()[0].shape {
+        ResolvedShape::Rect { x, .. } => *x,
+        other => panic!("not a rect: {other:?}"),
     };
     engine.advance_frame(0.0);
     engine.set_variable("lamp", 1.0);

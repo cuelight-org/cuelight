@@ -1,5 +1,8 @@
 //! A tolerant load keeps what it can and says what it dropped.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{Engine, Error, Finding};
 
 fn finding(path: &str, message_has: &str, findings: &[Finding]) {

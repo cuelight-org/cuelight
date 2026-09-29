@@ -126,21 +126,24 @@ fn halved(width: u32, height: u32, pixels: &[u8]) -> (u32, u32, Vec<u8>) {
                         continue;
                     }
                     let at = ((sy * width + sx) * 4) as usize;
-                    let alpha = u32::from(pixels[at + 3]);
-                    for c in 0..3 {
-                        sum[c] += u32::from(pixels[at + c]) * alpha;
+                    let Some(&[r, g, b, a]) = pixels.get(at..at + 4) else {
+                        continue;
+                    };
+                    let alpha = u32::from(a);
+                    for (channel, value) in sum.iter_mut().zip([r, g, b]) {
+                        *channel += u32::from(value) * alpha;
                     }
                     sum[3] += alpha;
                     count += 1;
                 }
             }
             let alpha = sum[3] / count.max(1);
-            for c in 0..3 {
+            for channel in sum.iter().take(3) {
                 // Back out of premultiplied, where there is any alpha to
                 // divide by; a fully transparent pixel keeps no colour.
                 let value = match sum[3] {
                     0 => 0,
-                    total => sum[c] / total,
+                    total => channel / total,
                 };
                 out.push(value as u8);
             }
@@ -319,7 +322,12 @@ impl ImageCache {
         let mut pixels = Vec::with_capacity((w * h * 4) as usize);
         for row in y..y + h {
             let start = ((row * data.width + x) * 4) as usize;
-            pixels.extend_from_slice(&data.pixels[start..start + (w * 4) as usize]);
+            let end = start + (w * 4) as usize;
+            // A row the image does not have is left clear.
+            match data.pixels.get(start..end) {
+                Some(line) => pixels.extend_from_slice(line),
+                None => pixels.resize(pixels.len() + (w * 4) as usize, 0),
+            }
         }
         let image = vello::peniko::ImageData {
             data: Blob::new(Arc::new(pixels)),
@@ -755,7 +763,10 @@ impl Fit {
     /// The one after this, round and round.
     pub fn next(self) -> Fit {
         let at = Fit::ALL.iter().position(|f| *f == self).unwrap_or(0);
-        Fit::ALL[(at + 1) % Fit::ALL.len()]
+        Fit::ALL
+            .get((at + 1) % Fit::ALL.len())
+            .copied()
+            .unwrap_or(self)
     }
 }
 
@@ -1139,7 +1150,10 @@ impl Renderer {
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
         for row in 0..height {
             let start = (row * bytes_per_row) as usize;
-            pixels.extend_from_slice(&mapped[start..start + (width * 4) as usize]);
+            let line = mapped
+                .get(start..start + (width * 4) as usize)
+                .ok_or_else(|| RenderError::Readback("the frame came back short".to_owned()))?;
+            pixels.extend_from_slice(line);
         }
         drop(mapped);
         buffer.unmap();

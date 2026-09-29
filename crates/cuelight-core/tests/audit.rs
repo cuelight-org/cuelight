@@ -1,6 +1,9 @@
 //! The document audit: what nothing uses, what names nothing, and what
 //! will surprise someone.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{audit, FindingKind, Show};
 
 fn findings(show: &str) -> Vec<(String, FindingKind, String)> {

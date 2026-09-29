@@ -14,6 +14,9 @@
 //! [`COVERED`] at the foot of this file lists what is mapped and what
 //! is deliberately not.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{Engine, ResolvedValue};
 
 /// Something the host does, at the instant it does it.

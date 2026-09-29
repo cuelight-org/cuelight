@@ -1,5 +1,8 @@
 //! Parts: elements of vector artwork a show moves on their own.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape, Vector, VectorPath};
 use cuelight_core::PathElement;
 

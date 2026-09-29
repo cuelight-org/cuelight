@@ -168,8 +168,8 @@ impl Mixer {
                 };
                 let (a, b) = (a as usize * channels, b as usize * channels);
                 let sample = |offset: usize| {
-                    let x = sound.samples[a + offset];
-                    let y = sound.samples[b + offset];
+                    let x = sound.samples.get(a + offset).copied().unwrap_or(0.0);
+                    let y = sound.samples.get(b + offset).copied().unwrap_or(0.0);
                     (x + (y - x) * t) * playing.gain
                 };
                 if channels >= 2 {

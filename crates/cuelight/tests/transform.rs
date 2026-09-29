@@ -1,5 +1,8 @@
 //! Rotation, uneven scale and inherited group transforms in the draw list.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape, Transform};
 
 fn engine(layers: &str) -> Engine {

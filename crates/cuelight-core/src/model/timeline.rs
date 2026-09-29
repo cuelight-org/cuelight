@@ -130,8 +130,8 @@ pub fn sample_keys(keys: &[Key], time: f64) -> Option<f64> {
         return Some(last.v);
     }
     let next_idx = keys.iter().position(|k| k.t > time)?;
-    let a = &keys[next_idx - 1];
-    let b = &keys[next_idx];
+    let a = keys.get(next_idx.checked_sub(1)?)?;
+    let b = keys.get(next_idx)?;
     let span = b.t - a.t;
     let t = if span <= 0.0 {
         1.0

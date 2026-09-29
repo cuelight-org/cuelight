@@ -16,6 +16,17 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/francisdb/cuelight"
 
+[workspace.lints.clippy]
+# A show must never take its host down: what can fail is a value.
+# Tests may still panic; clippy.toml allows it there.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
 [profile.dev]
 # vello/wgpu are unusably slow fully unoptimized
 opt-level = 1

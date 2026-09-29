@@ -785,7 +785,10 @@ impl Engine {
         };
         let mut out: Vec<LayerPath> = Vec::new();
         for i in hit_items(&drawn, at).into_iter().rev() {
-            let layer = &drawn.items[i].layer;
+            let Some(item) = drawn.items.get(i) else {
+                continue;
+            };
+            let layer = &item.layer;
             if !out.contains(layer) {
                 out.push(layer.clone());
             }
@@ -1502,7 +1505,11 @@ impl Engine {
                     (Some(cells), _) => self.push_artwork(out, &placed, cells, on, cell),
                     (None, Some(font)) => {
                         let mut buffer = [0u8; 4];
-                        let character = ring[on].encode_utf8(&mut buffer);
+                        let character = ring
+                            .get(on)
+                            .copied()
+                            .unwrap_or(' ')
+                            .encode_utf8(&mut buffer);
                         self.push_text(
                             out,
                             &placed,
@@ -2084,24 +2091,27 @@ impl Engine {
                         .pressable
                         .push((from..built.items.len(), press.clone()));
                 }
-                if let Some((started, mark, misses_before)) = measuring {
+                if let (Some((started, mark, misses_before)), Some(costs)) =
+                    (measuring, built.profile.as_mut())
+                {
                     let total = started.elapsed();
                     let misses = self
                         .text_cache
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .misses;
-                    let costs = built.profile.as_mut().expect("measuring");
                     // The children's own costs were recorded while this
                     // layer ran; its own share is what is left.
                     let depth = path.len();
-                    let children: std::time::Duration = costs[mark..]
+                    let children: std::time::Duration = costs
+                        .get(mark..)
+                        .unwrap_or_default()
                         .iter()
                         .filter(|c| c.layer.indices.len() == depth + 1)
                         .map(|c| c.total)
                         .sum();
                     let (mut path_elements, mut glyphs, mut pixels) = (0, 0, 0.0);
-                    for item in &built.items[from..] {
+                    for item in built.items.get(from..).unwrap_or_default() {
                         match &item.shape {
                             ResolvedShape::Path { elements, .. } => path_elements += elements.len(),
                             ResolvedShape::Polygon { points } => path_elements += points.len(),
@@ -2298,8 +2308,8 @@ fn covers(shape: &ResolvedShape, at: [f64; 2]) -> bool {
 /// Whether `at` is inside a closed polygon, by crossings.
 fn within(points: &[[f64; 2]], [px, py]: [f64; 2]) -> bool {
     let mut inside = false;
-    for (i, &[x1, y1]) in points.iter().enumerate() {
-        let [x2, y2] = points[(i + 1) % points.len()];
+    // Each point with the next, the last with the first.
+    for (&[x1, y1], &[x2, y2]) in points.iter().zip(points.iter().cycle().skip(1)) {
         if (y1 > py) != (y2 > py) && px < (x2 - x1) * (py - y1) / (y2 - y1) + x1 {
             inside = !inside;
         }

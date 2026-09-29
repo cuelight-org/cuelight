@@ -1,5 +1,8 @@
 //! Keys and presses: what a show makes of what a host does to it.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape};
 
 /// A show with two pressable boxes, one over the other, and keys.

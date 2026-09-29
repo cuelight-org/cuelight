@@ -1,5 +1,8 @@
 //! Path shapes, strokes and vector artwork in the draw list, no GPU.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape, Vector, VectorPath};
 use cuelight_core::PathElement;
 

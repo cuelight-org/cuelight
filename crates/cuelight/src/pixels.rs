@@ -260,15 +260,22 @@ fn fill(edges: &[[f64; 4]], ascent: f64) -> Option<Ink> {
         crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut winding = 0;
         for pair in crossings.windows(2) {
-            winding += pair[0].1;
+            let &[(x0, up), (x1, _)] = pair else {
+                continue;
+            };
+            winding += up;
             if winding == 0 {
                 continue;
             }
             // Every pixel whose centre lies between the two crossings.
-            let from = (pair[0].0 - 0.5).ceil() as i32;
-            let to = (pair[1].0 - 0.5).ceil() as i32;
+            let from = (x0 - 0.5).ceil() as i32;
+            let to = (x1 - 0.5).ceil() as i32;
             for column in from.max(left)..to.min(right) {
-                pixels[(row as u32 * width + (column - left) as u32) as usize] = true;
+                if let Some(pixel) =
+                    pixels.get_mut((row as u32 * width + (column - left) as u32) as usize)
+                {
+                    *pixel = true;
+                }
             }
         }
     }
@@ -288,7 +295,7 @@ fn fill(edges: &[[f64; 4]], ascent: f64) -> Option<Ink> {
 /// pixels it has; `None` when it has none.
 fn trim(ink: Ink) -> Option<Ink> {
     let (w, h) = (ink.width as usize, ink.height as usize);
-    let at = |x: usize, y: usize| ink.pixels[y * w + x];
+    let at = |x: usize, y: usize| ink.pixels.get(y * w + x).copied().unwrap_or(false);
     let rows: Vec<usize> = (0..h).filter(|&y| (0..w).any(|x| at(x, y))).collect();
     let columns: Vec<usize> = (0..w).filter(|&x| (0..h).any(|y| at(x, y))).collect();
     let (&top, &bottom) = (rows.first()?, rows.last()?);

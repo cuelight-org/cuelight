@@ -63,7 +63,7 @@ impl schemars::JsonSchema for Step {
                 "additionalProperties": false
             })
         };
-        schemars::Schema::try_from(serde_json::json!({
+        let serde_json::Value::Object(schema) = serde_json::json!({
             "description": "One driver step: exactly one of wait, trigger or set.",
             "oneOf": [
                 closed("wait", serde_json::json!({
@@ -81,8 +81,10 @@ impl schemars::JsonSchema for Step {
                     "additionalProperties": true
                 })),
             ]
-        }))
-        .expect("a schema built from an object literal")
+        }) else {
+            return schemars::Schema::default();
+        };
+        schemars::Schema::from(schema)
     }
 }
 
@@ -175,7 +177,10 @@ impl DriverPlayer {
                 wrapped = true;
                 self.index = 0;
             }
-            let step = self.driver.steps[self.index].clone();
+            let Some(step) = self.driver.steps.get(self.index).cloned() else {
+                self.done = true;
+                break;
+            };
             self.index += 1;
             match &step {
                 Step::Wait { wait } => {

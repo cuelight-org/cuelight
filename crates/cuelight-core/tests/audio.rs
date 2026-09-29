@@ -1,5 +1,8 @@
 //! Audio layers as pure data: plays, positions, gains and ends, no device.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{Engine, Event, Voice};
 
 fn show(layers: &str) -> String {

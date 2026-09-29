@@ -17,3 +17,6 @@ default = ["ffmpeg-process"]
 # No library, no linking, no build dependency: only the ffmpeg binary at
 # runtime, which is where most video content already is.
 ffmpeg-process = []
+
+[lints]
+workspace = true

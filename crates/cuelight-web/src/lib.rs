@@ -86,7 +86,6 @@
 //! black on: it is logged, listed by `player.warnings()` and handed to
 //! `player.onError`, so a page can show it where a phone user can read
 //! it. The crate is empty on targets other than `wasm32`.
-
 #![cfg(target_arch = "wasm32")]
 
 use std::cell::RefCell;
@@ -456,7 +455,9 @@ impl Inner {
             .audio
             .as_ref()
             .is_some_and(|audio| audio.enabled() && audio.running());
-        let handle = &self.context.devices[self.surface.dev_id];
+        let Some(handle) = self.context.devices.get(self.surface.dev_id) else {
+            return;
+        };
         for play in &plays {
             let Some(clip) = self.clips.get_mut(&play.video) else {
                 continue;
@@ -619,10 +620,11 @@ impl Inner {
     /// Pixel size the canvas should have for its CSS size on this screen.
     fn wanted_size(&self) -> (u32, u32) {
         let ratio = web_sys::window().map_or(1.0, |w| w.device_pixel_ratio());
-        let max = self.context.devices[self.surface.dev_id]
-            .device
-            .limits()
-            .max_texture_dimension_2d;
+        let max = self
+            .context
+            .devices
+            .get(self.surface.dev_id)
+            .map_or(1, |handle| handle.device.limits().max_texture_dimension_2d);
         let pixels = |css: i32| ((f64::from(css) * ratio).round() as u32).clamp(1, max);
         (
             pixels(self.canvas.client_width()),
@@ -694,7 +696,11 @@ impl Inner {
         self.sync_size();
         let surface = &self.surface;
         let (width, height) = (surface.config.width, surface.config.height);
-        let handle = &self.context.devices[surface.dev_id];
+        let handle = self
+            .context
+            .devices
+            .get(surface.dev_id)
+            .ok_or("no device for the canvas")?;
         let presented = self
             .presenter
             .present(
@@ -860,7 +866,11 @@ impl CuelightPlayer {
             )
             .await
             .map_err(|e| error(format!("no WebGPU surface for the canvas: {e}")))?;
-        let device = &context.devices[surface.dev_id].device;
+        let device = &context
+            .devices
+            .get(surface.dev_id)
+            .ok_or_else(|| error("no device for the WebGPU surface"))?
+            .device;
         // A GPU error is reported between frames, not from a call that
         // could return it; kept here for the frame loop, and logged at
         // once in case the loop is already gone. Registered as soon as
@@ -1082,8 +1092,11 @@ impl CuelightPlayer {
     /// The triggers the show listens to, sorted.
     pub fn actions(&self) -> Vec<String> {
         let inner = self.inner.borrow();
-        let show = inner.engine.show().expect("show loaded");
-        show.triggers().into_iter().collect()
+        inner
+            .engine
+            .show()
+            .map(|show| show.triggers().into_iter().collect())
+            .unwrap_or_default()
     }
 
     /// Where each trigger is listened to, as an object by name: `{ where:
@@ -1096,7 +1109,8 @@ impl CuelightPlayer {
         use cuelight_core::Listened;
         let inner = self.inner.borrow();
         let object = js_sys::Object::new();
-        for (name, listened) in inner.engine.show().expect("show loaded").listeners() {
+        let listeners = inner.engine.show().map(|show| show.listeners());
+        for (name, listened) in listeners.unwrap_or_default() {
             let place = js_sys::Object::new();
             let (at, scene) = match &listened {
                 Listened::Opens(scene) => ("opens", Some(scene)),
@@ -1116,7 +1130,12 @@ impl CuelightPlayer {
     pub fn variables(&self) -> JsValue {
         let inner = self.inner.borrow();
         let object = js_sys::Object::new();
-        for name in inner.engine.show().expect("show loaded").variables.keys() {
+        for name in inner
+            .engine
+            .show()
+            .into_iter()
+            .flat_map(|s| s.variables.keys())
+        {
             let value = inner
                 .engine
                 .variable(name)
@@ -1129,8 +1148,9 @@ impl CuelightPlayer {
     /// The show's scene names, in document order.
     pub fn scenes(&self) -> Vec<String> {
         let inner = self.inner.borrow();
-        let show = inner.engine.show().expect("show loaded");
-        show.scenes.iter().map(|s| s.name.clone()).collect()
+        inner.engine.show().map_or_else(Vec::new, |show| {
+            show.scenes.iter().map(|s| s.name.clone()).collect()
+        })
     }
 
     #[wasm_bindgen(getter, js_name = activeScene)]
@@ -1141,12 +1161,20 @@ impl CuelightPlayer {
     /// The show's canvas size, e.g. for the page to set an aspect ratio.
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 {
-        self.inner.borrow().engine.show().expect("show loaded").size[0]
+        self.inner
+            .borrow()
+            .engine
+            .show()
+            .map_or(0, |show| show.size[0])
     }
 
     #[wasm_bindgen(getter)]
     pub fn height(&self) -> u32 {
-        self.inner.borrow().engine.show().expect("show loaded").size[1]
+        self.inner
+            .borrow()
+            .engine
+            .show()
+            .map_or(0, |show| show.size[1])
     }
 
     /// What loading complained about, and what stopped the frames since

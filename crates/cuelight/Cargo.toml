@@ -49,3 +49,6 @@ required-features = ["render"]
 [[example]]
 name = "mic_pop"
 required-features = ["render"]
+
+[lints]
+workspace = true

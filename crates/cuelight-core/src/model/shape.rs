@@ -74,7 +74,7 @@ impl schemars::JsonSchema for Shape {
             }
         });
         let none = serde_json::Value::Null;
-        schemars::Schema::try_from(serde_json::json!({
+        let serde_json::Value::Object(schema) = serde_json::json!({
             "description": "Vector shapes, in the layer's local coordinate space.\n\n\
                             One of rect, circle or path; a rect may carry a corner \
                             radius beside it.",
@@ -88,8 +88,10 @@ impl schemars::JsonSchema for Shape {
                     none,
                 ),
             ]
-        }))
-        .expect("a schema built from an object literal")
+        }) else {
+            return schemars::Schema::default();
+        };
+        schemars::Schema::from(schema)
     }
 }
 

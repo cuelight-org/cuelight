@@ -1,6 +1,9 @@
 //! The trace: what happened inside the show and why, each at its own
 //! instant; and `explain`, the precedence answered per property.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{
     Cause, Engine, Firing, Happened, Influence, LayerPath, Property, Root, TimelineOwner, Value,
     Which,
