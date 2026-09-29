@@ -398,6 +398,14 @@ fn build_scene(
             Some(gradient) => gradient.into(),
             None => (&color).into(),
         };
+        // The gradient's own coordinates into the shape's, read by vello
+        // against the fill's placement.
+        let brush_space = layer
+            .gradient
+            .as_ref()
+            .map(|g| g.space)
+            .filter(|space| *space != crate::Transform::IDENTITY)
+            .map(|space| Affine::new(space.0));
         let placement = Affine::new(layer.transform.0);
         // A blended item is drawn into a layer of its own, as big as the
         // item, that is composited with the blend on the way out.
@@ -418,11 +426,11 @@ fn build_scene(
                 height,
             } => {
                 let rect = Rect::new(x, y, x + width, y + height);
-                show.fill(Fill::NonZero, placement, paint, None, &rect);
+                show.fill(Fill::NonZero, placement, paint, brush_space, &rect);
             }
             ResolvedShape::Circle { cx, cy, radius } => {
                 let circle = Circle::new((cx, cy), radius);
-                show.fill(Fill::NonZero, placement, paint, None, &circle);
+                show.fill(Fill::NonZero, placement, paint, brush_space, &circle);
             }
             ResolvedShape::ClipBegin { shape } => match *shape {
                 ResolvedShape::Circle { cx, cy, radius } => {
@@ -483,7 +491,7 @@ fn build_scene(
             ResolvedShape::Path { elements, stroke } => {
                 let path = bez_path(&elements);
                 if layer.color[3] > 0 || layer.gradient.is_some() {
-                    show.fill(Fill::NonZero, placement, paint, None, &path);
+                    show.fill(Fill::NonZero, placement, paint, brush_space, &path);
                 }
                 if let Some(([r, g, b, a], width)) = stroke {
                     let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
@@ -502,7 +510,7 @@ fn build_scene(
                     }
                 }
                 path.close_path();
-                show.fill(Fill::NonZero, placement, paint, None, &path);
+                show.fill(Fill::NonZero, placement, paint, brush_space, &path);
             }
             ResolvedShape::Image {
                 image,
@@ -1613,12 +1621,12 @@ impl RgbaFrame {
 }
 /// A resolved gradient as a brush, with `opacity` folded into every stop.
 fn gradient_brush(gradient: &crate::ResolvedGradient, opacity: f64) -> Brush {
-    use crate::ResolvedGradientKind as FindingKind;
+    use crate::ResolvedGradientKind as Kind;
     let mut built = match gradient.kind {
-        FindingKind::Linear { from, to } => {
+        Kind::Linear { from, to } => {
             vello::peniko::Gradient::new_linear((from[0], from[1]), (to[0], to[1]))
         }
-        FindingKind::Radial { center, radius } => {
+        Kind::Radial { center, radius } => {
             vello::peniko::Gradient::new_radial((center[0], center[1]), radius as f32)
         }
     };
@@ -1636,6 +1644,11 @@ fn gradient_brush(gradient: &crate::ResolvedGradient, opacity: f64) -> Brush {
             .collect::<Vec<_>>()
             .as_slice(),
     );
+    if gradient.straight_alpha {
+        built = built.with_interpolation_alpha_space(
+            vello::peniko::InterpolationAlphaSpace::Unpremultiplied,
+        );
+    }
     Brush::Gradient(built)
 }
 

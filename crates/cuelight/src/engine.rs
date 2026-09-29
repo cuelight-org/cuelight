@@ -194,6 +194,10 @@ pub struct VectorPath {
     /// The `id`s of the elements this path is inside, outermost first,
     /// its own last: what a show's `parts` name to move it.
     pub ids: Vec<String>,
+    /// A gradient the path is filled with, in the artwork's own units,
+    /// in place of `fill`; `fill` is then its first stop, for a host that
+    /// draws no gradients.
+    pub gradient: Option<ResolvedGradient>,
 }
 
 /// One glyph of a [`ResolvedShape::GlyphRun`]: its id in the font and the
@@ -2342,8 +2346,19 @@ fn push_vector(
             // artwork's own size scales strokes.
             let [a, b, c, d, ..] = by.0;
             let part_scale = (a.hypot(b) + c.hypot(d)) / 2.0;
+            // Onto the canvas as the path's points go: its parts, then the
+            // artwork's size and place.
+            let placing = Transform::translate(at[0], at[1])
+                .then(Transform::scale(sx, sy))
+                .then(by);
+            let gradient = item.gradient.as_ref().map(|g| ResolvedGradient {
+                kind: g.kind,
+                stops: g.stops.iter().map(|(at, c)| (*at, stain(*c))).collect(),
+                space: placing.then(g.space),
+                straight_alpha: g.straight_alpha,
+            });
             out.push(ResolvedLayer {
-                gradient: None,
+                gradient,
                 overflow: placed.overflow,
                 name: placed.name.to_owned(),
                 layer: placed.layer.clone(),
@@ -2766,6 +2781,16 @@ pub struct ResolvedGradient {
     pub kind: ResolvedGradientKind,
     /// `(position, RGBA)`, in order, at least one.
     pub stops: Vec<(f32, [u8; 4])>,
+    /// From the gradient's own coordinates, which `kind` is in, to the
+    /// shape's: the identity for a shape layer's gradient, and whatever
+    /// an artwork's gradient went through (its own transform, the path's,
+    /// a part's, the artwork's placement). A radial gradient under an
+    /// uneven scale is an ellipse, drawn as one.
+    pub space: Transform,
+    /// Colours are blended between stops with their alpha kept apart, so
+    /// a stop fading to transparent keeps its colour across the fade, as
+    /// an SVG's gradients do; otherwise premultiplied.
+    pub straight_alpha: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2802,7 +2827,12 @@ fn resolve_gradient(
             radius: radius * scale,
         },
     };
-    Ok(ResolvedGradient { kind, stops })
+    Ok(ResolvedGradient {
+        kind,
+        stops,
+        space: Transform::IDENTITY,
+        straight_alpha: false,
+    })
 }
 
 /// How a tiled image covers its box: one tile's size and where the
