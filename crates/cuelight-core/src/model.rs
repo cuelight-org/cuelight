@@ -465,6 +465,12 @@ pub struct Shadow {
     /// How far behind the text it sits, `[x, y]` in canvas pixels. Down
     /// and to the right is positive; both may be negative.
     pub offset: [f64; 2],
+    /// How far the shadow's edge spreads, in canvas pixels, scaling with
+    /// the layer the way `offset` does: 0 (default) is a hard edge, 3 a
+    /// shadow that fades out over about three pixels. Drawn for text in a
+    /// bitmap font, and in an outline font drawn as pixels.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub blur: f64,
 }
 
 /// A border of `width` pixels drawn outside every glyph.
@@ -753,6 +759,10 @@ pub enum Blend {
     /// Product of the colors: a coloured shape darkens and tints what is
     /// beneath, as a gel over a lamp does; white leaves it alone.
     Multiply,
+}
+
+fn is_zero(n: &f64) -> bool {
+    *n == 0.0
 }
 
 fn default_visible() -> bool {

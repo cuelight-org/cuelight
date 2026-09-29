@@ -1054,7 +1054,13 @@ moved by `offset` pixels and painted in one `color`. It is drawn first, so
 the text lands on top of it, and it is the text's whole silhouette with
 the border included rather than the fill alone, which is what makes it
 read as a shadow instead of a second outline. The offset is in canvas
-pixels and scales with the layer; either number may be negative. Both
+pixels and scales with the layer; either number may be negative. `blur`
+(default 0) spreads the shadow's edge over that many canvas pixels,
+scaling with the layer the same way, so `"blur": 3` fades out over about
+three pixels; the border widens the silhouette before it is spread. It
+is drawn for bitmap fonts and for outline fonts drawn as pixels; an
+outline font drawn from its outlines draws its shadow hard for now, and
+says so at load. Both
 kinds of font take one, and so does any text drawn from a style: a text
 layer, a reel's characters, a digit row. Fonts are host assets like images: a text
 layer whose font is not registered is skipped. There are two kinds, and

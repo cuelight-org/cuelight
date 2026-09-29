@@ -2009,6 +2009,11 @@
       "description": "A copy of the text drawn behind it, offset by a few pixels: the\nordinary way to keep text legible over a moving picture.\n\nWhat is drawn is the text's whole silhouette, `border` included, in one\ncolor. A shadow of a bordered glyph is therefore the same shape as the\nglyph, which is what makes it read as a shadow rather than a second\noutline.",
       "type": "object",
       "properties": {
+        "blur": {
+          "description": "How far the shadow's edge spreads, in canvas pixels, scaling with\nthe layer the way `offset` does: 0 (default) is a hard edge, 3 a\nshadow that fades out over about three pixels. Drawn for text in a\nbitmap font, and in an outline font drawn as pixels.",
+          "type": "number",
+          "format": "double"
+        },
         "color": {
           "description": "`#RRGGBB` or `#RRGGBBAA`",
           "type": "string"

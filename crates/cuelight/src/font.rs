@@ -253,6 +253,64 @@ impl Rgba {
         self.pixels[i..i + 4].copy_from_slice(&px);
     }
 
+    /// A silhouette of one colour, its edge spread over `reach` pixels by a
+    /// gaussian: a soft shadow. The picture grows by the reach on every
+    /// side, which is what the returned padding says, so it is drawn that
+    /// much up and to the left of where the hard one would be.
+    pub(crate) fn blurred(&self, reach: f64) -> (Rgba, i32) {
+        let pad = reach.ceil().max(0.0) as i32;
+        if pad == 0 {
+            return (self.clone(), 0);
+        }
+        // Three deviations out is where a gaussian has all but faded: the
+        // reach an author sees.
+        let sigma = (reach / 3.0).max(0.1);
+        let kernel: Vec<f64> = (-pad..=pad)
+            .map(|i| (-(f64::from(i) * f64::from(i)) / (2.0 * sigma * sigma)).exp())
+            .collect();
+        let total: f64 = kernel.iter().sum();
+        let kernel: Vec<f64> = kernel.iter().map(|k| k / total).collect();
+        let (w, h) = (self.width as i32 + 2 * pad, self.height as i32 + 2 * pad);
+        let alpha_at = |x: i32, y: i32| f64::from(self.get(x - pad, y - pad)[3]);
+        // The colour of the silhouette: any pixel of it.
+        let colour = self
+            .pixels
+            .chunks(4)
+            .find(|px| px[3] > 0)
+            .map_or([0, 0, 0], |px| [px[0], px[1], px[2]]);
+        let mut across = vec![0.0; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                across[(y * w + x) as usize] = kernel
+                    .iter()
+                    .enumerate()
+                    .map(|(k, weight)| weight * alpha_at(x + k as i32 - pad, y))
+                    .sum();
+            }
+        }
+        let mut out = Rgba::transparent(w as u32, h as u32);
+        for y in 0..h {
+            for x in 0..w {
+                let a: f64 = kernel
+                    .iter()
+                    .enumerate()
+                    .map(|(k, weight)| {
+                        let yy = y + k as i32 - pad;
+                        match (0..h).contains(&yy) {
+                            true => weight * across[(yy * w + x) as usize],
+                            false => 0.0,
+                        }
+                    })
+                    .sum();
+                let a = a.round().clamp(0.0, 255.0) as u8;
+                if a > 0 {
+                    out.set(x, y, [colour[0], colour[1], colour[2], a]);
+                }
+            }
+        }
+        (out, pad)
+    }
+
     /// Composite `src` over the pixel at (x, y), straight alpha.
     fn blend(&mut self, x: i32, y: i32, src: [u8; 4]) {
         let sa = u32::from(src[3]);

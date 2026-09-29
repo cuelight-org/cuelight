@@ -4303,6 +4303,12 @@ fn font_style_problem(style: &crate::model::FontStyle) -> Result<(), Error> {
                 style.file
             )));
         }
+        if !(shadow.blur.is_finite() && shadow.blur >= 0.0) {
+            return Err(Error::InvalidShow(format!(
+                "font style {:?} needs a shadow blur of 0 or more",
+                style.file
+            )));
+        }
     }
     Ok(())
 }
