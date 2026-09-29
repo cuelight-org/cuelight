@@ -434,7 +434,7 @@ fn words_on_a_property_that_is_not_text_are_reported() {
 }
 
 #[test]
-fn a_blurred_bitmap_shadow_spreads_its_edge_over_its_reach() {
+fn a_blurred_bitmap_shadow_softens_its_edge_as_css_does() {
     let show = SHOW.replace(
         r##""shadow": { "color": "#000000", "offset": [1, 1] }"##,
         r##""shadow": { "color": "#000000", "offset": [1, 1], "blur": 2 }"##,
@@ -456,16 +456,17 @@ fn a_blurred_bitmap_shadow_spreads_its_edge_over_its_reach() {
     };
     let (sx, sy, sw, sh, dark) = bitmap(cast[0]);
     let (tx, ty, tw, th, _) = bitmap(cast[1]);
-    // Two pixels more on every side, and placed two up and left of where
-    // the hard shadow would be.
-    assert_eq!((sw, sh), (tw + 4.0, th + 4.0));
-    assert_eq!((sx - tx, sy - ty), (1.0 - 2.0, 1.0 - 2.0));
+    // A blur of 2 is a deviation of 1, as in CSS, faded out three
+    // deviations away: three pixels more on every side, and placed three
+    // up and left of where the hard shadow would be.
+    assert_eq!((sw, sh), (tw + 6.0, th + 6.0));
+    assert_eq!((sx - tx, sy - ty), (1.0 - 3.0, 1.0 - 3.0));
     // Its edge is soft: alphas between none and full, all in the shadow
     // colour.
     let alphas: Vec<u8> = dark.chunks(4).map(|px| px[3]).collect();
     assert!(alphas.iter().any(|a| (1..200).contains(a)), "{alphas:?}");
     assert!(dark.chunks(4).all(|px| px[3] == 0 || px[..3] == [0, 0, 0]));
-    // Nothing spreads past the reach, and a blur below 0 is refused.
+    // Nothing reaches the far corner, and a blur below 0 is refused.
     assert_eq!(alphas[0], 0);
     let bad = SHOW.replace(r#""offset": [1, 1] }"#, r#""offset": [1, 1], "blur": -1 }"#);
     assert!(Engine::new().load_show(&bad).is_err());

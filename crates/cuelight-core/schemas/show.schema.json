@@ -2033,7 +2033,7 @@
       "type": "object",
       "properties": {
         "blur": {
-          "description": "How far the shadow's edge spreads, in canvas pixels, scaling with\nthe layer the way `offset` does: 0 (default) is a hard edge, 3 a\nshadow that fades out over about three pixels. Drawn for text in a\nbitmap font, and in an outline font drawn as pixels.",
+          "description": "How soft the shadow's edge is, in canvas pixels, as CSS\n`text-shadow` defines its blur radius: a gaussian whose standard\ndeviation is half of it, so a value copied from a stylesheet or a\ndesign tool looks the same. 0 (default) is a hard edge; 6 fades out\nover about nine pixels. Scales with the layer the way `offset`\ndoes. Drawn for text in a bitmap font, and in an outline font drawn\nas pixels.",
           "type": "number",
           "format": "double"
         },

@@ -479,10 +479,13 @@ pub struct Shadow {
     /// How far behind the text it sits, `[x, y]` in canvas pixels. Down
     /// and to the right is positive; both may be negative.
     pub offset: [f64; 2],
-    /// How far the shadow's edge spreads, in canvas pixels, scaling with
-    /// the layer the way `offset` does: 0 (default) is a hard edge, 3 a
-    /// shadow that fades out over about three pixels. Drawn for text in a
-    /// bitmap font, and in an outline font drawn as pixels.
+    /// How soft the shadow's edge is, in canvas pixels, as CSS
+    /// `text-shadow` defines its blur radius: a gaussian whose standard
+    /// deviation is half of it, so a value copied from a stylesheet or a
+    /// design tool looks the same. 0 (default) is a hard edge; 6 fades out
+    /// over about nine pixels. Scales with the layer the way `offset`
+    /// does. Drawn for text in a bitmap font, and in an outline font drawn
+    /// as pixels.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub blur: f64,
 }

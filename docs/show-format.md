@@ -1064,9 +1064,12 @@ the text lands on top of it, and it is the text's whole silhouette with
 the border included rather than the fill alone, which is what makes it
 read as a shadow instead of a second outline. The offset is in canvas
 pixels and scales with the layer; either number may be negative. `blur`
-(default 0) spreads the shadow's edge over that many canvas pixels,
-scaling with the layer the same way, so `"blur": 3` fades out over about
-three pixels; the border widens the silhouette before it is spread. It
+(default 0) softens the shadow's edge, in canvas pixels and scaling with
+the layer the same way, as CSS `text-shadow` defines its blur radius: a
+gaussian whose standard deviation is half the value, so `"blur": 6` fades
+out over about nine pixels and a shadow copied from a stylesheet or a
+design tool carries over one to one. The border widens the silhouette
+before it is blurred. It
 is drawn for bitmap fonts and for outline fonts drawn as pixels; an
 outline font drawn from its outlines draws its shadow hard for now, and
 says so at load. Both
