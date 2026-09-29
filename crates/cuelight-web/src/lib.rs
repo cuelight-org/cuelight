@@ -46,6 +46,14 @@
 //! `player.audioEnabled = false` silences a show and keeps it silent
 //! through later gestures; `true` lets it through again.
 //!
+//! A press on the canvas goes through `player.press(x, y)`, which fires
+//! what the layer under it fires and, for a layer that opens a web
+//! address, opens it in a new tab right there, since a browser allows a
+//! new tab only from the gesture itself; the page also hears of it as
+//! `{ type: "open", url }` through `onEvent`, and need not open it
+//! again. `player.pressedAt(x, y)` says what a press would do, as
+//! `{ trigger?, open? }`, for a pointer cursor.
+//!
 //! The show is fitted inside the canvas, keeping its shape, with the
 //! canvas's own background showing beside it. `player.fit = "cover"`
 //! fills the canvas instead, cutting the canvas edges on the long axis,
@@ -191,6 +199,10 @@ fn event_to_js(event: &Event) -> JsValue {
         Event::Trigger(name) => {
             set("type", "trigger");
             set("name", name);
+        }
+        Event::Open { url } => {
+            set("type", "open");
+            set("url", url);
         }
         _ => set("type", "unknown"),
     }
@@ -581,28 +593,59 @@ impl CuelightPlayer {
             inner.presenter.fit(),
             [x * ratio, y * ratio],
         )?;
-        let fired = inner.engine.press(at)?;
+        let pressed = inner.engine.press(at)?;
         let at = inner.engine.time();
-        inner.live.record(at, fired.clone());
-        Some(fired)
+        if let Some(trigger) = &pressed.trigger {
+            inner.live.record(at, trigger.clone());
+        }
+        // Opened here, inside the pointer event that was the press:
+        // browsers allow a new tab only from a user's gesture, and the
+        // frame loop that reports events runs outside it. Without an
+        // opener or a referrer: a show's links are someone else's pages,
+        // and one with an opener could steer the kiosk's page away.
+        if let Some(url) = &pressed.open {
+            if let Some(window) = web_sys::window() {
+                let _ = window.open_with_url_and_target_and_features(
+                    url,
+                    "_blank",
+                    "noopener,noreferrer",
+                );
+            }
+        }
+        pressed.trigger
     }
 
-    /// What a press at that point would fire, without firing it: for a
+    /// What a press at that point would do, without doing it, as
+    /// `{ trigger?, open? }`; `undefined` over nothing pressable. For a
     /// page that wants a pointer cursor over what can be pressed.
     #[wasm_bindgen(js_name = pressedAt)]
-    pub fn pressed_at(&self, x: f64, y: f64) -> Option<String> {
+    pub fn pressed_at(&self, x: f64, y: f64) -> JsValue {
         let inner = self.inner.borrow();
-        let size = inner.engine.show()?.size;
+        let Some(size) = inner.engine.show().map(|show| show.size) else {
+            return JsValue::UNDEFINED;
+        };
         let ratio = inner.pixel_ratio();
         let surface = [inner.surface.config.width, inner.surface.config.height];
-        let at = cuelight::render::canvas_at(
+        let Some(at) = cuelight::render::canvas_at(
             size,
             surface,
             inner.engine.scaling(),
             inner.presenter.fit(),
             [x * ratio, y * ratio],
-        )?;
-        inner.engine.pressed(at)
+        ) else {
+            return JsValue::UNDEFINED;
+        };
+        let Some(pressed) = inner.engine.pressed(at) else {
+            return JsValue::UNDEFINED;
+        };
+        let object = js_sys::Object::new();
+        if let Some(trigger) = &pressed.trigger {
+            let _ = js_sys::Reflect::set(&object, &"trigger".into(), &trigger.as_str().into());
+        }
+        if let Some(url) = &pressed.open {
+            let _ = js_sys::Reflect::set(&object, &"open".into(), &url.as_str().into());
+        }
+        object.into()
     }
 
     /// How the show is brought to the canvas: `contain`, `cover` or

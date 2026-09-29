@@ -13,8 +13,8 @@ use crate::segments;
 use cuelight_core::{
     frame_key, parse_color, revealed, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill,
     Finding, Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
-    Property, Reel, ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced, Value,
-    Voice,
+    Press, Property, Reel, ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced,
+    Value, Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -210,6 +210,14 @@ pub struct PlacedGlyph {
 struct RegisteredFont {
     font: BitmapFont,
     pages: Vec<Rgba>,
+}
+
+/// What a press landed on, and so did: the trigger it fired, the web
+/// address it asked to have opened, or both; see [`Engine::press`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pressed {
+    pub trigger: Option<String>,
+    pub open: Option<String>,
 }
 
 /// The bounds of every element id in `vector`, over the paths inside
@@ -710,25 +718,37 @@ impl Engine {
     /// the shape for a rect or a circle and the bounding box for
     /// anything else. A host turns a click into canvas coordinates
     /// first; `render::fit` says where the canvas landed on its surface.
-    pub fn press(&mut self, at: [f64; 2]) -> Option<String> {
-        let trigger = self
-            .pressed(at)
-            .or_else(|| self.core.show()?.input.press.clone())?;
-        self.core.trigger(&trigger);
-        Some(trigger)
+    pub fn press(&mut self, at: [f64; 2]) -> Option<Pressed> {
+        let pressed = self.pressed(at).or_else(|| {
+            let trigger = self.core.show()?.input.press.clone()?;
+            Some(Pressed {
+                trigger: Some(trigger),
+                open: None,
+            })
+        })?;
+        if let Some(trigger) = &pressed.trigger {
+            self.core.trigger(trigger);
+        }
+        if let Some(url) = &pressed.open {
+            self.core.open_link(url);
+        }
+        Some(pressed)
     }
 
-    /// What a press at `at` lands on, without firing it: the trigger of
-    /// the topmost pressable layer there. `None` when the point is over
-    /// nothing pressable, which a host may show as a plain cursor.
-    pub fn pressed(&self, at: [f64; 2]) -> Option<String> {
+    /// What a press at `at` lands on, without firing it: what the
+    /// topmost pressable layer there does. `None` when the point is
+    /// over nothing pressable, which a host may show as a plain cursor.
+    pub fn pressed(&self, at: [f64; 2]) -> Option<Pressed> {
         let drawn = self.drawn().ok()?;
         hit_items(&drawn, at).into_iter().rev().find_map(|i| {
-            let (_, trigger) = drawn
+            let (_, press) = drawn
                 .pressable
                 .iter()
                 .find(|(range, _)| range.contains(&i))?;
-            Some(trigger.clone())
+            Some(Pressed {
+                trigger: press.trigger.clone(),
+                open: press.open.clone(),
+            })
         })
     }
 
@@ -1996,7 +2016,7 @@ impl Engine {
                 if let Some(press) = &layer.press {
                     built
                         .pressable
-                        .push((from..built.items.len(), press.trigger.clone()));
+                        .push((from..built.items.len(), press.clone()));
                 }
                 if let Some((started, mark, misses_before)) = measuring {
                     let total = started.elapsed();
@@ -2216,11 +2236,11 @@ struct Drawn {
     /// Per visible layer, what it cost, when the frame is being
     /// profiled.
     profile: Option<Vec<LayerCost>>,
-    /// Per pressable layer, the items it drew and the trigger a press on
-    /// them fires, in paint order. Item ranges rather than shapes, so a
-    /// press is tested against the very geometry the frame drew, clips
-    /// and transforms included.
-    pressable: Vec<(std::ops::Range<usize>, String)>,
+    /// Per pressable layer, the items it drew and what a press on them
+    /// does, in paint order. Item ranges rather than shapes, so a press
+    /// is tested against the very geometry the frame drew, clips and
+    /// transforms included.
+    pressable: Vec<(std::ops::Range<usize>, Press)>,
 }
 
 /// What a layer takes from the tree above it.

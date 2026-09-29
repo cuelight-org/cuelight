@@ -37,19 +37,43 @@ fn a_key_fires_what_the_show_says_it_means() {
 fn a_press_finds_the_topmost_layer_under_it() {
     let mut engine = engine();
     // The circle is drawn over the rect, and wins where they overlap.
-    assert_eq!(engine.press([16.0, 16.0]).as_deref(), Some("over"));
+    assert_eq!(
+        engine
+            .press([16.0, 16.0])
+            .and_then(|p| p.trigger)
+            .as_deref(),
+        Some("over")
+    );
     // Beside the circle but inside the rect: the rect. A circle is
     // round, so its corner is not part of it.
-    assert_eq!(engine.press([2.0, 2.0]).as_deref(), Some("under"));
-    assert_eq!(engine.press([9.0, 9.0]).as_deref(), Some("under"));
+    assert_eq!(
+        engine.press([2.0, 2.0]).and_then(|p| p.trigger).as_deref(),
+        Some("under")
+    );
+    assert_eq!(
+        engine.press([9.0, 9.0]).and_then(|p| p.trigger).as_deref(),
+        Some("under")
+    );
     // Over a layer that is not pressable: the show's own press.
-    assert_eq!(engine.press([50.0, 16.0]).as_deref(), Some("anywhere"));
+    assert_eq!(
+        engine
+            .press([50.0, 16.0])
+            .and_then(|p| p.trigger)
+            .as_deref(),
+        Some("anywhere")
+    );
 }
 
 #[test]
 fn asking_what_is_under_a_point_fires_nothing() {
     let engine = engine();
-    assert_eq!(engine.pressed([16.0, 16.0]).as_deref(), Some("over"));
+    assert_eq!(
+        engine
+            .pressed([16.0, 16.0])
+            .and_then(|p| p.trigger)
+            .as_deref(),
+        Some("over")
+    );
     // Only what a layer says, never the show's fallback: a host asking
     // wants to know whether there is something there.
     assert_eq!(engine.pressed([50.0, 16.0]), None);
@@ -63,7 +87,13 @@ fn a_layer_that_is_not_shown_is_not_pressed() {
     );
     let mut engine = Engine::new();
     engine.load_show(&show).unwrap();
-    assert_eq!(engine.press([16.0, 16.0]).as_deref(), Some("under"));
+    assert_eq!(
+        engine
+            .press([16.0, 16.0])
+            .and_then(|p| p.trigger)
+            .as_deref(),
+        Some("under")
+    );
 }
 
 #[test]
@@ -78,7 +108,10 @@ fn a_press_is_cut_off_by_the_clip_over_it() {
       ] }"##;
     let mut engine = Engine::new();
     engine.load_show(show).unwrap();
-    assert_eq!(engine.press([8.0, 16.0]).as_deref(), Some("hit"));
+    assert_eq!(
+        engine.press([8.0, 16.0]).and_then(|p| p.trigger).as_deref(),
+        Some("hit")
+    );
     assert_eq!(engine.press([24.0, 16.0]), None, "outside the window");
 }
 
@@ -97,7 +130,14 @@ fn a_press_follows_a_layer_that_turned() {
         engine.resolved_layers().unwrap()[0].shape,
         ResolvedShape::Rect { .. }
     ));
-    assert_eq!(engine.press([32.0, 48.0]).as_deref(), Some("bar"), "along");
+    assert_eq!(
+        engine
+            .press([32.0, 48.0])
+            .and_then(|p| p.trigger)
+            .as_deref(),
+        Some("bar"),
+        "along"
+    );
     assert_eq!(engine.press([48.0, 32.0]), None, "across");
 }
 
@@ -115,10 +155,19 @@ fn a_press_moves_with_what_it_presses() {
       ] }"##;
     let mut engine = Engine::new();
     engine.load_show(show).unwrap();
-    assert_eq!(engine.press([4.0, 16.0]).as_deref(), Some("pull"));
+    assert_eq!(
+        engine.press([4.0, 16.0]).and_then(|p| p.trigger).as_deref(),
+        Some("pull")
+    );
     engine.advance_to(1.0);
     assert_eq!(engine.press([4.0, 16.0]), None, "it has gone");
-    assert_eq!(engine.press([44.0, 16.0]).as_deref(), Some("pull"));
+    assert_eq!(
+        engine
+            .press([44.0, 16.0])
+            .and_then(|p| p.trigger)
+            .as_deref(),
+        Some("pull")
+    );
 }
 
 #[test]
@@ -150,4 +199,47 @@ fn a_layer_clipped_away_is_not_under_the_point() {
         engine.layers_at([24.0, 16.0]).is_empty(),
         "outside the window"
     );
+}
+
+#[test]
+fn a_press_can_open_a_link_beside_or_instead_of_a_trigger() {
+    use cuelight_core::{Event, Happened};
+    let show = r##"{ "name": "links", "size": [64, 32], "layers": [
+      { "name": "site", "type": "shape", "shape": { "rect": [0, 0, 32, 32] },
+        "fill": "#FF0000", "press": { "open": "https://example.com/" } },
+      { "name": "both", "type": "shape", "shape": { "rect": [32, 0, 32, 32] },
+        "fill": "#00FF00", "press": { "trigger": "order", "open": "http://example.com/order" } } ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.drain_trace();
+    // Asking says what a press would do; doing it reports the address
+    // as an event and traces it, and fires the trigger when there is one.
+    let asked = engine.pressed([16.0, 16.0]).unwrap();
+    assert_eq!(asked.trigger, None);
+    assert_eq!(asked.open.as_deref(), Some("https://example.com/"));
+    assert!(engine.drain_events().is_empty());
+    let pressed = engine.press([16.0, 16.0]).unwrap();
+    assert_eq!(pressed.open.as_deref(), Some("https://example.com/"));
+    assert_eq!(
+        engine.drain_events(),
+        vec![Event::Open {
+            url: "https://example.com/".into()
+        }]
+    );
+    assert!(engine
+        .drain_trace()
+        .iter()
+        .any(|t| matches!(&t.what, Happened::Opened { url } if url == "https://example.com/")));
+    let pressed = engine.press([48.0, 16.0]).unwrap();
+    assert_eq!(pressed.trigger.as_deref(), Some("order"));
+    assert_eq!(pressed.open.as_deref(), Some("http://example.com/order"));
+    // Only the web, and a press that does something.
+    for bad in [
+        r##""press": { "open": "file:///etc/passwd" }"##,
+        r##""press": { "open": "javascript:alert(1)" }"##,
+        r##""press": {}"##,
+    ] {
+        let show = show.replace(r##""press": { "open": "https://example.com/" }"##, bad);
+        assert!(Engine::new().load_show(&show).is_err(), "{bad}");
+    }
 }

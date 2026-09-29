@@ -695,15 +695,24 @@ fn default_opacity() -> f64 {
 
 /// What a press on a layer does.
 ///
-/// A trigger, and nothing else: the engine's inputs stay one-way, so a
-/// press is the same thing a host firing that trigger would be, and a
-/// show is still a function of its triggers and its clock.
+/// What pressing a layer does: fire a trigger, open a web address, or
+/// both. The engine's inputs stay one-way: a press is the same thing a
+/// host firing that trigger would be, and a show is still a function
+/// of its triggers and its clock; opening an address is reported to the
+/// host as an event, and the host decides what to do with it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Press {
     /// Trigger fired when the layer is pressed.
-    pub trigger: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    /// A web address opened when the layer is pressed: `http` or
+    /// `https` only, so a show cannot point a kiosk at a local file or a
+    /// custom scheme. Reported as [`Event::Open`](crate::Event); the
+    /// players open it in the browser.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<String>,
 }
 
 /// How a layer's colors combine with the colors already beneath it.
@@ -1761,7 +1770,7 @@ impl Show {
                     out.extend(reel.spin.iter().map(str::to_owned));
                 }
                 if let Some(press) = &layer.press {
-                    fired.push(press.trigger.clone());
+                    fired.extend(press.trigger.clone());
                 }
                 heard(layer.children(), out, fired);
             }

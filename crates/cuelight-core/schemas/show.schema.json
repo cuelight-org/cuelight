@@ -1569,18 +1569,25 @@
       ]
     },
     "Press": {
-      "description": "What a press on a layer does.\n\nA trigger, and nothing else: the engine's inputs stay one-way, so a\npress is the same thing a host firing that trigger would be, and a\nshow is still a function of its triggers and its clock.",
+      "description": "What a press on a layer does.\n\nWhat pressing a layer does: fire a trigger, open a web address, or\nboth. The engine's inputs stay one-way: a press is the same thing a\nhost firing that trigger would be, and a show is still a function\nof its triggers and its clock; opening an address is reported to the\nhost as an event, and the host decides what to do with it.",
       "type": "object",
       "properties": {
+        "open": {
+          "description": "A web address opened when the layer is pressed: `http` or\n`https` only, so a show cannot point a kiosk at a local file or a\ncustom scheme. Reported as [`Event::Open`](crate::Event); the\nplayers open it in the browser.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "trigger": {
           "description": "Trigger fired when the layer is pressed.",
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "additionalProperties": false,
-      "required": [
-        "trigger"
-      ]
+      "additionalProperties": false
     },
     "Property": {
       "description": "An animatable layer property.",
