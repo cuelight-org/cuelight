@@ -47,6 +47,7 @@
 
 mod engine;
 mod font;
+mod hard;
 mod lru;
 #[cfg(feature = "outline-fonts")]
 mod outline;

@@ -807,6 +807,9 @@ impl Engine {
         for (root, layers) in self.core.trees() {
             self.walk(root, layers, &mut Vec::new(), Inherited::TOP, &mut out)?;
         }
+        if self.core.hard_edges() {
+            harden(&mut out.items);
+        }
         Ok(out)
     }
 
@@ -825,6 +828,9 @@ impl Engine {
         let started = std::time::Instant::now();
         for (root, layers) in self.core.trees() {
             self.walk(root, layers, &mut Vec::new(), Inherited::TOP, &mut out)?;
+        }
+        if self.core.hard_edges() {
+            harden(&mut out.items);
         }
         let resolve = started.elapsed();
         let layers = out.profile.unwrap_or_default();
@@ -2091,6 +2097,75 @@ impl Engine {
             path.pop();
         }
         Ok(())
+    }
+}
+
+/// Draw every filled shape of `items` in whole pixels: its outline, on
+/// the canvas, cut into one strip per pixel row, a pixel lit where its
+/// centre is inside. A clip is cut the same way. Outlines (strokes),
+/// images and text are left as they are; a gradient keeps its place
+/// under the shape it paints.
+fn harden(items: &mut [ResolvedLayer]) {
+    fn polygons(shape: &ResolvedShape, transform: Transform) -> Option<Vec<Vec<[f64; 2]>>> {
+        let outline = match shape {
+            ResolvedShape::Rect {
+                x,
+                y,
+                width,
+                height,
+            } => vec![vec![
+                [*x, *y],
+                [x + width, *y],
+                [x + width, y + height],
+                [*x, y + height],
+            ]],
+            ResolvedShape::Circle { cx, cy, radius } => {
+                vec![crate::hard::circle(*cx, *cy, *radius)]
+            }
+            ResolvedShape::Polygon { points } => vec![points.clone()],
+            ResolvedShape::Path { elements, .. } => crate::hard::flatten(elements),
+            _ => return None,
+        };
+        Some(
+            outline
+                .into_iter()
+                .map(|points| points.into_iter().map(|p| transform.apply(p)).collect())
+                .collect(),
+        )
+    }
+    let whole = |shape: &ResolvedShape, transform: Transform| {
+        let runs = crate::hard::runs(&polygons(shape, transform)?);
+        Some(ResolvedShape::Path {
+            elements: crate::hard::as_path(&runs),
+            stroke: None,
+        })
+    };
+    for item in items.iter_mut() {
+        match &item.shape {
+            ResolvedShape::ClipBegin { shape } => {
+                if let Some(cut) = whole(shape, item.transform) {
+                    item.shape = ResolvedShape::ClipBegin {
+                        shape: Box::new(cut),
+                    };
+                    item.transform = Transform::IDENTITY;
+                }
+            }
+            // An outline stays as it is: only the fill is cut.
+            ResolvedShape::Path {
+                stroke: Some(_), ..
+            } => {}
+            shape => {
+                if let Some(cut) = whole(shape, item.transform) {
+                    // The gradient was placed in the shape's own space; it
+                    // follows the shape onto the canvas.
+                    if let Some(gradient) = &mut item.gradient {
+                        gradient.space = item.transform.then(gradient.space);
+                    }
+                    item.shape = cut;
+                    item.transform = Transform::IDENTITY;
+                }
+            }
+        }
     }
 }
 

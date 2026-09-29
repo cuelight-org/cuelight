@@ -489,6 +489,21 @@
         }
       ]
     },
+    "Edges": {
+      "description": "How the edges of shapes fall on a pixel grid; see [`Output::edges`].",
+      "oneOf": [
+        {
+          "description": "Smoothed, as everywhere else.",
+          "type": "string",
+          "const": "soft"
+        },
+        {
+          "description": "Whole pixels: lit where the pixel's centre is inside.",
+          "type": "string",
+          "const": "hard"
+        }
+      ]
+    },
     "Fill": {
       "description": "What a shape is filled with: one color, or a gradient.\n\nUntagged, so `\"fill\": \"#FF0000\"` keeps working and\n`\"fill\": { \"radial\": { ... } }` is the other one.",
       "anyOf": [
@@ -1397,6 +1412,17 @@
       "description": "How the finished frame reaches the display. Every field is optional: a\nscene's output overrides only the fields it sets, the rest come from\nthe show's, then from the defaults.",
       "type": "object",
       "properties": {
+        "edges": {
+          "description": "How the edges of shapes fall on a show drawn on its own pixel\ngrid: `soft` (default) smooths them, `hard` lights a pixel only\nwhere its centre is inside the shape, so a circle is a disc of\nwhole dots and a moving shape steps a dot at a time. Nothing to a\nshow not on its pixel grid.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Edges"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "mode": {
           "description": "Color conversion; `rgb` by default.",
           "anyOf": [

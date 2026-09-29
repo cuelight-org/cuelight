@@ -296,6 +296,25 @@ pub struct Output {
     /// scene's list replaces the show's; an empty list turns them off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passes: Option<Vec<Pass>>,
+    /// How the edges of shapes fall on a show drawn on its own pixel
+    /// grid: `soft` (default) smooths them, `hard` lights a pixel only
+    /// where its centre is inside the shape, so a circle is a disc of
+    /// whole dots and a moving shape steps a dot at a time. Nothing to a
+    /// show not on its pixel grid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edges: Option<Edges>,
+}
+
+/// How the edges of shapes fall on a pixel grid; see [`Output::edges`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum Edges {
+    /// Smoothed, as everywhere else.
+    #[default]
+    Soft,
+    /// Whole pixels: lit where the pixel's centre is inside.
+    Hard,
 }
 
 /// An effect on the finished frame, applied where it is shown (windows, the
@@ -363,6 +382,7 @@ impl Output {
             tint: self.tint.clone().or_else(|| base.tint.clone()),
             scaling: self.scaling.or(base.scaling),
             passes: self.passes.clone().or_else(|| base.passes.clone()),
+            edges: self.edges.or(base.edges),
         }
     }
 }
