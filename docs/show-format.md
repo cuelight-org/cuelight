@@ -1475,7 +1475,21 @@ A timeline is a keyframed animation owned by its layer:
 - The timeline's duration is its longest track's last key. When it ends
   it stops and its properties fall back (see precedence); with `loop`
   the playhead wraps instead. For a seamless loop, author each track's
-  value at the end equal to its value at 0.
+  value at the end equal to its value at 0, or `carry` it.
+- `carry`, with `loop`, carries each pass on from where the last one
+  ended rather than snapping back to the first key: pass `n` adds `n`
+  times each track's change from its first key to its last. A wheel that
+  keeps turning, or a texture that keeps scrolling, is two keys carried,
+  and its speed is the change over the pass's length, so it is changed
+  by changing either:
+
+  ```json
+  { "name": "turn", "autoplay": true, "loop": true, "carry": true,
+    "tracks": [{ "property": "rotation", "keys": [{ "t": 0, "v": 0 }, { "t": 2, "v": 360 }] }] }
+  ```
+
+  A value the show animates takes `carry` too. The value stays a function
+  of the clock, so seeking lands where playing would have.
 - `delay` (seconds) postpones the first key after the timeline starts;
   meanwhile it does not own its properties. A loop or repeat does not
   wait again, so `delay` plus `loop` is "wait, then repeat forever".

@@ -2586,6 +2586,13 @@ pub struct Timeline {
     /// Repeat forever. Cannot be combined with `repeat`.
     #[serde(default, rename = "loop")]
     pub looping: bool,
+    /// With `loop`, each pass carries on from where the last one ended
+    /// rather than snapping back to the first key: pass `n` adds `n`
+    /// times the change from its first key to its last. A wheel that
+    /// turns 0 to 360 in a second, carried, keeps turning; so does a
+    /// scroll. Still a function of the clock, so seeking holds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub carry: bool,
     /// Seconds to wait after starting before the first key plays; the
     /// timeline does not own its properties meanwhile. Loops and repeats
     /// do not wait again.
@@ -2689,6 +2696,20 @@ impl Track {
     pub fn duration(&self) -> f64 {
         self.keys.last().map(|k| k.t).unwrap_or(0.0)
     }
+
+    /// How far one pass moves the value: its last key's less its first.
+    /// What a carried loop adds each time round.
+    pub fn per_pass(&self) -> f64 {
+        per_pass(&self.keys)
+    }
+}
+
+/// How far `keys` move a value from the first to the last.
+pub(crate) fn per_pass(keys: &[Key]) -> f64 {
+    match (keys.first(), keys.last()) {
+        (Some(first), Some(last)) => last.v - first.v,
+        _ => 0.0,
+    }
 }
 
 /// A value the show owns and animates, named and read like a variable.
@@ -2741,6 +2762,13 @@ pub struct ValueTimeline {
     /// Repeat for ever; cannot be combined with `repeat`.
     #[serde(default, rename = "loop")]
     pub looping: bool,
+    /// With `loop`, each pass carries on from where the last one ended
+    /// rather than snapping back to the first key: pass `n` adds `n`
+    /// times the change from its first key to its last. A wheel that
+    /// turns 0 to 360 in a second, carried, keeps turning; so does a
+    /// scroll. Still a function of the clock, so seeking holds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub carry: bool,
     /// Seconds to wait after starting before the first key.
     #[serde(default)]
     pub delay: f64,

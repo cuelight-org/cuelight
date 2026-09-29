@@ -189,6 +189,7 @@ struct Timing<'a> {
     duration: f64,
     play_time: f64,
     looping: bool,
+    carry: bool,
     hold: bool,
     on_end: Option<&'a str>,
 }
@@ -199,6 +200,7 @@ impl<'a> From<&'a Timeline> for Timing<'a> {
             duration: tl.duration(),
             play_time: tl.play_time(),
             looping: tl.looping,
+            carry: tl.carry,
             hold: tl.hold,
             on_end: tl.on_end.as_deref(),
         }
@@ -211,6 +213,7 @@ impl<'a> From<&'a ValueTimeline> for Timing<'a> {
             duration: tl.duration(),
             play_time: tl.play_time(),
             looping: tl.looping,
+            carry: tl.carry,
             hold: tl.hold,
             on_end: tl.on_end.as_deref(),
         }
@@ -289,6 +292,17 @@ impl Playhead {
             return elapsed % tl.duration;
         }
         elapsed
+    }
+
+    /// How many whole passes a carried loop has made at show time `now`:
+    /// what each track's change over one pass is added that many times.
+    /// Nought for anything else.
+    fn passes(&self, now: f64, tl: Timing<'_>) -> f64 {
+        let elapsed = now - self.starts;
+        if self.held || !tl.looping || !tl.carry || tl.duration <= 0.0 || elapsed <= 0.0 {
+            return 0.0;
+        }
+        (elapsed / tl.duration).floor()
     }
 
     /// The instant it finishes, for a timeline that does finish.
@@ -1021,7 +1035,8 @@ impl Engine {
                     continue;
                 };
                 if let Some(v) = tl.at(p.at(now, tl.into())) {
-                    out = Some(v);
+                    let carried = p.passes(now, tl.into()) * crate::model::per_pass(&tl.keys);
+                    out = Some(v + carried);
                 }
             }
         }
@@ -1342,11 +1357,12 @@ impl Engine {
                         continue;
                     }
                     let local = tl.local_time(p.at(self.time, tl.into()));
+                    let passes = p.passes(self.time, tl.into());
                     let value = local.and_then(|time| {
                         tl.tracks
                             .iter()
                             .filter(|t| t.property == property)
-                            .filter_map(|t| t.sample(time))
+                            .filter_map(|t| Some(t.sample(time)? + passes * t.per_pass()))
                             .next_back()
                     });
                     sources.push(Influence::Timeline {
@@ -3332,9 +3348,10 @@ impl Engine {
                 let Some(time) = tl.local_time(p.at(self.time, tl.into())) else {
                     continue;
                 };
+                let passes = p.passes(self.time, tl.into());
                 for track in tl.tracks.iter().filter(|t| t.property == prop) {
                     if let Some(sampled) = track.sample(time) {
-                        v = Value::Number(sampled);
+                        v = Value::Number(sampled + passes * track.per_pass());
                     }
                 }
             }
@@ -3852,6 +3869,8 @@ pub(crate) enum Site {
     Pass(Option<usize>, usize),
     /// The font style of this name.
     Font(String),
+    /// The value the show animates of this name.
+    Value(String),
     /// The layer at this path down this tree: each step an index and
     /// whether it is into the `parts` of an artwork layer rather than
     /// the `children` of a group.
@@ -3874,6 +3893,7 @@ impl Site {
             Site::Tint(scene) => format!("{}.tint", output(*scene)),
             Site::Pass(scene, i) => format!("{}.passes[{i}]", output(*scene)),
             Site::Font(name) => format!("fonts.{name}"),
+            Site::Value(name) => format!("values.{name}"),
             Site::Scene(i) => format!("scenes[{i}]"),
             Site::Layer(root, path) => {
                 let mut out = match root {
@@ -3959,6 +3979,11 @@ impl Site {
                 raw.get_mut("fonts")
                     .and_then(serde_json::Value::as_object_mut)
                     .map(|fonts| fonts.remove(name));
+            }
+            Site::Value(name) => {
+                raw.get_mut("values")
+                    .and_then(serde_json::Value::as_object_mut)
+                    .map(|values| values.remove(name));
             }
             Site::Pass(..) => {
                 if let Some((list, i)) = self.list_of(raw) {
@@ -4200,6 +4225,19 @@ fn validate(show: &Show, out: &mut Vec<Problem>) {
             });
         }
     }
+    // A value's timelines follow the rule a layer's do.
+    for (name, value) in &show.values {
+        let carried = value.timelines.iter().find(|tl| tl.carry && !tl.looping);
+        if let Some(timeline) = carried {
+            out.push(Problem {
+                site: Site::Value(name.clone()),
+                error: Error::InvalidShow(format!(
+                    "timeline {:?} of value {name:?} carries, which only a loop does",
+                    timeline.name
+                )),
+            });
+        }
+    }
     fn layers(
         show: &Show,
         root: Root,
@@ -4375,6 +4413,12 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
         if timeline.looping && timeline.repeat.is_some() {
             return Err(Error::InvalidShow(format!(
                 "timeline {:?} of layer {:?} sets both loop and repeat",
+                timeline.name, layer.name
+            )));
+        }
+        if timeline.carry && !timeline.looping {
+            return Err(Error::InvalidShow(format!(
+                "timeline {:?} of layer {:?} carries, which only a loop does",
                 timeline.name, layer.name
             )));
         }
