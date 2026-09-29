@@ -2315,6 +2315,11 @@ fn push_vector(
             let Some((by, opacity)) = part_of(item) else {
                 continue;
             };
+            // How much the parts above it scale it: its stroke grows and
+            // shrinks with it, the average of the two axes, as the
+            // artwork's own size scales strokes.
+            let [a, b, c, d, ..] = by.0;
+            let part_scale = (a.hypot(b) + c.hypot(d)) / 2.0;
             out.push(ResolvedLayer {
                 gradient: None,
                 overflow: placed.overflow,
@@ -2331,7 +2336,9 @@ fn push_vector(
                             })
                         })
                         .collect(),
-                    stroke: item.stroke.map(|(c, w)| (stain(c), w * (sx + sy) / 2.0)),
+                    stroke: item
+                        .stroke
+                        .map(|(c, w)| (stain(c), w * part_scale * (sx + sy) / 2.0)),
                 },
                 color: stain(item.fill.unwrap_or([0; 4])),
                 opacity: placed.opacity * opacity,
