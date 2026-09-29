@@ -215,7 +215,12 @@ fn walk(
                 .iter()
                 .any(|tl| tl.tracks.iter().any(|t| t.property == property))
         };
-        let shut = if !layer.visible && !bound(Property::Visible) {
+        // A part hidden for good is how a use of shared artwork leaves an
+        // element out: the point, not dead weight.
+        let part = matches!(layer.kind, LayerKind::Part { .. });
+        let shut = if part {
+            None
+        } else if !layer.visible && !bound(Property::Visible) {
             Some("visible is false")
         } else if layer.opacity <= 0.0 && !bound(Property::Opacity) && !tracked(Property::Opacity) {
             Some("opacity is 0")
