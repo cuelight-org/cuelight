@@ -2199,6 +2199,12 @@ pub struct Binding {
     /// does, and alongside `format`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decimals: Option<u32>,
+    /// At least this many digits before the point, zero-filled on the
+    /// left (text bindings only): a page `03`, a clock's `09`. A minimum,
+    /// never a cut; the sign comes before the zeros, and with `thousands`
+    /// the zeros are grouped like any digits (`0,005`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_digits: Option<u32>,
     /// How a number becomes text (text bindings only).
     #[serde(default)]
     pub format: NumberFormat,
@@ -2247,10 +2253,16 @@ impl Binding {
     /// the words, a name as it is. `None` when the property cannot use
     /// the value, which leaves it as it was: a tint that is not a color,
     /// a font style `show` does not declare.
+    /// A number as this binding shows it as text: `format`, `decimals`
+    /// and `min_digits`, before the words.
+    pub fn number_text(&self, n: f64) -> String {
+        self.format.format_padded(n, self.decimals, self.min_digits)
+    }
+
     pub fn convert(&self, value: Value, show: &Show) -> Option<Value> {
         match self.property {
             Property::Text => Some(Value::Text(self.worded(match value {
-                Value::Number(n) => self.format.format(self.scaled(n), self.decimals),
+                Value::Number(n) => self.number_text(self.scaled(n)),
                 other => other.to_text(),
             }))),
             Property::Visible => Some(Value::Bool(self.scaled(value.as_number()) != 0.0)),
@@ -2479,6 +2491,49 @@ pub enum NumberFormat {
 }
 
 impl NumberFormat {
+    /// `n` as text, to `decimals` places when asked for, with at least
+    /// `min_digits` digits before the point.
+    pub fn format_padded(self, n: f64, decimals: Option<u32>, min_digits: Option<u32>) -> String {
+        let text = self.format(n, decimals);
+        let Some(min) = min_digits.map(|m| m as usize) else {
+            return text;
+        };
+        // Whatever this is not a plain number of, it stays as it is.
+        if text.contains(['e', 'E', 'i', 'N']) {
+            return text;
+        }
+        let (sign, rest) = match text.strip_prefix('-') {
+            Some(rest) => ("-", rest),
+            None => ("", text.as_str()),
+        };
+        let (whole, fraction) = match rest.find('.') {
+            Some(at) => rest.split_at(at),
+            None => (rest, ""),
+        };
+        let digits: String = whole.chars().filter(char::is_ascii_digit).collect();
+        if digits.len() >= min {
+            return text;
+        }
+        let digits = format!("{digits:0>min$}");
+        let whole = match self {
+            NumberFormat::Thousands => Self::group_digits(&digits),
+            NumberFormat::Plain => digits,
+        };
+        format!("{sign}{whole}{fraction}")
+    }
+
+    /// `digits` with a comma before every group of three from the right.
+    fn group_digits(digits: &str) -> String {
+        let mut out = String::new();
+        for (i, d) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(d);
+        }
+        out
+    }
+
     /// `n` as text, to `decimals` places when asked for.
     pub fn format(self, n: f64, decimals: Option<u32>) -> String {
         let Some(places) = decimals else {

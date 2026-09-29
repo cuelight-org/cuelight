@@ -3312,7 +3312,7 @@ impl Engine {
         if change.whole && b.decimals.is_none() {
             n = n.round();
         }
-        Some(Value::Text(b.worded(b.format.format(n, b.decimals))))
+        Some(Value::Text(b.worded(b.number_text(n))))
     }
 
     /// Resolve a layer property: its base value, overridden by bindings
@@ -4472,6 +4472,12 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
         if let Some(problem) = reading_problem(&binding.reading) {
             return Err(Error::InvalidShow(format!(
                 "the {:?} binding of layer {:?} {problem}",
+                binding.property, layer.name
+            )));
+        }
+        if binding.min_digits.is_some_and(|d| d > 20) {
+            return Err(Error::InvalidShow(format!(
+                "the {:?} binding of layer {:?} asks for more digits than a number has",
                 binding.property, layer.name
             )));
         }

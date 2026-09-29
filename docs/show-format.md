@@ -1126,6 +1126,18 @@ comma separators: `1,500`).
 { "property": "text", "variable": "score", "format": "thousands" }
 ```
 
+`min_digits` shows at least that many digits before the point, zero-filled
+on the left, so a page reads `03` and a clock `09`; a number with more
+digits shows them all. The sign comes before the zeros (`-03`), and with
+`thousands` the zeros are grouped like any digits (`0,005`). It applies
+with `decimals`, after `scale`, `offset` and rounding, before `prefix` and
+`suffix`, and a counting transition keeps the zeros as it keeps the
+decimals.
+
+```json
+{ "property": "text", "variable": "page", "min_digits": 2, "suffix": " / 09" }
+```
+
 `decimals` rounds a number to that many places and always shows them, so
 a value a timeline is moving reads `1.5` rather than
 `1.4833333333333334`:
