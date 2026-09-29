@@ -11,8 +11,17 @@
 //! player.trigger("go");
 //! player.set("score", 1200);
 //! player.onEvent((event) => console.log(event));
+//! player.onDriver((step) => console.log(step));   // { type: "trigger", name: "go", at: 0.3 }
 //! player.onError((message) => alert(message));
 //! ```
+//!
+//! What the folder's driver script does as it plays reaches the page
+//! through `onDriver`, one call per step as it fires: a trigger as
+//! `{ type: "trigger", name, at }` and a variable set as
+//! `{ type: "set", name, value, at }`, with `at` the driver's own
+//! instant on the show's clock. A page can then show why the show did
+//! what it did, next to the show's own events from `onEvent` and its
+//! own clicks and keys.
 //!
 //! The show folder needs a `manifest.json` (the `cuelight-manifest` tool of
 //! `cuelight-loader` writes it): a browser cannot list a directory. A
@@ -62,7 +71,7 @@ use cuelight::vello;
 use cuelight::Engine;
 use cuelight_audio::WebAudio;
 use cuelight_core::{Event, Value};
-use cuelight_loader::{Driver, DriverPlayer, Manifest, MANIFEST_FILE};
+use cuelight_loader::{Applied, Driver, DriverPlayer, Manifest, Step, MANIFEST_FILE};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
 use wasm_bindgen::prelude::*;
@@ -142,6 +151,37 @@ fn from_js(value: &JsValue) -> Result<Value, JsValue> {
     }
 }
 
+/// What one frame brought: the driver's steps that fired in it, and
+/// the events the show raised.
+struct Happened {
+    applied: Vec<Applied>,
+    events: Vec<Event>,
+}
+
+/// A driver step that fired, as the page sees it: a trigger as one
+/// object, a `set` of several variables as one object per variable, a
+/// wait as nothing.
+fn applied_to_js(applied: &Applied) -> Vec<JsValue> {
+    let object = |kind: &str, name: &str, value: Option<&Value>| {
+        let object = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&object, &"type".into(), &kind.into());
+        let _ = js_sys::Reflect::set(&object, &"name".into(), &name.into());
+        if let Some(value) = value {
+            let _ = js_sys::Reflect::set(&object, &"value".into(), &to_js(value));
+        }
+        let _ = js_sys::Reflect::set(&object, &"at".into(), &JsValue::from_f64(applied.at));
+        JsValue::from(object)
+    };
+    match &applied.step {
+        Step::Trigger { trigger } => vec![object("trigger", trigger, None)],
+        Step::Set { set } => set
+            .iter()
+            .map(|(name, value)| object("set", name, Some(value)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn event_to_js(event: &Event) -> JsValue {
     let object = js_sys::Object::new();
     let set = |key: &str, value: &str| {
@@ -183,6 +223,7 @@ struct Inner {
     /// tab.
     anchor_ms: Option<f64>,
     on_event: Option<js_sys::Function>,
+    on_driver: Option<js_sys::Function>,
     on_error: Option<js_sys::Function>,
     pending_frame: Option<i32>,
     /// The page's sound, when the browser gave us an audio context.
@@ -233,9 +274,10 @@ impl Inner {
             .resize_surface(&mut self.surface, width, height);
     }
 
-    /// Advance the show to `now_ms` and draw it. Returns the show's events
-    /// for the caller to deliver once the player is no longer borrowed.
-    fn frame(&mut self, now_ms: f64) -> Result<Vec<Event>, String> {
+    /// Advance the show to `now_ms` and draw it. Returns the driver's
+    /// steps that fired and the show's events, for the caller to deliver
+    /// once the player is no longer borrowed.
+    fn frame(&mut self, now_ms: f64) -> Result<Happened, String> {
         // Paused stops the clock, not the painting: a resize, a seek or a
         // variable set from the page still shows. The anchor rides along
         // under the time the show is stopped at, so playing carries on
@@ -256,9 +298,10 @@ impl Inner {
             self.anchor_ms = Some(now_ms - time * 1000.0);
             (target, dt) = (time, 0.0);
         }
+        let mut applied = Vec::new();
         if self.driver_playing && !self.paused {
             if let Some(driver) = &mut self.driver {
-                driver.advance(self.engine.core_mut(), dt);
+                applied = driver.advance(self.engine.core_mut(), dt);
             }
         }
         self.engine.advance_to(target);
@@ -303,9 +346,9 @@ impl Inner {
             // Skip this frame; the next one retries.
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.context.configure_surface(surface);
-                return Ok(events);
+                return Ok(Happened { applied, events });
             }
-            _ => return Ok(events),
+            _ => return Ok(Happened { applied, events }),
         };
         let mut encoder = handle
             .device
@@ -322,7 +365,7 @@ impl Inner {
         );
         handle.queue.submit([encoder.finish()]);
         texture.present();
-        Ok(events)
+        Ok(Happened { applied, events })
     }
 }
 
@@ -443,6 +486,7 @@ impl CuelightPlayer {
             presenter: Presenter::new(),
             anchor_ms: None,
             on_event: None,
+            on_driver: None,
             on_error: None,
             pending_frame: None,
             audio,
@@ -757,6 +801,16 @@ impl CuelightPlayer {
     pub fn on_event(&self, callback: Option<js_sys::Function>) {
         self.inner.borrow_mut().on_event = callback;
     }
+
+    /// Call `callback` with every step of the driver script as it fires,
+    /// as `{ type: "trigger", name, at }` or `{ type: "set", name, value,
+    /// at }`, `at` being the driver's instant on the show's clock; `null`
+    /// stops it. A wait is not a step that does anything, and is not
+    /// reported.
+    #[wasm_bindgen(js_name = onDriver)]
+    pub fn on_driver(&self, callback: Option<js_sys::Function>) {
+        self.inner.borrow_mut().on_driver = callback;
+    }
 }
 
 impl Drop for CuelightPlayer {
@@ -822,7 +876,7 @@ fn start_frames(inner: &Rc<RefCell<Inner>>) -> Result<Rc<RefCell<Option<FrameCal
         };
         // The borrow ends before any callback runs: a callback may well
         // call back into the player.
-        let (result, failed, on_event, on_error) = {
+        let (result, failed, on_event, on_driver, on_error) = {
             let mut inner = inner.borrow_mut();
             inner.pending_frame = None;
             // What the GPU reported since the last frame comes first: a
@@ -839,11 +893,21 @@ fn start_frames(inner: &Rc<RefCell<Inner>>) -> Result<Rc<RefCell<Option<FrameCal
                 result,
                 failed,
                 inner.on_event.clone(),
+                inner.on_driver.clone(),
                 inner.on_error.clone(),
             )
         };
-        if let (Ok(events), Some(on_event)) = (&result, on_event) {
-            for event in events {
+        // The driver's steps first: what the show did this frame follows
+        // from them.
+        if let (Ok(happened), Some(on_driver)) = (&result, on_driver) {
+            for applied in &happened.applied {
+                for step in applied_to_js(applied) {
+                    let _ = on_driver.call1(&JsValue::NULL, &step);
+                }
+            }
+        }
+        if let (Ok(happened), Some(on_event)) = (&result, on_event) {
+            for event in &happened.events {
                 let _ = on_event.call1(&JsValue::NULL, &event_to_js(event));
             }
         }

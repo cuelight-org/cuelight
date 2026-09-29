@@ -44,6 +44,7 @@ async function play(name) {
   $("canvas").style.aspectRatio = `${player.width} / ${player.height}`;
   player.warnings().forEach((w) => log(w, true));
   player.onEvent((event) => log(`event: ${JSON.stringify(event)}`));
+  player.onDriver((step) => log(`driver: ${JSON.stringify(step)}`));
   player.onError((message) => log(message, true));
 
   for (const action of player.actions()) {
