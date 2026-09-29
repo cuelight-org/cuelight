@@ -154,3 +154,41 @@ fn a_part_belongs_only_to_an_artwork_layer_and_names_what_the_artwork_has() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn a_part_scales_the_strokes_of_its_paths() {
+    let outlined = VectorPath {
+        elements: vec![
+            PathElement::MoveTo([40.0, 40.0]),
+            PathElement::LineTo([60.0, 40.0]),
+            PathElement::LineTo([60.0, 60.0]),
+            PathElement::Close,
+        ],
+        fill: None,
+        stroke: Some(([0, 0, 0, 255], 2.0)),
+        ids: vec!["eye".to_owned()],
+    };
+    let art = Vector {
+        width: 100.0,
+        height: 100.0,
+        paths: vec![outlined],
+    };
+    let stroke = |scale: &str| {
+        let show = format!(
+            r##"{{ "name": "s", "size": [100, 100], "layers": [
+              {{ "name": "face", "type": "image", "image": "face", "parts": [
+                {{ "id": "eye", "pivot": [50, 50], {scale} }} ] }} ] }}"##
+        );
+        let mut engine = Engine::new();
+        engine.set_vector("face", art.clone()).unwrap();
+        engine.load_show(&show).unwrap();
+        match &engine.resolved_layers().unwrap()[0].shape {
+            ResolvedShape::Path { stroke, .. } => stroke.unwrap().1,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert!((stroke(r#""scale": 1"#) - 2.0).abs() < 1e-9);
+    assert!((stroke(r#""scale": 2.5"#) - 5.0).abs() < 1e-9);
+    // Squashed to a tenth of its height to blink: the average of the axes.
+    assert!((stroke(r#""scale_y": 0.1"#) - 1.1).abs() < 1e-9);
+}
