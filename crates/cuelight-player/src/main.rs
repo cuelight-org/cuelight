@@ -114,7 +114,10 @@ fn fmt_value(value: &Value) -> String {
 /// Warn (once, at load) about image, text and audio layers whose pixels,
 /// font or sound nobody registered.
 fn warn_missing_images(engine: &Engine, layers: &[Layer]) {
-    let fonts = &engine.show().expect("show loaded").fonts;
+    let Some(show) = engine.show() else {
+        return;
+    };
+    let fonts = &show.fonts;
     for layer in layers {
         match &layer.kind {
             // Artwork is pixels or vector paths, whichever is
@@ -178,7 +181,9 @@ fn open_link(url: &str) {
 }
 
 fn print_menu(engine: &Engine, actions: &[String]) {
-    let show = engine.show().expect("show loaded");
+    let Some(show) = engine.show() else {
+        return;
+    };
     println!(
         "\nplaying {:?} ({}x{})",
         show.name, show.size[0], show.size[1]
@@ -452,7 +457,9 @@ impl App {
         if self.fullscreen {
             return;
         }
-        let size = self.engine.show().expect("show loaded").size;
+        let Some(size) = self.engine.show().map(|show| show.size) else {
+            return;
+        };
         let now: LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor());
         // What the window has, and no more of the monitor than a window
         // should take where that monitor is known.
@@ -708,22 +715,29 @@ impl App {
         }
         let surface = &state.surface;
         let (sw, sh) = (surface.config.width, surface.config.height);
-        let device_handle = &self.context.devices[surface.dev_id];
-        let renderer = self.renderers[surface.dev_id]
-            .as_mut()
-            .expect("renderer for surface device");
+        let (Some(device_handle), Some(Some(renderer))) = (
+            self.context.devices.get(surface.dev_id),
+            self.renderers.get_mut(surface.dev_id),
+        ) else {
+            log::error!("no renderer for the window's device");
+            return;
+        };
         // The presenter fits the show into the window and applies its
         // output mode; the player only adds its overlay on top.
-        let presented = self
-            .presenter
-            .present(
-                &self.engine,
-                &device_handle.device,
-                &device_handle.queue,
-                renderer,
-                [sw, sh],
-            )
-            .expect("present show");
+        let presented = self.presenter.present(
+            &self.engine,
+            &device_handle.device,
+            &device_handle.queue,
+            renderer,
+            [sw, sh],
+        );
+        let presented = match presented {
+            Ok(presented) => presented,
+            Err(e) => {
+                log::error!("present show: {e}");
+                return;
+            }
+        };
         let mut frame = presented.scene;
         self.fps.tick();
         // The rate, then what it hides: frames that took too long in
@@ -735,20 +749,21 @@ impl App {
         };
         self.fps
             .draw(&mut frame, state.window.scale_factor(), &counts);
-        renderer
-            .render_to_texture(
-                &device_handle.device,
-                &device_handle.queue,
-                &frame,
-                &surface.target_view,
-                &vello::RenderParams {
-                    base_color: presented.base_color,
-                    width: sw,
-                    height: sh,
-                    antialiasing_method: vello::AaConfig::Area,
-                },
-            )
-            .expect("vello render");
+        if let Err(e) = renderer.render_to_texture(
+            &device_handle.device,
+            &device_handle.queue,
+            &frame,
+            &surface.target_view,
+            &vello::RenderParams {
+                base_color: presented.base_color,
+                width: sw,
+                height: sh,
+                antialiasing_method: vello::AaConfig::Area,
+            },
+        ) {
+            log::error!("vello render: {e}");
+            return;
+        }
 
         // Blit the intermediate target to the window surface and present.
         let acquiring = Instant::now();
@@ -842,7 +857,10 @@ impl ApplicationHandler for App {
         if self.state.is_some() {
             return;
         }
-        let [w, h] = self.engine.show().expect("show loaded").size;
+        let Some([w, h]) = self.engine.show().map(|show| show.size) else {
+            event_loop.exit();
+            return;
+        };
         // The show at its own size, but never more than most of the screen:
         // a large show on a scaled display would otherwise open as big as
         // the compositor allows, which looks like fullscreen. Which screen
@@ -856,15 +874,18 @@ impl ApplicationHandler for App {
             .as_ref()
             .map_or((f64::INFINITY, f64::INFINITY), room_on);
         let (width, height) = fit_in(room, [w, h]);
-        let window = Arc::new(
-            event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title("cuelight: player")
-                        .with_inner_size(LogicalSize::new(width, height)),
-                )
-                .expect("create window"),
-        );
+        let window = match event_loop.create_window(
+            Window::default_attributes()
+                .with_title("cuelight: player")
+                .with_inner_size(LogicalSize::new(width, height)),
+        ) {
+            Ok(window) => Arc::new(window),
+            Err(e) => {
+                log::error!("create window: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
         common::log_window_info(&window);
         self.fastest_hertz = event_loop
             .available_monitors()
@@ -873,29 +894,43 @@ impl ApplicationHandler for App {
             .fold(60.0_f64, f64::max);
         log::debug!("fastest display: {:.0} Hz", self.fastest_hertz);
         let size = window.inner_size();
-        let surface = pollster::block_on(self.context.create_surface(
+        let surface = match pollster::block_on(self.context.create_surface(
             window.clone(),
             size.width.max(1),
             size.height.max(1),
             wgpu::PresentMode::AutoVsync,
-        ))
-        .expect("create surface");
+        )) {
+            Ok(surface) => surface,
+            Err(e) => {
+                log::error!("create surface: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
+        let Some(device) = self.context.devices.get(surface.dev_id) else {
+            log::error!("the window's device is gone");
+            event_loop.exit();
+            return;
+        };
         common::log_adapter(&self.context, surface.dev_id);
         // See `VSYNC_AFTER_RESIZE`.
         self.mailbox_while_resizing = common::is_wayland(&window) && {
-            let adapter = self.context.devices[surface.dev_id].adapter();
+            let adapter = device.adapter();
             let modes = surface.surface.get_capabilities(adapter).present_modes;
             modes.contains(&wgpu::PresentMode::Mailbox)
         };
         self.renderers
             .resize_with(self.context.devices.len(), || None);
-        self.renderers[surface.dev_id].get_or_insert_with(|| {
-            vello::Renderer::new(
-                &self.context.devices[surface.dev_id].device,
-                vello::RendererOptions::default(),
-            )
-            .expect("create vello renderer")
-        });
+        if let Some(slot @ None) = self.renderers.get_mut(surface.dev_id) {
+            match vello::Renderer::new(&device.device, vello::RendererOptions::default()) {
+                Ok(renderer) => *slot = Some(renderer),
+                Err(e) => {
+                    log::error!("create vello renderer: {e}");
+                    event_loop.exit();
+                    return;
+                }
+            }
+        }
         self.state = Some(RenderState { window, surface });
         if self.fullscreen {
             self.set_fullscreen(true);
@@ -1359,7 +1394,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let driver = script.clone().map(DriverPlayer::new);
 
-    let show = engine.show().expect("show loaded");
+    let show = engine.show().ok_or("no show loaded")?;
     for layers in show.layer_trees() {
         warn_missing_images(&engine, layers);
     }

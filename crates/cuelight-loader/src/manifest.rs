@@ -66,8 +66,10 @@ impl Manifest {
         serde_json::from_str(json).map_err(|e| e.to_string())
     }
 
-    pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(self).expect("a manifest serializes") + "\n"
+    pub fn to_json(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(self)
+            .map(|json| json + "\n")
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -454,7 +456,8 @@ fn register_named(
                     Err(e) => report.note(asset_error(&name, e))?,
                 }
             }
-            Asset::Video => unreachable!("clips are the host's to open"),
+            // Skipped above: clips are the host's to open.
+            Asset::Video => {}
         }
     }
     if missing.is_empty() {
@@ -523,7 +526,7 @@ pub(crate) fn safe_path(name: &str) -> Result<&str, String> {
             "{name:?} uses backslashes; paths are '/' separated"
         ));
     }
-    if name.len() >= 2 && name.as_bytes()[1] == b':' {
+    if name.as_bytes().get(1) == Some(&b':') {
         return Err(format!("{name:?} names a drive"));
     }
     if name.split('/').any(|part| part == ".." || part == ".") {

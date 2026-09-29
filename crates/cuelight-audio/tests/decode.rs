@@ -1,5 +1,8 @@
 //! Decoding a sound file: a WAV written by hound comes back as samples.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_audio::{Mixer, Sound, Voice};
 use std::io::Cursor;
 use std::sync::Arc;

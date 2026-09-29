@@ -1,5 +1,8 @@
 //! `reveal`: how much of a text or digits layer's text shows.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{revealed, Engine, Property};
 
 #[test]

@@ -65,7 +65,10 @@ pub fn is_wayland(window: &winit::window::Window) -> bool {
 
 /// Log which GPU and wgpu backend the surface's device runs on.
 pub fn log_adapter(context: &vello::util::RenderContext, dev_id: usize) {
-    let info = context.devices[dev_id].adapter().get_info();
+    let Some(device) = context.devices.get(dev_id) else {
+        return;
+    };
+    let info = device.adapter().get_info();
     log::info!(
         "render backend: {:?} on {:?} ({:?})",
         info.backend,
@@ -182,7 +185,7 @@ fn draw_digit(
     t: f64,
     color: Color,
 ) {
-    let mask = SEGMENTS[digit];
+    let mask = SEGMENTS.get(digit).copied().unwrap_or(0);
     let mid = y + h / 2.0;
     let segments = [
         Rect::new(x + t, y, x + w - t, y + t),

@@ -1,5 +1,7 @@
 //! Outline fonts: layout from font metrics, resolved as glyph runs.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
 #![cfg(feature = "outline-fonts")]
 
 use cuelight::{Engine, ResolvedShape};

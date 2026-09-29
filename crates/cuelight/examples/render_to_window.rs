@@ -10,6 +10,9 @@
 //! into an intermediate texture and blitted to the window surface, scaled
 //! uniformly to fit the window.
 
+// An example keeps to the point: what fails, fails with a message.
+#![allow(clippy::expect_used, clippy::indexing_slicing)]
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

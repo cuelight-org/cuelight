@@ -1,5 +1,8 @@
 //! Show format version and reporting of fields the engine ignored.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{Engine, Error, FORMAT};
 
 #[test]

@@ -1,5 +1,8 @@
 //! Structural tests: the whole trigger/variable/timeline model with no GPU.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape};
 use cuelight_core::Event;
 

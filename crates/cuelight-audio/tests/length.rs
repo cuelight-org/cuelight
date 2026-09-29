@@ -4,6 +4,9 @@
 //! header's length and the player registers the decoded one, so a show
 //! chained through a sound's `on_end` has to run the same either way.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 /// A quarter second of 8 kHz mono tone, one file per format.
 const FIXTURES: &[(&str, &[u8])] = &[
     ("ogg", include_bytes!("sounds/quarter.ogg")),

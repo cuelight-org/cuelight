@@ -84,7 +84,7 @@ impl Sound {
                 sound.samples.extend_from_slice(&chunk);
             } else {
                 for frame in chunk.chunks(channels) {
-                    sound.samples.extend_from_slice(&frame[..2]);
+                    sound.samples.extend(frame.iter().take(2));
                 }
             }
         }

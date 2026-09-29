@@ -17,3 +17,6 @@ schemars = { version = "1", optional = true }
 [features]
 # JSON Schema generation for the show format (see cuelight/schemas/)
 schema = ["dep:schemars"]
+
+[lints]
+workspace = true

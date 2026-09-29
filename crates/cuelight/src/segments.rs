@@ -484,8 +484,8 @@ fn staircase(points: &[[f64; 2]], baseline: f64, lean: f64) -> Vec<[f64; 2]> {
 fn across(points: &[[f64; 2]], y: f64) -> Option<(f64, f64)> {
     let mut from = f64::MAX;
     let mut to = f64::MIN;
-    for edge in 0..points.len() {
-        let ([ax, ay], [bx, by]) = (points[edge], points[(edge + 1) % points.len()]);
+    // Each point with the next, the last with the first.
+    for (&[ax, ay], &[bx, by]) in points.iter().zip(points.iter().cycle().skip(1)) {
         let (lo, hi) = (ay.min(by), ay.max(by));
         if y < lo || y > hi {
             continue;

@@ -10,6 +10,9 @@
 //! available or permission was denied), escape to quit. On macOS the first
 //! run asks for microphone permission for your terminal.
 
+// An example keeps to the point: what fails, fails with a message.
+#![allow(clippy::expect_used, clippy::indexing_slicing)]
+
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

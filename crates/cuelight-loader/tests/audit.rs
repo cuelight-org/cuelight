@@ -1,6 +1,9 @@
 //! The audit over a show folder: files nothing names, names with no file,
 //! a driver firing into nothing, and the document's own findings.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::FindingKind;
 use cuelight_loader::{audit, Driver, Manifest};
 use std::path::PathBuf;

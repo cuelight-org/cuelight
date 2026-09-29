@@ -1,6 +1,9 @@
 //! A show that animates a value of its own, read by bindings the way a
 //! variable is.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, ResolvedShape};
 
 /// Two boxes bound to one value, moved in two stretches: the first plays

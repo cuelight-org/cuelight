@@ -1,5 +1,8 @@
 //! A frame resolved with its costs, and the text rasterizer's count.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{BitmapFont, Engine};
 
 const FNT: &str = r#"info face="Blocks" size=3

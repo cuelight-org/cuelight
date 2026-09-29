@@ -2,6 +2,8 @@
 //! Needs an adapter; skips (passes) without one, and on GitHub's Windows
 //! runners, where vello renders crash (see tests/render.rs).
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
 #![cfg(feature = "render")]
 
 use cuelight::render::Presenter;

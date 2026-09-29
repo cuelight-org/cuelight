@@ -176,8 +176,7 @@ impl Stream {
             self.early = None;
         }
         // One kept back from last time, if the playhead has reached it.
-        if self.early.as_ref().is_some_and(|(at, _)| *at <= wanted) {
-            let (at, frame) = self.early.take().expect("just checked");
+        if let Some((at, frame)) = self.early.take_if(|(at, _)| *at <= wanted) {
             self.frame = frame;
             self.at = Some(at);
         }

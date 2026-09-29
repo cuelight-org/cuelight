@@ -1,6 +1,8 @@
 //! Rendering through vello. These need a GPU adapter and fail without
 //! one; `CUELIGHT_SKIP_GPU_TESTS=1` skips them on purpose.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
 #![cfg(feature = "render")]
 
 use cuelight::render::{RenderError, Renderer, RgbaFrame};

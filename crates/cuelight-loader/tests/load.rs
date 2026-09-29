@@ -1,3 +1,6 @@
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::Engine;
 use cuelight_loader::{load, Applied, Driver, DriverPlayer, Live, LoadError, Step};
 use std::path::PathBuf;
@@ -186,7 +189,7 @@ fn without_the_feature_outline_fonts_are_skipped() {
 #[cfg_attr(not(any(feature = "png", feature = "outline-fonts")), allow(dead_code))]
 fn fetch(dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
     let manifest = cuelight_loader::Manifest::for_dir(dir).unwrap();
-    let round_trip = cuelight_loader::Manifest::from_json(&manifest.to_json()).unwrap();
+    let round_trip = cuelight_loader::Manifest::from_json(&manifest.to_json().unwrap()).unwrap();
     assert_eq!(round_trip, manifest);
     manifest
         .files

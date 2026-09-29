@@ -248,7 +248,11 @@ impl Site {
                 // Which list a step descends into is what the step
                 // after it says it is in.
                 for (k, (i, _)) in above.iter().enumerate() {
-                    let key = if path[k + 1].1 { "parts" } else { "children" };
+                    let key = if path.get(k + 1).is_some_and(|step| step.1) {
+                        "parts"
+                    } else {
+                        "children"
+                    };
                     list = list.get_mut(*i)?.get_mut(key)?;
                 }
                 (list, last.0)
@@ -296,16 +300,16 @@ impl Site {
             }
             Site::Layer(_, path) => {
                 let part = path.last().is_some_and(|(_, parts)| *parts);
-                if let Some((list, i)) = self.list_of(raw) {
-                    list[i] = match part {
+                if let Some(slot) = self.list_of(raw).and_then(|(list, i)| list.get_mut(i)) {
+                    *slot = match part {
                         true => serde_json::json!({ "id": "" }),
                         false => serde_json::json!({ "name": "", "type": "group", "children": [] }),
                     };
                 }
             }
             Site::Scene(_) => {
-                if let Some((list, i)) = self.list_of(raw) {
-                    list[i] = serde_json::json!({ "name": "", "layers": [] });
+                if let Some(slot) = self.list_of(raw).and_then(|(list, i)| list.get_mut(i)) {
+                    *slot = serde_json::json!({ "name": "", "layers": [] });
                 }
             }
         }

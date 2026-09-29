@@ -175,7 +175,11 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
         }
-        let text = std::str::from_utf8(&self.src[start..self.pos]).unwrap_or("");
+        let text = self
+            .src
+            .get(start..self.pos)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .unwrap_or("");
         text.parse::<f64>()
             .ok()
             .filter(|n| n.is_finite())

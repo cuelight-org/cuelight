@@ -20,7 +20,8 @@ fn main() -> std::process::ExitCode {
             .map_err(|e| e.to_string())
             .and_then(|m| {
                 let path = std::path::Path::new(&dir).join(MANIFEST_FILE);
-                std::fs::write(&path, m.to_json())
+                let json = m.to_json()?;
+                std::fs::write(&path, json)
                     .map(|()| (path, m.files.len()))
                     .map_err(|e| e.to_string())
             });

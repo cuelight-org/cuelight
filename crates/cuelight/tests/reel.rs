@@ -1,5 +1,8 @@
 //! Reel rows: cells rolling through a ring of characters.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{BitmapFont, Engine, ResolvedShape};
 
 // A 3-pixel-wide font: every character is a 2x3 block, advance 3.
@@ -310,7 +313,7 @@ fn cells_can_be_vector_artwork_instead_of_characters() {
     assert_eq!(paths[0].color, [255, 0, 0, 255]);
     // A 20 wide square fits a 10x10 cell: half size, filling it.
     let ResolvedShape::Path { ref elements, .. } = paths[0].shape else {
-        unreachable!()
+        panic!("not a path: {:?}", paths[0].shape)
     };
     let corner = match elements[1] {
         cuelight_core::PathElement::LineTo(point) => point,

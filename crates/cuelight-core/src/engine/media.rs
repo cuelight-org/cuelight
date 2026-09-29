@@ -119,7 +119,10 @@ fn pick_one(names: &Choice, how: Pick, ordinal: u64, seed: u64) -> String {
         Pick::InOrder => ordinal % count,
         Pick::Random => mix(seed ^ mix(ordinal)) % count,
         // A fresh scramble per round through the list.
-        Pick::Shuffle => scramble(names.len(), seed, ordinal / count)[(ordinal % count) as usize],
+        Pick::Shuffle => scramble(names.len(), seed, ordinal / count)
+            .get((ordinal % count) as usize)
+            .copied()
+            .unwrap_or(0),
     };
     names.get(index as usize).to_owned()
 }

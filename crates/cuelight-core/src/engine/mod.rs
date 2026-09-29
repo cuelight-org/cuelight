@@ -1095,7 +1095,10 @@ impl Engine {
             // Being pointed somewhere new is a play like any other, so
             // the layer's `retrigger` says what happens to the one that
             // is running.
-            let (root, path) = (self.sounding[i].root, self.sounding[i].layer_path.clone());
+            let Some(s) = self.sounding.get(i) else {
+                continue;
+            };
+            let (root, path) = (s.root, s.layer_path.clone());
             match self.retrigger_of(root, &path) {
                 Retrigger::Ignore => continue,
                 Retrigger::Queue => {
@@ -1117,10 +1120,12 @@ impl Engine {
                 }
                 _ => {
                     let (layer, name) = self.play_ref(root, &path);
-                    let (was, old_id) = (self.sounding[i].playing.clone(), self.sounding[i].id);
+                    let Some(play) = self.sounding.get_mut(i) else {
+                        continue;
+                    };
+                    let (was, old_id) = (play.playing.clone(), play.id);
                     self.next_voice += 1;
                     let id = self.next_voice;
-                    let play = &mut self.sounding[i];
                     play.playing = now.clone();
                     play.started = self.time;
                     play.id = id;
@@ -1198,7 +1203,9 @@ impl Engine {
         // Marked once the playheads are free again; noted once `show` is.
         for (i, timeline, ends, held) in over {
             if held {
-                self.playing[i].held = true;
+                if let Some(playhead) = self.playing.get_mut(i) {
+                    playhead.held = true;
+                }
             } else {
                 finished.push(i);
             }
@@ -1242,7 +1249,9 @@ impl Engine {
         // Noted in the order they started, which is how a log reads;
         // taken out from the back, so the indices hold.
         for (i, ends) in &ended {
-            let s = &self.sounding[*i];
+            let Some(s) = self.sounding.get(*i) else {
+                continue;
+            };
             let (layer, name) = self.play_ref(s.root, &s.layer_path);
             let on_end = self
                 .media_at(s.root, &s.layer_path)

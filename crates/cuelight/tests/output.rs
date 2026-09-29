@@ -1,6 +1,9 @@
 //! Output modes: the engine picks the active one, the GPU pass matches the
 //! CPU conversion. GPU tests skip (pass) when no adapter is available.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight::{Engine, OutputColor};
 use cuelight_core::OutputMode;
 

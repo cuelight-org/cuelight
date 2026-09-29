@@ -1,5 +1,8 @@
 //! Where each trigger of a show is listened to.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{Listened, Show};
 
 #[test]

@@ -375,8 +375,8 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     };
     loop {
         // What is due on the frame itself, before it is drawn.
-        while inputs.peek().is_some_and(|i| i.at <= time) {
-            apply(&mut engine, inputs.next().expect("peeked"));
+        while let Some(input) = inputs.next_if(|i| i.at <= time) {
+            apply(&mut engine, input);
         }
         // Profiling: every frame, resolved and drawn, and its costs kept.
         if let (Some(profiled), Some(renderer)) = (&mut profiled, &mut renderer) {
@@ -392,8 +392,7 @@ fn run(cli: &Cli) -> Result<(), Stop> {
             profiled.add(time, frame, count, draw);
         }
         // A frame is due once the clock has reached it.
-        while times.peek().is_some_and(|t| *t <= time + step / 2.0) {
-            let at = times.next().expect("peeked");
+        while let Some(at) = times.next_if(|t| *t <= time + step / 2.0) {
             if let Some(renderer) = &mut renderer {
                 show_video_frames(&mut engine, &clips, &mut quiet);
                 let file = cli.out.join(format!("t{at:08.3}.png"));
@@ -455,8 +454,7 @@ fn run(cli: &Cli) -> Result<(), Stop> {
             }
             Ok(())
         };
-        while inputs.peek().is_some_and(|i| i.at < next) {
-            let input = inputs.next().expect("peeked");
+        while let Some(input) = inputs.next_if(|i| i.at < next) {
             drive(&mut engine, input.at)?;
             apply(&mut engine, input);
         }

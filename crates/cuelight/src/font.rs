@@ -237,12 +237,10 @@ impl Rgba {
             return [0; 4];
         }
         let i = (y as usize * self.width as usize + x as usize) * 4;
-        [
-            self.pixels[i],
-            self.pixels[i + 1],
-            self.pixels[i + 2],
-            self.pixels[i + 3],
-        ]
+        self.pixels
+            .get(i..i + 4)
+            .and_then(|px| px.try_into().ok())
+            .unwrap_or([0; 4])
     }
 
     pub(crate) fn set(&mut self, x: i32, y: i32, px: [u8; 4]) {
@@ -250,7 +248,9 @@ impl Rgba {
             return;
         }
         let i = (y as usize * self.width as usize + x as usize) * 4;
-        self.pixels[i..i + 4].copy_from_slice(&px);
+        if let Some(slot) = self.pixels.get_mut(i..i + 4) {
+            slot.copy_from_slice(&px);
+        }
     }
 
     /// A silhouette of one colour, its edge softened by a gaussian of blur
@@ -276,17 +276,22 @@ impl Rgba {
         // The colour of the silhouette: any pixel of it.
         let colour = self
             .pixels
-            .chunks(4)
-            .find(|px| px[3] > 0)
-            .map_or([0, 0, 0], |px| [px[0], px[1], px[2]]);
-        let mut across = vec![0.0; (w * h) as usize];
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .find_map(|&[r, g, b, a]| (a > 0).then_some([r, g, b]))
+            .unwrap_or([0, 0, 0]);
+        // Row by row, so a pixel's place is `y * w + x`.
+        let mut across = Vec::with_capacity((w * h) as usize);
         for y in 0..h {
             for x in 0..w {
-                across[(y * w + x) as usize] = kernel
-                    .iter()
-                    .enumerate()
-                    .map(|(k, weight)| weight * alpha_at(x + k as i32 - pad, y))
-                    .sum();
+                across.push(
+                    kernel
+                        .iter()
+                        .enumerate()
+                        .map(|(k, weight)| weight * alpha_at(x + k as i32 - pad, y))
+                        .sum::<f64>(),
+                );
             }
         }
         let mut out = Rgba::transparent(w as u32, h as u32);
@@ -298,7 +303,9 @@ impl Rgba {
                     .map(|(k, weight)| {
                         let yy = y + k as i32 - pad;
                         match (0..h).contains(&yy) {
-                            true => weight * across[(yy * w + x) as usize],
+                            true => across
+                                .get((yy * w + x) as usize)
+                                .map_or(0.0, |a| weight * a),
                             false => 0.0,
                         }
                     })
@@ -326,8 +333,8 @@ impl Rgba {
         let da = u32::from(dst[3]) * (255 - sa) / 255;
         let out_a = sa + da;
         let mut out = [0u8; 4];
-        for c in 0..3 {
-            out[c] = ((u32::from(src[c]) * sa + u32::from(dst[c]) * da) / out_a) as u8;
+        for ((channel, s), d) in out.iter_mut().zip(src).zip(dst).take(3) {
+            *channel = ((u32::from(s) * sa + u32::from(d) * da) / out_a) as u8;
         }
         out[3] = out_a as u8;
         self.set(x, y, out);

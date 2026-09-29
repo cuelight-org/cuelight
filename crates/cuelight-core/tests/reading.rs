@@ -1,6 +1,9 @@
 //! How a variable is read: the steps between a value and what a binding
 //! makes of it.
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
+
 use cuelight_core::{Engine, Property, Value};
 
 /// What `layer`'s `x` resolves to.

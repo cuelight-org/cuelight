@@ -3,6 +3,8 @@
 //! Regenerate after model changes:
 //! `UPDATE_SCHEMA=1 cargo test -p cuelight-loader --features schema --test schema`
 
+// Test code throughout, so clippy lets it panic as tests do.
+#![cfg(test)]
 #![cfg(feature = "schema")]
 
 use cuelight_loader::Driver;

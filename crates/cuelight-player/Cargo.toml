@@ -26,3 +26,6 @@ default = []
 # Play video layers, by decoding the show's videos with the
 # cuelight-video crate. Off by default: it wants ffmpeg on the machine.
 video = ["dep:cuelight-video"]
+
+[lints]
+workspace = true
