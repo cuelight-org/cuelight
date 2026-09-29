@@ -166,3 +166,19 @@ fn a_clean_show_has_no_findings_and_a_finding_reads_as_one_line() {
         "layers[2]: invalid color literal \"blue\""
     );
 }
+
+#[test]
+fn a_part_that_does_not_parse_is_dropped_at_its_own_path() {
+    let show = r##"{ "name": "t", "size": [8, 8], "layers": [
+      { "name": "wolf", "type": "image", "image": "wolf", "parts": [
+        { "id": "jaw" },
+        { "pivot": "nowhere" },
+        { "id": "tail", "rotation": "lots" } ] } ] }"##;
+    let mut engine = Engine::new();
+    let findings = engine.load_show_tolerant(show).unwrap();
+    let paths: Vec<&str> = findings.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(paths, ["layers[0].parts[1]", "layers[0].parts[2]"]);
+    let wolf = &engine.show().unwrap().layers[0];
+    let names: Vec<&str> = wolf.children().iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(names, ["jaw"]);
+}

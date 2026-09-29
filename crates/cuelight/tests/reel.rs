@@ -279,6 +279,7 @@ fn square(size: f64) -> cuelight::Vector {
             ],
             fill: Some([255, 0, 0, 255]),
             stroke: None,
+            ids: Vec::new(),
         }],
     }
 }
@@ -335,6 +336,7 @@ fn artwork_keeps_its_shape_in_the_cell() {
                     ],
                     fill: Some([255; 4]),
                     stroke: None,
+                    ids: Vec::new(),
                 }],
             },
         )

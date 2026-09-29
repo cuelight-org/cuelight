@@ -510,6 +510,111 @@ fn default_background() -> String {
     "#000000".to_owned()
 }
 
+/// An element of vector artwork the show moves on its own, as it is
+/// written in a document: the `parts` of an artwork layer.
+///
+/// A character drawn as one SVG keeps its moving pieces inside it; a
+/// part names one by the `id` the SVG gives it and takes the transform
+/// properties, `opacity` and `visible` a layer has, with timelines and
+/// bindings, applied in the artwork's own coordinates on top of what
+/// the SVG says. Parts nest the way the SVG's groups do: turning the
+/// element `head` carries `jaw` and `eye` inside it. Loaded, a part is
+/// a [`Layer`] of the [`Part`](LayerKind::Part) kind, a child of its
+/// artwork layer, named after its id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Part {
+    /// The element's `id` in the SVG.
+    pub id: String,
+    /// The point it turns and scales around, in the artwork's
+    /// coordinates; the centre of its bounds when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pivot: Option<[f64; 2]>,
+    /// Moved by this much, in the artwork's units.
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    #[serde(default = "default_opacity")]
+    pub opacity: f64,
+    #[serde(default = "default_scale")]
+    pub scale: f64,
+    #[serde(default = "default_scale")]
+    pub scale_x: f64,
+    #[serde(default = "default_scale")]
+    pub scale_y: f64,
+    /// Degrees, clockwise, around the pivot.
+    #[serde(default)]
+    pub rotation: f64,
+    #[serde(default = "default_visible")]
+    pub visible: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bindings: Vec<Binding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timelines: Vec<Timeline>,
+}
+
+impl From<Part> for Layer {
+    fn from(part: Part) -> Self {
+        Layer {
+            name: part.id.clone(),
+            kind: LayerKind::Part {
+                id: part.id,
+                pivot: part.pivot,
+            },
+            x: part.x,
+            y: part.y,
+            opacity: part.opacity,
+            scale: part.scale,
+            scale_x: part.scale_x,
+            scale_y: part.scale_y,
+            rotation: part.rotation,
+            anchor: None,
+            visible: part.visible,
+            overflow: false,
+            blend: Blend::default(),
+            press: None,
+            bindings: part.bindings,
+            timelines: part.timelines,
+        }
+    }
+}
+
+impl Layer {
+    /// This layer as a [`Part`], when it is one.
+    pub fn as_part(&self) -> Option<Part> {
+        let LayerKind::Part { id, pivot } = &self.kind else {
+            return None;
+        };
+        Some(Part {
+            id: id.clone(),
+            pivot: *pivot,
+            x: self.x,
+            y: self.y,
+            opacity: self.opacity,
+            scale: self.scale,
+            scale_x: self.scale_x,
+            scale_y: self.scale_y,
+            rotation: self.rotation,
+            visible: self.visible,
+            bindings: self.bindings.clone(),
+            timelines: self.timelines.clone(),
+        })
+    }
+}
+
+/// The `parts` of an artwork layer, read as [`Part`]s and held as layers.
+fn parts_in<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Layer>, D::Error> {
+    let parts: Vec<Part> = Vec::deserialize(deserializer)?;
+    Ok(parts.into_iter().map(Layer::from).collect())
+}
+
+/// The `parts` of an artwork layer, written back as [`Part`]s.
+fn parts_out<S: serde::Serializer>(parts: &[Layer], serializer: S) -> Result<S::Ok, S::Error> {
+    let parts: Vec<Part> = parts.iter().filter_map(Layer::as_part).collect();
+    parts.serialize(serializer)
+}
+
 /// One node in the show tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -684,6 +789,34 @@ pub enum LayerKind {
         /// Tile the artwork across `size` instead of stretching to it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repeat: Option<Tile>,
+        /// Elements of vector artwork the show moves on their own, each
+        /// named by the `id` the SVG gives it; see [`Part`]. Held as
+        /// layers of the [`Part`](LayerKind::Part) kind, so a part is
+        /// animated, bound, traced and addressed like any layer, as the
+        /// children of this one.
+        #[serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            deserialize_with = "parts_in",
+            serialize_with = "parts_out"
+        )]
+        #[cfg_attr(feature = "schema", schemars(with = "Vec<Part>"))]
+        parts: Vec<Layer>,
+    },
+    /// One element of the vector artwork of the layer above it, moved on
+    /// its own. Only ever a child of an artwork layer, made from its
+    /// `parts`; never written as a layer of its own. Its transform
+    /// properties, `opacity` and `visible` apply in the artwork's own
+    /// coordinates, on top of what the SVG says, around `pivot`.
+    Part {
+        /// The element's `id` in the SVG. Every path under that element
+        /// moves with it, and a part inside another part moves with
+        /// both, as the SVG's groups nest.
+        id: String,
+        /// The point the part turns and scales around, in the artwork's
+        /// coordinates; the centre of its bounds when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pivot: Option<[f64; 2]>,
     },
     /// Text in a bitmap font style from the show's `fonts`. With `size` the
     /// text is aligned inside that box (its top-left corner at the layer's
@@ -1778,12 +1911,21 @@ impl LayerKind {
 }
 
 impl Layer {
-    /// The layers nested in this one: a group's children, else none.
+    /// The layers nested in this one: a group's children, an artwork
+    /// layer's parts, else none.
     pub fn children(&self) -> &[Layer] {
         match &self.kind {
             LayerKind::Group { children, .. } => children,
+            LayerKind::Image { parts, .. } => parts,
             _ => &[],
         }
+    }
+
+    /// Whether the layers nested in this one are its artwork's parts
+    /// rather than a group's children: what `parts` in the document
+    /// holds, where `children` would hold layers.
+    pub fn holds_parts(&self) -> bool {
+        matches!(self.kind, LayerKind::Image { .. })
     }
 
     /// The property's value as authored on this layer, or `None` when

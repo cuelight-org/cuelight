@@ -103,7 +103,7 @@ pub fn convert_svg(bytes: &[u8], fonts: &SvgFonts) -> Result<Artwork, String> {
     let (options, asked) = fonts.options();
     let tree = usvg::Tree::from_data(bytes, &options).map_err(|e| e.to_string())?;
     let mut paths = Vec::new();
-    group(tree.root(), 1.0, &mut paths);
+    group(tree.root(), 1.0, &mut Vec::new(), &mut paths);
     let missing_fonts = std::mem::take(&mut *asked.lock().unwrap_or_else(|e| e.into_inner()));
     Ok(Artwork {
         vector: Vector {
@@ -115,23 +115,43 @@ pub fn convert_svg(bytes: &[u8], fonts: &SvgFonts) -> Result<Artwork, String> {
     })
 }
 
-fn group(group: &usvg::Group, opacity: f32, out: &mut Vec<VectorPath>) {
+/// Every path under `group`, with the ids of the elements it is inside
+/// (`ids`, outermost first), which a show's `parts` name.
+fn group(group: &usvg::Group, opacity: f32, ids: &mut Vec<String>, out: &mut Vec<VectorPath>) {
     let opacity = opacity * group.opacity().get();
     for node in group.children() {
         match node {
-            usvg::Node::Group(inner) => self::group(inner, opacity, out),
+            usvg::Node::Group(inner) => {
+                let named = !inner.id().is_empty();
+                if named {
+                    ids.push(inner.id().to_owned());
+                }
+                self::group(inner, opacity, ids, out);
+                if named {
+                    ids.pop();
+                }
+            }
             usvg::Node::Path(path) => {
-                if let Some(converted) = convert_path(path, opacity) {
+                if let Some(converted) = convert_path(path, opacity, ids) {
                     out.push(converted);
                 }
             }
-            usvg::Node::Text(text) => self::group(text.flattened(), opacity, out),
+            usvg::Node::Text(text) => {
+                let named = !text.id().is_empty();
+                if named {
+                    ids.push(text.id().to_owned());
+                }
+                self::group(text.flattened(), opacity, ids, out);
+                if named {
+                    ids.pop();
+                }
+            }
             usvg::Node::Image(_) => {}
         }
     }
 }
 
-fn convert_path(path: &usvg::Path, opacity: f32) -> Option<VectorPath> {
+fn convert_path(path: &usvg::Path, opacity: f32, ids: &[String]) -> Option<VectorPath> {
     if !path.is_visible() {
         return None;
     }
@@ -168,10 +188,15 @@ fn convert_path(path: &usvg::Path, opacity: f32) -> Option<VectorPath> {
     if fill.is_none() && stroke.is_none() {
         return None;
     }
+    let mut ids = ids.to_vec();
+    if !path.id().is_empty() {
+        ids.push(path.id().to_owned());
+    }
     Some(VectorPath {
         elements,
         fill,
         stroke,
+        ids,
     })
 }
 
