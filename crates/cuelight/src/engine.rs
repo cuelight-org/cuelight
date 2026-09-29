@@ -234,6 +234,11 @@ struct TextRaster {
 /// Caches for text rendering, filled lazily while resolving layers.
 #[derive(Debug)]
 struct TextCache {
+    /// Rasterizations asked for since the cache was made: served from
+    /// the cache, and made afresh, with the bytes the fresh ones came to.
+    hits: u64,
+    misses: u64,
+    rasterized_bytes: u64,
     /// Styled fonts by style name.
     styled: HashMap<String, Arc<StyledFont>>,
     /// Outline fonts rasterized into pixels, by font name, size and the
@@ -248,6 +253,9 @@ struct TextCache {
 impl Default for TextCache {
     fn default() -> Self {
         Self {
+            hits: 0,
+            misses: 0,
+            rasterized_bytes: 0,
             styled: HashMap::new(),
             pixels: HashMap::new(),
             rasters: ByteLru::new(MAX_RASTER_BYTES),
@@ -735,6 +743,59 @@ impl Engine {
         Ok(out)
     }
 
+    /// Resolve the frame and say what it cost: the time, and per visible
+    /// layer its own share of it, what it put in the draw list and the
+    /// strings it had rasterized afresh. For finding what makes a show
+    /// slow; a frame drawn from the profile's items is the frame that
+    /// was measured. The timing is the resolve alone, on the CPU: what a
+    /// renderer then makes of the items is the host's to time.
+    pub fn profile(&self) -> Result<FrameProfile, Error> {
+        let show = self.core.show().ok_or(Error::NoShow)?;
+        let mut out = Drawn {
+            profile: Some(Vec::new()),
+            ..Drawn::default()
+        };
+        let started = std::time::Instant::now();
+        for (root, layers) in self.core.trees() {
+            self.walk(root, layers, &mut Vec::new(), Inherited::TOP, &mut out)?;
+        }
+        let resolve = started.elapsed();
+        let layers = out.profile.unwrap_or_default();
+        let bindings = layers
+            .iter()
+            .filter_map(|cost| {
+                let tree = cuelight_core::root_layers(show, cost.layer.root)?;
+                cuelight_core::layer_at(tree, &cost.layer.indices).map(|l| l.bindings.len())
+            })
+            .sum();
+        Ok(FrameProfile {
+            items: out.items,
+            resolve,
+            layers,
+            bindings,
+            timelines: self.core.timelines_running(),
+        })
+    }
+
+    /// What the text rasterizer has done since its cache was last
+    /// emptied, and what it holds.
+    pub fn text_stats(&self) -> TextStats {
+        let cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
+        TextStats {
+            hits: cache.hits,
+            misses: cache.misses,
+            rasterized_bytes: cache.rasterized_bytes,
+            cached_bytes: cache.rasters.bytes(),
+            budget_bytes: MAX_RASTER_BYTES,
+        }
+    }
+
+    /// The bytes of every image registered: what the decoded pictures
+    /// of a show weigh in memory.
+    pub fn image_bytes(&self) -> usize {
+        self.images.values().map(|i| i.pixels.len()).sum()
+    }
+
     /// A layer's content box `[x, y, width, height]` in its local space,
     /// before any scale; `None` for groups, unregistered images and text
     /// whose font is not registered.
@@ -852,9 +913,11 @@ impl Engine {
         // Every way of asking for the whole text is one entry.
         let shown = shown.min(text.chars().count());
         let key = format!("{style_name}{ink}\u{1}{text}\u{1}{size:?}\u{1}{align:?}\u{1}{shown}");
-        if let Some(raster) = cache.rasters.get(&key) {
-            return raster.clone();
+        if let Some(raster) = cache.rasters.get(&key).cloned() {
+            cache.hits += 1;
+            return raster;
         }
+        cache.misses += 1;
         let styled = cache
             .styled
             .entry(format!("{style_name}{ink}"))
@@ -892,6 +955,7 @@ impl Engine {
                 })
             });
         let bytes = key.len() + raster.as_ref().map_or(0, |r| r.image.pixels.len());
+        cache.rasterized_bytes += bytes as u64;
         cache.rasters.insert(key, raster.clone(), bytes);
         raster
     }
@@ -1324,6 +1388,17 @@ impl Engine {
                 // tested against what it drew rather than against a
                 // second guess at where it went.
                 let from = built.items.len();
+                // When profiling: when this layer's work began, how
+                // many costs were on record (its children's come after)
+                // and the rasterizer's count of fresh strings.
+                let measuring = built.profile.as_ref().map(|costs| {
+                    let misses = self
+                        .text_cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .misses;
+                    (std::time::Instant::now(), costs.len(), misses)
+                });
                 // A group that may bleed lets its whole subtree bleed.
                 let overflow = bleeding || layer.overflow;
                 let number = |prop| self.core.number(root, layer, path, prop);
@@ -1821,10 +1896,65 @@ impl Engine {
                         .pressable
                         .push((from..built.items.len(), press.trigger.clone()));
                 }
+                if let Some((started, mark, misses_before)) = measuring {
+                    let total = started.elapsed();
+                    let misses = self
+                        .text_cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .misses;
+                    let costs = built.profile.as_mut().expect("measuring");
+                    // The children's own costs were recorded while this
+                    // layer ran; its own share is what is left.
+                    let depth = path.len();
+                    let children: std::time::Duration = costs[mark..]
+                        .iter()
+                        .filter(|c| c.layer.indices.len() == depth + 1)
+                        .map(|c| c.total)
+                        .sum();
+                    let (mut path_elements, mut glyphs, mut pixels) = (0, 0, 0.0);
+                    for item in &built.items[from..] {
+                        match &item.shape {
+                            ResolvedShape::Path { elements, .. } => path_elements += elements.len(),
+                            ResolvedShape::Polygon { points } => path_elements += points.len(),
+                            ResolvedShape::GlyphRun { glyphs: run, .. } => glyphs += run.len(),
+                            ResolvedShape::Image { width, height, .. }
+                            | ResolvedShape::Bitmap { width, height, .. } => {
+                                pixels += width.abs() * height.abs();
+                            }
+                            _ => {}
+                        }
+                    }
+                    costs.push(LayerCost {
+                        layer: here.clone(),
+                        name: layer.name.clone(),
+                        kind: kind_name(&layer.kind),
+                        total,
+                        own: total.saturating_sub(children),
+                        items: built.items.len() - from,
+                        path_elements,
+                        glyphs,
+                        pixels,
+                        text_misses: misses - misses_before,
+                    });
+                }
             }
             path.pop();
         }
         Ok(())
+    }
+}
+
+/// A layer's kind as the document names it.
+fn kind_name(kind: &LayerKind) -> &'static str {
+    match kind {
+        LayerKind::Group { .. } => "group",
+        LayerKind::Shape { .. } => "shape",
+        LayerKind::Image { .. } => "image",
+        LayerKind::Text { .. } => "text",
+        LayerKind::Digits { .. } => "digits",
+        LayerKind::Video { .. } => "video",
+        LayerKind::Audio { .. } => "audio",
     }
 }
 /// The items of a frame under `at`, in paint order, clips honoured.
@@ -1919,10 +2049,70 @@ fn within(points: &[[f64; 2]], [px, py]: [f64; 2]) -> bool {
     inside
 }
 
+/// What the text rasterizer has done since its cache was last emptied
+/// (a font registered, a show loaded); see [`Engine::text_stats`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TextStats {
+    /// Rasterizations served from the cache: a string drawn again.
+    pub hits: u64,
+    /// Rasterizations made afresh: a string not seen before, or one the
+    /// cache had let go of.
+    pub misses: u64,
+    /// The bytes those fresh rasterizations came to, all told.
+    pub rasterized_bytes: u64,
+    /// What the cache holds now, and the most it keeps.
+    pub cached_bytes: usize,
+    pub budget_bytes: usize,
+}
+
+/// What one layer cost to resolve in one frame; see [`Engine::profile`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct LayerCost {
+    pub layer: LayerPath,
+    pub name: String,
+    /// The layer's kind, as the document names it: `text`, `image`, ...
+    pub kind: &'static str,
+    /// Resolving this layer and everything under it.
+    pub total: std::time::Duration,
+    /// Resolving this layer alone: `total` less its children's.
+    pub own: std::time::Duration,
+    /// Draw list items it and its subtree put in the frame, and what
+    /// they ask of a renderer: path elements to fill, glyphs to draw,
+    /// pixels of images and rasters to paint (drawn size, not source).
+    pub items: usize,
+    pub path_elements: usize,
+    pub glyphs: usize,
+    pub pixels: f64,
+    /// Strings rasterized afresh for it this frame.
+    pub text_misses: u64,
+}
+
+/// One frame resolved with its costs; see [`Engine::profile`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct FrameProfile {
+    /// The draw list, the same [`resolved_layers`](Engine::resolved_layers)
+    /// gives, so a host can draw the frame it measured.
+    pub items: Vec<ResolvedLayer>,
+    /// Resolving the whole frame.
+    pub resolve: std::time::Duration,
+    /// Every visible layer, in resolve order.
+    pub layers: Vec<LayerCost>,
+    /// Bindings on the visible layers, evaluated this frame.
+    pub bindings: usize,
+    /// Timelines running this frame.
+    pub timelines: usize,
+}
+
 /// A resolved frame: what to draw, and which of it can be pressed.
 #[derive(Debug, Default)]
 struct Drawn {
     items: Vec<ResolvedLayer>,
+    /// Per visible layer, what it cost, when the frame is being
+    /// profiled.
+    profile: Option<Vec<LayerCost>>,
     /// Per pressable layer, the items it drew and the trigger a press on
     /// them fires, in paint order. Item ranges rather than shapes, so a
     /// press is tested against the very geometry the frame drew, clips

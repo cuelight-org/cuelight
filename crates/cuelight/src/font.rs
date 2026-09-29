@@ -38,11 +38,6 @@ pub(crate) struct Glyph {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BitmapFont {
     line_height: i32,
-    /// Transparent room inside every glyph's rect, `[up, right, down,
-    /// left]` pixels (the `.fnt`'s `info padding`), where a border is
-    /// drawn into. Drawn with the glyph, but not ink: a block is
-    /// measured, and characters are centred, on what is inside it.
-    padding: [i32; 4],
     pages: Vec<String>,
     glyphs: HashMap<char, Glyph>,
     kerning: HashMap<(char, char), i32>,
@@ -52,7 +47,6 @@ impl BitmapFont {
     /// Parse the BMFont text format.
     pub fn parse(fnt: &str) -> Result<Self, String> {
         let mut line_height = None;
-        let mut padding = [0; 4];
         let mut pages: Vec<(usize, String)> = Vec::new();
         let mut glyphs = HashMap::new();
         let mut kerning = HashMap::new();
@@ -76,18 +70,6 @@ impl BitmapFont {
                     .ok_or_else(|| format!("line {}: invalid character code {code}", n + 1))
             };
             match tag.as_str() {
-                "info" => {
-                    if let Some(given) = fields.get("padding") {
-                        let sides: Vec<i32> = given
-                            .split(',')
-                            .map(|n| n.trim().parse::<i32>())
-                            .collect::<Result<_, _>>()
-                            .map_err(|e| format!("line {}: padding: {e}", n + 1))?;
-                        padding = <[i32; 4]>::try_from(sides).map_err(|sides| {
-                            format!("line {}: padding has {} sides, not 4", n + 1, sides.len())
-                        })?;
-                    }
-                }
                 "common" => line_height = Some(int("lineHeight")?),
                 "page" => {
                     let file = fields
@@ -121,7 +103,6 @@ impl BitmapFont {
         }
         Ok(Self {
             line_height: line_height.ok_or("missing common lineHeight")?,
-            padding,
             pages: pages.into_iter().map(|(_, file)| file).collect(),
             glyphs,
             kerning,
@@ -129,13 +110,12 @@ impl BitmapFont {
     }
 
     /// A font made in memory rather than read from a description: one
-    /// page, these glyphs with `pad` pixels of room round each, no
-    /// kerning. What an outline font rasterized into pixels becomes.
+    /// page, these glyphs, no kerning. What an outline font rasterized
+    /// into pixels becomes.
     #[cfg(feature = "outline-fonts")]
-    pub(crate) fn from_glyphs(line_height: i32, glyphs: HashMap<char, Glyph>, pad: i32) -> Self {
+    pub(crate) fn from_glyphs(line_height: i32, glyphs: HashMap<char, Glyph>) -> Self {
         Self {
             line_height,
-            padding: [pad; 4],
             pages: vec![String::new()],
             glyphs,
             kerning: HashMap::new(),
@@ -379,12 +359,11 @@ impl StyledFont {
         }
         let lines: Vec<&str> = split_lines(text);
         let width = lines.iter().map(|l| self.line_width(l)).max().unwrap_or(0);
-        // As far as the ink goes, not the room round it.
         let last = lines.last().copied().unwrap_or_default();
         let last_height = last
             .chars()
             .filter_map(|c| self.glyph(c))
-            .map(|g| g.yoffset + g.height - self.font.padding[2])
+            .map(|g| g.height + g.yoffset)
             .fold(self.font.line_height, i32::max);
         let height = (lines.len() as i32 - 1) * self.font.line_height + last_height;
         (width, height)
@@ -407,14 +386,13 @@ impl StyledFont {
     /// characters centred wants this rather than the line.
     pub fn ink(&self, characters: &[char]) -> Option<(f64, f64)> {
         let border = f64::from(self.extra_advance / 2);
-        let [up, _, down, _] = self.font.padding.map(f64::from);
         let (mut top, mut bottom) = (f64::MAX, f64::MIN);
         for glyph in characters.iter().filter_map(|c| self.glyph(*c)) {
             if glyph.width == 0 || glyph.height == 0 {
                 continue;
             }
-            top = top.min(f64::from(glyph.yoffset) + up - border);
-            bottom = bottom.max(f64::from(glyph.yoffset + glyph.height) - down + border);
+            top = top.min(f64::from(glyph.yoffset) - border);
+            bottom = bottom.max(f64::from(glyph.yoffset + glyph.height) + border);
         }
         (top <= bottom).then_some((top, bottom))
     }
@@ -557,28 +535,6 @@ kerning first=65 second=66 amount=-1
         // last line: B is 3 tall at yoffset 1 -> 4, the line height
         assert_eq!(font.measure("A\nB"), (3, 8));
         assert_eq!(font.measure(""), (0, 0));
-    }
-
-    /// The same font with a pixel of padding declared inside every
-    /// glyph rect: what a border is drawn into, and not ink.
-    #[test]
-    fn padding_inside_a_glyph_rect_is_not_measured() {
-        let fnt = FNT.replace(
-            "info face=\"Test Font\" size=3",
-            "info face=\"Test Font\" size=3 padding=1,1,1,1",
-        );
-        let font = BitmapFont::parse(&fnt).unwrap();
-        assert_eq!(font.padding, [1, 1, 1, 1]);
-        let page = Rgba::transparent(4, 3);
-        let padded = StyledFont::new(&font, &[page], [255; 3], None);
-        // B's rect ends at row 4, but its ink at row 3: the line holds it.
-        assert_eq!(padded.measure("B"), (3, 4));
-        // The ink of A runs from row 1 to row 2 inside its rect.
-        assert_eq!(padded.ink(&['A']), Some((1.0, 2.0)));
-        let unpadded = styled(None);
-        assert_eq!(unpadded.measure("B"), (3, 4));
-        assert_eq!(unpadded.ink(&['A']), Some((0.0, 3.0)));
-        assert!(BitmapFont::parse(&FNT.replace("size=3", "size=3 padding=1,2")).is_err());
     }
 
     #[test]

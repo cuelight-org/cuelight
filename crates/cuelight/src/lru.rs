@@ -34,6 +34,11 @@ impl<K: Hash + Eq + Clone, V> ByteLru<K, V> {
         Some(&entry.value)
     }
 
+    /// The bytes of everything held now.
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
     /// Store `value`, accounted as `bytes`, then evict the least recently
     /// used entries until the cache fits its budget again. The entry just
     /// stored always stays, even when it alone exceeds the budget.
