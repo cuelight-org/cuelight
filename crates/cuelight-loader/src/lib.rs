@@ -39,6 +39,7 @@
 //! Outline fonts (`outline-fonts`) and SVG conversion (`svg`) are features
 //! too, on by default.
 
+mod audit;
 mod driver;
 mod manifest;
 #[cfg(feature = "pack")]
@@ -46,6 +47,7 @@ mod pack;
 #[cfg(feature = "svg")]
 mod svg;
 
+pub use audit::audit;
 pub use driver::{seek, Applied, Driver, DriverPlayer, Live, LiveInput, Step};
 pub use manifest::{
     load_from_memory, load_from_memory_with, LoadedFiles, Manifest, SoundFile, MANIFEST_FILE,

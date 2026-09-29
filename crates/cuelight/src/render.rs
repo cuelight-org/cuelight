@@ -1535,12 +1535,12 @@ impl RgbaFrame {
 }
 /// A resolved gradient as a brush, with `opacity` folded into every stop.
 fn gradient_brush(gradient: &crate::ResolvedGradient, opacity: f64) -> Brush {
-    use crate::ResolvedGradientKind as Kind;
+    use crate::ResolvedGradientKind as FindingKind;
     let mut built = match gradient.kind {
-        Kind::Linear { from, to } => {
+        FindingKind::Linear { from, to } => {
             vello::peniko::Gradient::new_linear((from[0], from[1]), (to[0], to[1]))
         }
-        Kind::Radial { center, radius } => {
+        FindingKind::Radial { center, radius } => {
             vello::peniko::Gradient::new_radial((center[0], center[1]), radius as f32)
         }
     };

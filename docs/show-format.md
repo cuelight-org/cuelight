@@ -1560,6 +1560,26 @@ timeline can be previewed alone. Everything else, including where variable value
 trigger events come from (game state, audio, MIDI, a console), is the
 host's business: see the `cuelight-player` crate and the `mic_pop` example.
 
+Whether a show is *well made* is a different question from whether it
+loads, and `cuelight_loader::audit` asks it: over the document, the files
+of its folder and its driver script, it returns one list of findings,
+each with its place (a path in the document, or a file) and its kind:
+`error` (what a strict load refuses), `missing` (a file the show names
+that is not there, a variable nothing declares, a driver step into
+nothing), `unused` (a file, layer, timeline, scene, variable or font style
+nothing uses) and `unwise` (a field the engine does not know, two layers
+of one name side by side, a duck under the main bus). Kinds, not
+severities: which matter is the reader's call.
+`cuelight_core::audit` is the part that needs only the document, for a
+host with no files at hand. Nothing in either stops a show loading. The
+`cuelight-check` tool runs it over show folders, each with its files and
+its `test-driver.json`:
+
+```sh
+cuelight-check shows/beacon shows/minigolf
+cuelight-check --kinds error,missing shows/*/
+```
+
 What a host can offer as the show's actions is `Show::triggers()`, every
 trigger name the show listens to, and `Show::listeners()` says where each
 is heard, so the buttons can be grouped and the ones the active scene is

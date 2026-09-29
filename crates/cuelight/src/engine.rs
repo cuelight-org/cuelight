@@ -384,6 +384,7 @@ impl Engine {
                     findings.push(Finding {
                         path: format!("fonts.{name}"),
                         message: format!("font style {name:?} {problem}"),
+                        kind: cuelight_core::FindingKind::Error,
                     });
                 }
             })?;

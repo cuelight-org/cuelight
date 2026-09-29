@@ -12,7 +12,7 @@ use crate::{
     VECTOR_EXTENSION, VIDEO_EXTENSIONS,
 };
 use cuelight::Engine;
-use cuelight_core::Finding;
+use cuelight_core::{Finding, FindingKind};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -318,6 +318,11 @@ struct Report {
 impl Report {
     /// Note a problem: a finding when lenient, the error otherwise.
     fn note(&mut self, error: LoadError) -> Result<(), LoadError> {
+        self.note_as(error, FindingKind::Error)
+    }
+
+    /// [`note`](Report::note), with the finding of this `kind`.
+    fn note_as(&mut self, error: LoadError, kind: FindingKind) -> Result<(), LoadError> {
         if !self.lenient {
             return Err(error);
         }
@@ -332,6 +337,7 @@ impl Report {
         self.findings.push(Finding {
             path: path.to_string_lossy().into_owned(),
             message,
+            kind,
         });
         Ok(())
     }
@@ -461,10 +467,13 @@ fn register_named(
         });
     }
     for name in missing {
-        report.note(asset_error(
-            &name,
-            "the show names this file, and it is not there".into(),
-        ))?;
+        report.note_as(
+            asset_error(
+                &name,
+                "the show names this file, and it is not there".into(),
+            ),
+            FindingKind::Missing,
+        )?;
     }
     Ok(done)
 }
@@ -528,14 +537,24 @@ pub(crate) fn safe_path(name: &str) -> Result<&str, String> {
 /// The document decides what a show needs, which is what lets one sit
 /// beside a folder of a few hundred clips and load the handful it uses.
 pub(crate) fn references(show: &cuelight_core::Show) -> Vec<(Asset, String)> {
+    references_at(show)
+        .into_iter()
+        .map(|(kind, name, _)| (kind, name))
+        .collect()
+}
+
+/// [`references`], each with the place in the document that names it:
+/// `layers[2]`, `fonts.score`.
+pub(crate) fn references_at(show: &cuelight_core::Show) -> Vec<(Asset, String, String)> {
     use cuelight_core::{LayerKind, ReelCells};
-    let mut out: Vec<(Asset, String)> = show
+    let mut out: Vec<(Asset, String, String)> = show
         .fonts
-        .values()
-        .map(|style| (Asset::Font, style.file.clone()))
+        .iter()
+        .map(|(name, style)| (Asset::Font, style.file.clone(), format!("fonts.{name}")))
         .collect();
-    fn walk(layers: &[cuelight_core::Layer], out: &mut Vec<(Asset, String)>) {
-        for layer in layers {
+    fn walk(layers: &[cuelight_core::Layer], prefix: &str, out: &mut Vec<(Asset, String, String)>) {
+        for (i, layer) in layers.iter().enumerate() {
+            let here = format!("{prefix}[{i}]");
             match &layer.kind {
                 // One layer kind for artwork, and the file says which
                 // it is: a path ending in .svg is drawn as paths, and
@@ -549,33 +568,88 @@ pub(crate) fn references(show: &cuelight_core::Show) -> Vec<(Asset, String)> {
                         true => Asset::Vector,
                         false => Asset::Image,
                     };
-                    out.push((kind, image.clone()));
+                    out.push((kind, image.clone(), here.clone()));
                 }
+                // What a playhead names, and what a binding may point it
+                // at: the names a `sound` or `video` binding maps to, or
+                // falls back to, are played as surely as the layer's own.
                 LayerKind::Video { video, .. } => {
-                    out.extend(video.iter().map(|n| (Asset::Video, n.to_owned())));
+                    out.extend(
+                        video
+                            .iter()
+                            .map(|n| (Asset::Video, n.to_owned(), here.clone())),
+                    );
+                    for (name, at) in bound_names(layer, cuelight_core::Property::Video, &here) {
+                        out.push((Asset::Video, name, at));
+                    }
                 }
                 LayerKind::Audio { sound, .. } => {
-                    out.extend(sound.iter().map(|n| (Asset::Sound, n.to_owned())));
+                    out.extend(
+                        sound
+                            .iter()
+                            .map(|n| (Asset::Sound, n.to_owned(), here.clone())),
+                    );
+                    for (name, at) in bound_names(layer, cuelight_core::Property::Sound, &here) {
+                        out.push((Asset::Sound, name, at));
+                    }
                 }
                 LayerKind::Digits {
                     display: cuelight_core::DigitDisplay::Reel(reel),
                     ..
                 } => match &reel.cells {
                     Some(ReelCells::Vectors(names)) => {
-                        out.extend(names.iter().map(|n| (Asset::Vector, n.clone())));
+                        out.extend(
+                            names
+                                .iter()
+                                .map(|n| (Asset::Vector, n.clone(), here.clone())),
+                        );
                     }
                     Some(ReelCells::Images(names)) => {
-                        out.extend(names.iter().map(|n| (Asset::Image, n.clone())));
+                        out.extend(
+                            names
+                                .iter()
+                                .map(|n| (Asset::Image, n.clone(), here.clone())),
+                        );
                     }
                     _ => {}
                 },
                 _ => {}
             }
-            walk(layer.children(), out);
+            let nested = match layer.kind {
+                LayerKind::Image { .. } => "parts",
+                _ => "children",
+            };
+            walk(layer.children(), &format!("{here}.{nested}"), out);
         }
     }
-    for layers in show.layer_trees() {
-        walk(layers, &mut out);
+    walk(&show.layers, "layers", &mut out);
+    for (i, scene) in show.scenes.iter().enumerate() {
+        walk(&scene.layers, &format!("scenes[{i}].layers"), &mut out);
+    }
+    out
+}
+
+/// The names a binding of `property` on `layer` can give it: what its
+/// `map` maps to and its `default`, each with the binding's place.
+fn bound_names(
+    layer: &cuelight_core::Layer,
+    property: cuelight_core::Property,
+    here: &str,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (b, binding) in layer.bindings.iter().enumerate() {
+        if binding.property != property {
+            continue;
+        }
+        let at = format!("{here}.bindings[{b}]");
+        let values = binding.reading.map.iter().flat_map(|m| m.values());
+        for value in values.chain(&binding.reading.default) {
+            if let cuelight_core::Value::Text(name) = value {
+                if !name.is_empty() {
+                    out.push((name.clone(), at.clone()));
+                }
+            }
+        }
     }
     out
 }

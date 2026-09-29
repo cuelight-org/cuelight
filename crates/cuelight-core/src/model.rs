@@ -1724,6 +1724,13 @@ impl Show {
         for layers in self.layer_trees() {
             timelines(layers, &mut out);
         }
+        // A value the show animates is started by a trigger like a
+        // layer's timeline is.
+        for value in self.values.values() {
+            for timeline in &value.timelines {
+                out.extend(timeline.trigger.iter().map(str::to_owned));
+            }
+        }
         out
     }
 
@@ -1772,6 +1779,12 @@ impl Show {
         fired.extend(self.input.press.clone());
         let mut everywhere: Vec<String> = Vec::new();
         heard(&self.layers, &mut everywhere, &mut fired);
+        // The show's values are the show's own, wherever it is.
+        for value in self.values.values() {
+            for timeline in &value.timelines {
+                everywhere.extend(timeline.trigger.iter().map(str::to_owned));
+            }
+        }
         // By the scenes, one at a time, so a name two of them share is
         // told from one only one has.
         let mut by_scene: BTreeMap<String, Vec<&str>> = BTreeMap::new();
