@@ -118,7 +118,7 @@ pub(crate) fn rasterize(font: &FontData, size: f64, pad: u32) -> Option<(BitmapF
         }
         glyphs.insert(c, glyph);
     }
-    Some((BitmapFont::from_glyphs(line_height, glyphs, pad), page))
+    Some((BitmapFont::from_glyphs(line_height, glyphs), page))
 }
 
 /// Whether a character's ink counts towards the line box: printable

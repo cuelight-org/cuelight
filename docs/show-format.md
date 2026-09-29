@@ -989,11 +989,7 @@ so the layers using it do not change.
 **Bitmap fonts**, in the [BMFont](https://www.angelcode.com/products/bmfont/doc/file_format.html)
 text format common for pixel fonts: the host parses the `.fnt` with
 `BitmapFont::parse` and registers it with its page images through
-`Engine::set_font`. The `padding` its `info` line declares, the room
-inside every glyph's rect that a border is drawn into, is drawn with the
-glyph but is not ink: a block is measured and characters are centred on
-what is inside it, so a padded atlas and the same font rasterized from its
-TrueType file lay out the same. They have one fixed size (setting `size` is an error),
+`Engine::set_font`. They have one fixed size (setting `size` is an error),
 `color` multiplies the glyph colors (white keeps the font's own), and a
 border also widens each character's advance by two widths. Text is
 rasterized on the CPU pixel for pixel from the font pages, never
@@ -1647,6 +1643,32 @@ started, played, ended and turned, when and why, and needs no GPU. `--trigger 2.
 time, and `--no-driver` ignores the folder's driver script. `--lenient`
 renders what can be rendered of a show that does not load whole, printing
 what was left out (see [Format version](#format-version)).
+
+`--profile` measures what the show costs instead of writing frames: every
+frame up to `--until` is resolved and drawn, and the report at the end
+says where the time went. The frame as a whole first: resolving the
+layers, and drawing them and reading the frame back, mean and worst over
+the frames after the first second of warm-up (a run shorter than two
+seconds spares only its first frame), how many layers, bindings, timelines and draw items a
+frame evaluates, what the text rasterizer made afresh against what its
+cache served, and the memory the process reached. Then the layers: by the
+time their own work took to resolve, by what they ask of the renderer
+(path elements, glyphs and pixels), and by the strings they had
+rasterized afresh; `--top` says how many each list names. The timings are
+this machine's, and the draw is the renderer's own frame at canvas size
+read back to the CPU, which a player does not do, so the numbers are for
+finding what is slow rather than for saying what another machine would
+do:
+
+```sh
+cuelight-render eclipse/ --until 52 --profile
+cuelight-render boardwalk/ --until 20 --profile --top 20
+```
+
+Hosts measure the same through `Engine::profile()`, which resolves a
+frame with its costs per layer and hands back the draw list it measured,
+`Engine::text_stats()`, and `Renderer::render_items_to_rgba` to draw the
+very list that was measured.
 
 By default a frame is the canvas at the show's own size. `--scale N`
 writes what a host would show instead, N times that size: fitted the way

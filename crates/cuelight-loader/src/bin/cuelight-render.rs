@@ -74,6 +74,14 @@ struct Cli {
     /// gallery of shows of different sizes.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     width: Option<u32>,
+    /// Measure what the show costs instead of writing frames: every frame
+    /// up to `--until` is resolved and drawn, and a report says where the
+    /// time went, layer by layer.
+    #[arg(long, conflicts_with_all = ["events", "scale", "width", "at", "every"])]
+    profile: bool,
+    /// How many layers each list of the profile names.
+    #[arg(long, default_value_t = 10)]
+    top: usize,
 }
 
 /// An input the command line asks for, at the time it asks for it.
@@ -311,8 +319,13 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     let mut inputs = inputs(cli)?.into_iter().peekable();
     let mut times = wanted(cli)?.into_iter().peekable();
 
-    if !cli.events && times.peek().is_none() {
-        return Err("nothing to render: give --at or --every, or ask for --events".into());
+    if !cli.events && !cli.profile && times.peek().is_none() {
+        return Err(
+            "nothing to render: give --at or --every, or ask for --events or --profile".into(),
+        );
+    }
+    if cli.profile && cli.until.is_none() {
+        return Err("--profile runs to --until: say how far".into());
     }
     if (cli.scale.is_some() || cli.width.is_some()) && cli.events {
         let what = if cli.scale.is_some() {
@@ -334,9 +347,10 @@ fn run(cli: &Cli) -> Result<(), Stop> {
         true => None,
         false => Some(Renderer::new().map_err(|e| format!("no renderer: {e}"))?),
     };
-    if renderer.is_some() {
+    if renderer.is_some() && !cli.profile {
         std::fs::create_dir_all(&cli.out).map_err(|e| format!("{}: {e}", cli.out.display()))?;
     }
+    let mut profiled = cli.profile.then(Profiled::default);
 
     // Walked in fixed steps from 0, so the run is repeatable and a frame
     // at a time is reached the same way however many were asked for.
@@ -363,6 +377,19 @@ fn run(cli: &Cli) -> Result<(), Stop> {
         // What is due on the frame itself, before it is drawn.
         while inputs.peek().is_some_and(|i| i.at <= time) {
             apply(&mut engine, inputs.next().expect("peeked"));
+        }
+        // Profiling: every frame, resolved and drawn, and its costs kept.
+        if let (Some(profiled), Some(renderer)) = (&mut profiled, &mut renderer) {
+            show_video_frames(&mut engine, &clips, &mut quiet);
+            let mut frame = engine.profile().map_err(|e| e.to_string())?;
+            let items = std::mem::take(&mut frame.items);
+            let count = items.len();
+            let started = std::time::Instant::now();
+            renderer
+                .render_items_to_rgba(&engine, items)
+                .map_err(|e| e.to_string())?;
+            let draw = started.elapsed();
+            profiled.add(time, frame, count, draw);
         }
         // A frame is due once the clock has reached it.
         while times.peek().is_some_and(|t| *t <= time + step / 2.0) {
@@ -440,7 +467,285 @@ fn run(cli: &Cli) -> Result<(), Stop> {
     if frames > 0 {
         say(&format!("{frames} frame(s) in {}", cli.out.display()))?;
     }
+    if let Some(profiled) = profiled {
+        let show = engine.show().ok_or("no show")?;
+        let name = show.name.clone();
+        let size = show.size;
+        for line in profiled.report(
+            &name,
+            size,
+            cli.fps,
+            engine.text_stats(),
+            engine.image_bytes(),
+            cli.top,
+        ) {
+            say(&line)?;
+        }
+    }
     Ok(())
+}
+
+/// What a layer cost over the run, added up frame by frame.
+#[derive(Debug, Default)]
+struct LayerTotals {
+    name: String,
+    kind: &'static str,
+    frames: u64,
+    own: std::time::Duration,
+    total: std::time::Duration,
+    items: usize,
+    path_elements: usize,
+    glyphs: usize,
+    pixels: f64,
+    text_misses: u64,
+}
+
+/// A measure of one thing over the run, frame by frame.
+#[derive(Debug, Default)]
+struct Measure {
+    samples: Vec<(f64, std::time::Duration)>,
+}
+
+/// What a measure came to over the frames that count.
+struct Summary {
+    counted: usize,
+    mean: std::time::Duration,
+    worst: std::time::Duration,
+    worst_at: f64,
+}
+
+impl Measure {
+    fn add(&mut self, at: f64, took: std::time::Duration) {
+        self.samples.push((at, took));
+    }
+
+    /// Over the frames from `warm_up` on: the first frames build
+    /// pipelines and upload what the show needs, which outlasts the
+    /// first frame, and says nothing about the frames after.
+    fn summary(&self, warm_up: f64) -> Option<Summary> {
+        let counted: Vec<_> = self
+            .samples
+            .iter()
+            .filter(|(at, _)| *at >= warm_up)
+            .collect();
+        let (mut worst, mut worst_at) = (std::time::Duration::ZERO, 0.0);
+        let mut total = std::time::Duration::ZERO;
+        for (at, took) in &counted {
+            total += *took;
+            if *took > worst {
+                (worst, worst_at) = (*took, *at);
+            }
+        }
+        (!counted.is_empty()).then(|| Summary {
+            counted: counted.len(),
+            mean: total / counted.len() as u32,
+            worst,
+            worst_at,
+        })
+    }
+}
+
+/// What a run cost, frame by frame, for the report at its end.
+#[derive(Debug, Default)]
+struct Profiled {
+    frames: u64,
+    resolve: Measure,
+    draw: Measure,
+    seen: usize,
+    bindings: usize,
+    timelines: usize,
+    items: usize,
+    layers: BTreeMap<String, LayerTotals>,
+}
+
+impl Profiled {
+    /// Keep what `frame` cost: its resolve, the `draw` it took, and
+    /// `items`, how many draw items it had (the list itself has gone to
+    /// the renderer).
+    fn add(
+        &mut self,
+        at: f64,
+        frame: cuelight::FrameProfile,
+        items: usize,
+        draw: std::time::Duration,
+    ) {
+        self.frames += 1;
+        self.resolve.add(at, frame.resolve);
+        self.draw.add(at, draw);
+        self.seen += frame.layers.len();
+        self.bindings += frame.bindings;
+        self.timelines += frame.timelines;
+        self.items += items;
+        for cost in frame.layers {
+            let totals = self.layers.entry(cost.layer.to_string()).or_default();
+            totals.name = cost.name;
+            totals.kind = cost.kind;
+            totals.frames += 1;
+            totals.own += cost.own;
+            totals.total += cost.total;
+            totals.items += cost.items;
+            totals.path_elements += cost.path_elements;
+            totals.glyphs += cost.glyphs;
+            totals.pixels += cost.pixels;
+            totals.text_misses += cost.text_misses;
+        }
+    }
+
+    /// The report: the frame as a whole, then the layers that cost the
+    /// most to resolve, the ones that ask the most of the renderer, and
+    /// the ones that keep the text rasterizer busy.
+    fn report(
+        &self,
+        name: &str,
+        [w, h]: [u32; 2],
+        fps: f64,
+        text: cuelight::TextStats,
+        image_bytes: usize,
+        top: usize,
+    ) -> Vec<String> {
+        let frames = self.frames.max(1) as f64;
+        let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+        let mb = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+        // Below a megabyte, kilobytes read; a dot matrix's rasters are tiny.
+        let size = |bytes: u64| match bytes < 1024 * 1024 {
+            true => format!("{:.0} KB", bytes as f64 / 1024.0),
+            false => format!("{:.1} MB", mb(bytes)),
+        };
+        // The first second builds pipelines and uploads what the show
+        // needs, which outlasts the first frame; a run too short to
+        // spare a second counts everything after its first frame.
+        let last = self.resolve.samples.last().map_or(0.0, |(at, _)| *at);
+        let warm_up = if last >= 2.0 { 1.0 } else { f64::MIN_POSITIVE };
+        let mut out = vec![format!(
+            "profiled {name:?} ({w}x{h}): {} frames at {fps} fps, {:.2} s",
+            self.frames,
+            self.frames as f64 / fps.max(1.0)
+        )];
+        for (what, measure) in [("resolve", &self.resolve), ("draw", &self.draw)] {
+            let Some(summary) = measure.summary(warm_up) else {
+                continue;
+            };
+            out.push(format!(
+                "  {what:8} {:8.3} ms mean  {:8.3} ms worst, at {:.3} s  (over {} frames, the first {} of warm-up aside)",
+                ms(summary.mean),
+                ms(summary.worst),
+                summary.worst_at,
+                summary.counted,
+                if warm_up >= 1.0 { "second".to_owned() } else { "frame".to_owned() }
+            ));
+        }
+        out.push(
+            "  draw is the renderer's frame at canvas size, read back to the CPU as well; a player draws the same and reads nothing back"
+                .to_owned(),
+        );
+        out.push(format!(
+            "  per frame {:.1} layers seen, {:.1} bindings, {:.1} timelines running, {:.1} draw items",
+            self.seen as f64 / frames,
+            self.bindings as f64 / frames,
+            self.timelines as f64 / frames,
+            self.items as f64 / frames
+        ));
+        let asked = text.hits + text.misses;
+        if asked > 0 {
+            out.push(format!(
+                "  text     {asked} rasterizations: {} fresh ({:.1}% served from the cache), {} \
+                 rasterized; the cache holds {} of {:.0} MB",
+                text.misses,
+                text.hits as f64 / asked as f64 * 100.0,
+                size(text.rasterized_bytes),
+                size(text.cached_bytes as u64),
+                mb(text.budget_bytes as u64)
+            ));
+        }
+        let resident = peak_resident_bytes().map_or("unknown here".to_owned(), |b| {
+            format!("{:.0} MB resident at its peak", mb(b))
+        });
+        out.push(format!(
+            "  memory   {resident}; images {} decoded",
+            size(image_bytes as u64)
+        ));
+        let mut by_time: Vec<_> = self
+            .layers
+            .iter()
+            .filter(|(_, t)| t.own > std::time::Duration::ZERO)
+            .collect();
+        by_time.sort_by_key(|(_, t)| std::cmp::Reverse(t.own));
+        if !by_time.is_empty() {
+            out.push(
+                "layers by resolve time, their own work, mean per frame they were seen:".to_owned(),
+            );
+            for (path, t) in by_time.iter().take(top) {
+                let per = t.frames.max(1) as f64;
+                let text = match t.text_misses {
+                    0 => String::new(),
+                    n => format!(", {:.2} fresh strings", n as f64 / per),
+                };
+                out.push(format!(
+                    "  {:8.3} ms  {path} {:?} ({}), {:.1} items{text}",
+                    ms(t.own) / per,
+                    t.name,
+                    t.kind,
+                    t.items as f64 / per
+                ));
+            }
+        }
+        // Leaves only: a group's items are its children's, and would be
+        // counted once for each level above them.
+        let weight = |t: &LayerTotals| t.path_elements + t.glyphs;
+        let mut by_weight: Vec<_> = self
+            .layers
+            .iter()
+            .filter(|(_, t)| t.kind != "group" && (weight(t) > 0 || t.pixels > 0.0))
+            .collect();
+        by_weight.sort_by(|a, b| {
+            let (wa, wb) = (
+                weight(a.1) as f64 + a.1.pixels / 1000.0,
+                weight(b.1) as f64 + b.1.pixels / 1000.0,
+            );
+            wb.partial_cmp(&wa).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if !by_weight.is_empty() {
+            out.push("layers by what they ask of the renderer, mean per frame they were seen (leaves only):".to_owned());
+            for (path, t) in by_weight.iter().take(top) {
+                let per = t.frames.max(1) as f64;
+                out.push(format!(
+                    "  {:8.0} path elements, {:6.0} glyphs, {:8.0} kpx  {path} {:?} ({})",
+                    t.path_elements as f64 / per,
+                    t.glyphs as f64 / per,
+                    t.pixels / per / 1000.0,
+                    t.name,
+                    t.kind
+                ));
+            }
+        }
+        // Leaves only, as for the renderer: a group's misses are its
+        // children's.
+        let mut by_text: Vec<_> = self
+            .layers
+            .iter()
+            .filter(|(_, t)| t.kind != "group" && t.text_misses > 0)
+            .collect();
+        by_text.sort_by_key(|(_, t)| std::cmp::Reverse(t.text_misses));
+        if !by_text.is_empty() {
+            out.push("layers by strings rasterized afresh, over the run:".to_owned());
+            for (path, t) in by_text.iter().take(top) {
+                out.push(format!(
+                    "  {:8} strings  {path} {:?} ({})",
+                    t.text_misses, t.name, t.kind
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// The most memory this process has had resident, where the system
+/// says: Linux does, through `/proc`.
+fn peak_resident_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb * 1024)
 }
 
 fn main() -> std::process::ExitCode {
@@ -469,6 +774,8 @@ mod tests {
             events: false,
             no_driver: false,
             lenient: false,
+            profile: false,
+            top: 10,
             triggers: Vec::new(),
             sets: Vec::new(),
             scale: None,

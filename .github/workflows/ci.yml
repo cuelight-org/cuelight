@@ -63,8 +63,12 @@ jobs:
           $dll = Get-ChildItem -Recurse -Filter d3d10warp.dll warp |
                  Where-Object { $_.FullName -match 'win-x64|\\x64\\' } | Select-Object -First 1
           if (-not $dll) { throw 'no x64 d3d10warp.dll in the package' }
+          # Beside the test binaries, and beside the tools the tests run
+          # (cuelight-render lives one level up): Windows looks next to
+          # the executable first.
           New-Item -ItemType Directory -Force -Path target/debug/deps | Out-Null
           Copy-Item $dll.FullName target/debug/deps -Force
+          Copy-Item $dll.FullName target/debug -Force
           Write-Host "WARP $((Get-Item $dll.FullName).VersionInfo.FileVersion) in place"
       - name: Test (all features, includes schema drift check)
         run: cargo test --workspace --all-features

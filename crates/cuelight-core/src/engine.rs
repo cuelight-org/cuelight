@@ -2428,6 +2428,13 @@ impl Engine {
         self.events.drain(..).collect()
     }
 
+    /// How many timelines are running now: started, not yet ended, and
+    /// not holding their last values. What a frame's resolve scales
+    /// with, beside the layers and bindings it evaluates.
+    pub fn timelines_running(&self) -> usize {
+        self.playing.iter().filter(|p| !p.held).count()
+    }
+
     /// Seconds advanced since the show loaded.
     pub fn time(&self) -> f64 {
         self.time

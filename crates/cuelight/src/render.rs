@@ -8,7 +8,7 @@
 //! finished frame: [`Renderer`] does it after readback, hosts rendering on
 //! their own device can run [`OutputPass`] on the GPU.
 
-use crate::engine::{Engine, ResolvedShape};
+use crate::engine::{Engine, ResolvedLayer, ResolvedShape};
 use crate::lru::ByteLru;
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use cuelight_core::{parse_color, Blend, DotShape, Error, OutputMode, Pass, PathElement, Scaling};
@@ -318,7 +318,7 @@ pub fn build_vello_scene(
     engine: &Engine,
     images: &mut ImageCache,
 ) -> Result<vello::Scene, RenderError> {
-    build_scene(engine, images, false)
+    build_scene(engine, engine.resolved_layers()?, images, false)
 }
 
 /// The show's draw list as a vello scene.
@@ -331,6 +331,7 @@ pub fn build_vello_scene(
 /// scene, so a bleeding layer keeps its place in the order.
 fn build_scene(
     engine: &Engine,
+    items: Vec<ResolvedLayer>,
     images: &mut ImageCache,
     clip_to_canvas: bool,
 ) -> Result<vello::Scene, RenderError> {
@@ -341,7 +342,7 @@ fn build_scene(
     });
     // Opened lazily, so a scene with nothing to clip pushes no layer.
     let mut clipped = false;
-    for layer in engine.resolved_layers()? {
+    for layer in items {
         if clip_to_canvas {
             let want = !layer.overflow;
             if want != clipped {
@@ -927,6 +928,27 @@ impl Renderer {
         Ok(frame)
     }
 
+    /// [`render_to_rgba`](Renderer::render_to_rgba) of a draw list
+    /// already resolved, the way [`Engine::profile`] hands one back: the
+    /// frame that was measured is the frame drawn, and nothing is
+    /// resolved twice. Taken by value, so nothing is copied on the way.
+    pub fn render_items_to_rgba(
+        &mut self,
+        engine: &Engine,
+        items: Vec<ResolvedLayer>,
+    ) -> Result<RgbaFrame, RenderError> {
+        let show_meta = engine
+            .show()
+            .ok_or(Error::NoShow)
+            .map_err(RenderError::Engine)?;
+        let [width, height] = show_meta.size;
+        let base_color = background_color(engine);
+        let vello_scene = build_scene(engine, items, &mut self.images, false)?;
+        let mut frame = self.read_back(&vello_scene, base_color, width, height)?;
+        engine.output().apply(&mut frame.pixels);
+        Ok(frame)
+    }
+
     /// The largest frame this adapter can render, per side.
     ///
     /// A presented frame is as big as it is asked for, so a host scaling
@@ -1372,7 +1394,12 @@ impl Presenter {
         // `overflow` does nothing.
         let clip_to_canvas =
             output.mode == OutputMode::Rgb && scaling == Scaling::Smooth && dots.is_none();
-        let content = build_scene(engine, &mut self.images, clip_to_canvas)?;
+        let content = build_scene(
+            engine,
+            engine.resolved_layers()?,
+            &mut self.images,
+            clip_to_canvas,
+        )?;
         let background = background_color(engine);
         let mut scene = vello::Scene::new();
         // Dots are made of canvas pixels, so they need the frame at its own

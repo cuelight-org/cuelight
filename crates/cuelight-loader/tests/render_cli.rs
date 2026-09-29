@@ -186,3 +186,33 @@ fn events_say_the_instant_a_driver_step_and_an_input_landed() {
     assert!(done[1].starts_with("   1.500"), "{out}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_profile_says_what_the_frames_cost_and_where() {
+    let dir = slide("profile");
+    let run = Command::new(env!("CARGO_BIN_EXE_cuelight-render"))
+        .arg(&dir)
+        .args(["--profile", "--fps", "10", "--until", "1", "--top", "3"])
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&run.stderr).into_owned();
+    if said.contains("no renderer") {
+        eprintln!("no GPU adapter: skipping the profile test");
+        return;
+    }
+    // A renderer that dies says nothing, so the status is the message.
+    assert!(run.status.success(), "{}: {said}", run.status);
+    let out = String::from_utf8_lossy(&run.stdout);
+    // The frame as a whole, then the layers.
+    assert!(
+        out.starts_with("profiled \"slide\" (8x8): 11 frames at 10 fps"),
+        "{out}"
+    );
+    assert!(out.contains("  resolve "), "{out}");
+    assert!(out.contains("  draw "), "{out}");
+    assert!(out.contains("per frame 1.0 layers seen"), "{out}");
+    assert!(out.contains("show/0 \"b\" (shape), 1.0 items"), "{out}");
+    // Profiling writes no frames.
+    assert!(!dir.join("frames").exists());
+    std::fs::remove_dir_all(&dir).ok();
+}
