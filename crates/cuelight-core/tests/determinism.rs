@@ -799,3 +799,69 @@ fn a_value_a_binding_follows_straight() {
         &[0.1, 0.33, 0.5, 0.77, 1.0, 1.5],
     );
 }
+
+#[test]
+fn a_carried_loop_carries_on_from_where_each_pass_ended() {
+    use cuelight_core::{Engine, Property};
+    let show = r##"{ "name": "c", "size": [8, 8],
+      "values": { "scroll": { "timelines": [{ "name": "s", "autoplay": true, "loop": true,
+        "carry": true, "keys": [{ "t": 0, "v": 10 }, { "t": 1, "v": 20 }] }] } },
+      "layers": [
+        { "name": "wheel", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+          "bindings": [{ "property": "x", "variable": "scroll" }],
+          "timelines": [{ "name": "turn", "autoplay": true, "loop": true, "carry": true,
+            "tracks": [{ "property": "rotation", "keys": [{ "t": 0, "v": 0 }, { "t": 2, "v": 360 }] }] }] },
+        { "name": "snap", "type": "shape", "shape": { "rect": [0, 0, 1, 1] }, "fill": "#FFFFFF",
+          "timelines": [{ "name": "turn", "autoplay": true, "loop": true,
+            "tracks": [{ "property": "rotation", "keys": [{ "t": 0, "v": 0 }, { "t": 2, "v": 360 }] }] }] } ] }"##;
+    let value = |engine: &Engine, name: &str, property: Property| {
+        engine
+            .values()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.name == name && r.property == property)
+            .unwrap()
+            .value
+            .as_number()
+    };
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine.advance_to(5.0);
+    // Two and a half passes of 360: 900, where the plain loop is at 180.
+    assert!((value(&engine, "wheel", Property::Rotation) - 900.0).abs() < 1e-9);
+    assert!((value(&engine, "snap", Property::Rotation) - 180.0).abs() < 1e-9);
+    // A show value carries too: five passes of 10 from 10, and none of
+    // the sixth yet.
+    assert!((value(&engine, "wheel", Property::X) - 60.0).abs() < 1e-9);
+    // Reached again from the top, the same: a function of the clock.
+    engine.restart();
+    engine.advance_to(5.0);
+    assert!((value(&engine, "wheel", Property::Rotation) - 900.0).abs() < 1e-9);
+    // Carrying is for a loop.
+    let unlooped = show.replacen(
+        r#""loop": true, "carry": true,
+            "tracks""#,
+        r#""carry": true,
+            "tracks""#,
+        1,
+    );
+    assert_ne!(unlooped, show);
+    assert!(Engine::new().load_show(&unlooped).is_err());
+    // And for a value the show animates, the same rule.
+    let value_unlooped = show.replacen(
+        r#""autoplay": true, "loop": true,
+        "carry": true, "keys""#,
+        r#""autoplay": true,
+        "carry": true, "keys""#,
+        1,
+    );
+    assert_ne!(value_unlooped, show);
+    let err = Engine::new()
+        .load_show(&value_unlooped)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("of value \"scroll\" carries"), "{err}");
+    // A tolerant load drops the value and says where.
+    let findings = Engine::new().load_show_tolerant(&value_unlooped).unwrap();
+    assert_eq!(findings[0].path, "values.scroll");
+}
