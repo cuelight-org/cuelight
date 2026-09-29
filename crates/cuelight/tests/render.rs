@@ -780,3 +780,29 @@ fn an_external_texture_is_drawn_in_place_of_the_images_pixels() {
     let back = renderer.render_to_rgba(&engine).unwrap();
     assert_eq!(pixel(&back, 4, 4), [0, 0, 255, 255]);
 }
+
+/// A segment given a level below full is drawn at that share of the lit
+/// colour over the unlit one.
+#[test]
+fn a_segment_level_dims_it_over_the_unlit_colour() {
+    let show = |text: &str| {
+        format!(
+            r##"{{ "name": "lv", "size": [16, 24], "background": "#000000", "layers": [
+          {{ "name": "d", "type": "digits", "digits": 1, "size": [16, 24], "text": "{text}",
+            "display": {{ "segments": {{ "style": "numeric7", "input": "levels",
+              "fill": "#FFFFFF", "unlit": "#000000", "thickness": 0.2 }} }} }} ] }}"##
+        )
+    };
+    let lit = |text: &str| {
+        let mut engine = Engine::new();
+        engine.load_show(&show(text)).unwrap();
+        // The middle bar, bit 6, at the centre of the cell.
+        render(&engine).map(|frame| pixel(&frame, 8, 12)[0])
+    };
+    let (Some(full), Some(half), Some(off)) = (lit("000000f0"), lit("00000080"), lit("0")) else {
+        return;
+    };
+    assert!(full > 240, "{full}");
+    assert!(off < 10, "{off}");
+    assert!((100..160).contains(&half), "{half}");
+}

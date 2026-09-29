@@ -1271,6 +1271,10 @@ pub enum DigitDisplay {
     /// dark.
     Segments {
         style: SegmentStyle,
+        /// What the text says: characters (default), or the segments
+        /// themselves as masks or brightness levels.
+        #[serde(default)]
+        input: SegmentInput,
         fill: String,
         #[serde(default)]
         unlit: Option<String>,
@@ -1333,8 +1337,33 @@ fn default_glow_strength() -> f64 {
 pub enum SegmentStyle {
     /// 14 segments plus dot: letters and digits.
     Alpha14,
+    /// 16 segments plus dot: the 14, with the top and bottom bars split
+    /// in two halves.
+    Alpha16,
     /// 7 segments plus dot: digits and `-`.
     Numeric7,
+    /// 9 segments plus dot: the 7, with two upright bars down the middle
+    /// for a narrow `1`.
+    Numeric9,
+}
+
+/// What the text of a segment display says: characters, which the
+/// display spells out, or the segments themselves, for what is no
+/// character (a test pattern, a sweep, a lone bar).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum SegmentInput {
+    /// Characters, one per cell.
+    #[default]
+    Text,
+    /// One hexadecimal number per cell, separated by spaces or commas,
+    /// each bit a segment lit.
+    Masks,
+    /// One group of hexadecimal digits per cell, separated by spaces or
+    /// commas, each digit the brightness of one segment from 0 (dark) to
+    /// `f` (full), the first digit for the segment of bit 0.
+    Levels,
 }
 
 /// Vector shapes, in the layer's local coordinate space.

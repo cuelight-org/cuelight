@@ -290,6 +290,11 @@
                     }
                   ]
                 },
+                "input": {
+                  "description": "What the text says: characters (default), or the segments\nthemselves as masks or brightness levels.",
+                  "$ref": "#/$defs/SegmentInput",
+                  "default": "text"
+                },
                 "slant": {
                   "description": "Degrees the cells lean, as a shear rather than a rotation, so\nthe baseline stays level. Most real displays lean about ten,\nand 45 is as far as it goes. Positive leans the tops to the\nright.",
                   "type": "number",
@@ -1920,6 +1925,26 @@
         "name"
       ]
     },
+    "SegmentInput": {
+      "description": "What the text of a segment display says: characters, which the\ndisplay spells out, or the segments themselves, for what is no\ncharacter (a test pattern, a sweep, a lone bar).",
+      "oneOf": [
+        {
+          "description": "Characters, one per cell.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "One hexadecimal number per cell, separated by spaces or commas,\neach bit a segment lit.",
+          "type": "string",
+          "const": "masks"
+        },
+        {
+          "description": "One group of hexadecimal digits per cell, separated by spaces or\ncommas, each digit the brightness of one segment from 0 (dark) to\n`f` (full), the first digit for the segment of bit 0.",
+          "type": "string",
+          "const": "levels"
+        }
+      ]
+    },
     "SegmentStyle": {
       "description": "Segment layout of a segment display.",
       "oneOf": [
@@ -1929,9 +1954,19 @@
           "const": "alpha14"
         },
         {
+          "description": "16 segments plus dot: the 14, with the top and bottom bars split\nin two halves.",
+          "type": "string",
+          "const": "alpha16"
+        },
+        {
           "description": "7 segments plus dot: digits and `-`.",
           "type": "string",
           "const": "numeric7"
+        },
+        {
+          "description": "9 segments plus dot: the 7, with two upright bars down the middle\nfor a narrow `1`.",
+          "type": "string",
+          "const": "numeric9"
         }
       ]
     },

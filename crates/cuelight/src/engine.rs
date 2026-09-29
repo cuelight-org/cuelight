@@ -1820,6 +1820,7 @@ impl Engine {
                         match display {
                             DigitDisplay::Segments {
                                 style,
+                                input,
                                 fill,
                                 unlit,
                                 slant,
@@ -1834,7 +1835,14 @@ impl Engine {
                                         parse_color(c).ok_or_else(|| Error::InvalidColor(c.clone()))
                                     })
                                     .transpose()?;
-                                let masks = segments::masks(*style, &text, cells.0, cells.1, shown);
+                                let lit_cells =
+                                    segments::cells(*style, *input, &text, cells.0, cells.1, shown);
+                                // A color at a share of its own alpha: a
+                                // segment lit at a level below full.
+                                let dimmed = |[r, g, b, a]: [u8; 4], level: u8| {
+                                    let share = f64::from(level) / f64::from(segments::FULL);
+                                    [r, g, b, (f64::from(a) * share).round() as u8]
+                                };
                                 // Where the frame is made on the canvas's own
                                 // pixel grid, segments keep to it.
                                 let snap =
@@ -1862,7 +1870,7 @@ impl Engine {
                                 };
                                 let push =
                                     |out: &mut Vec<ResolvedLayer>,
-                                     mask: u16,
+                                     mask: u32,
                                      color: [u8; 4],
                                      look: segments::Look,
                                      blend: Blend,
@@ -1883,11 +1891,18 @@ impl Engine {
                                 // on its neighbours as much as on its own
                                 // cell, and nothing dark should sit over
                                 // light that reached it.
+                                // A segment below full shows its dark
+                                // colour through, as a dim bulb on a
+                                // panel does.
                                 if let Some(unlit) = unlit {
-                                    for (i, mask) in masks.iter().enumerate() {
+                                    for (i, cell) in lit_cells.iter().enumerate() {
+                                        let full = cell
+                                            .iter()
+                                            .filter(|(_, level)| *level == segments::FULL)
+                                            .fold(0, |m, (mask, _)| m | mask);
                                         push(
                                             &mut built.items,
-                                            !mask,
+                                            !full,
                                             unlit,
                                             look,
                                             layer.blend,
@@ -1915,7 +1930,12 @@ impl Engine {
                                         [0; 4],
                                         Blend::Normal,
                                     ));
-                                    for (i, mask) in masks.iter().enumerate() {
+                                    for (i, (mask, level)) in lit_cells
+                                        .iter()
+                                        .enumerate()
+                                        .flat_map(|(i, cell)| cell.iter().map(move |g| (i, *g)))
+                                    {
+                                        let lit = dimmed(lit, level);
                                         // Widest and faintest outward, so
                                         // the segment itself lands on top.
                                         for step in (1..=GLOW_STEPS).rev() {
@@ -1948,7 +1968,7 @@ impl Engine {
                                             let alpha = f64::from(a) * share;
                                             push(
                                                 &mut built.items,
-                                                *mask,
+                                                mask,
                                                 [r, g, b, (alpha.clamp(0.0, 255.0)) as u8],
                                                 segments::Look {
                                                     grow: reach * out_to,
@@ -1965,15 +1985,17 @@ impl Engine {
                                         Blend::Normal,
                                     ));
                                 }
-                                for (i, mask) in masks.iter().enumerate() {
-                                    push(
-                                        &mut built.items,
-                                        *mask,
-                                        lit,
-                                        look,
-                                        layer.blend,
-                                        cell_of(i),
-                                    );
+                                for (i, cell) in lit_cells.iter().enumerate() {
+                                    for (mask, level) in cell {
+                                        push(
+                                            &mut built.items,
+                                            *mask,
+                                            dimmed(lit, *level),
+                                            look,
+                                            layer.blend,
+                                            cell_of(i),
+                                        );
+                                    }
                                 }
                             }
                             DigitDisplay::Reel(reel) => self.push_reel(

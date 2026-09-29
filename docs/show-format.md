@@ -588,9 +588,36 @@ Layer kinds:
   `segments` is a segment display, the kind that spells a number out of
   bars: lit segments in `fill`, the dark ones in `unlit` when given.
   `style` is `alpha14` (14 segments plus dot: letters, digits,
-  `- + * / \ = _ '`) or `numeric7` (7 segments plus dot: digits and `-`).
+  `- + * / \ = _ '`), `alpha16` (the same with the top and bottom bars
+  split in halves), `numeric7` (7 segments plus dot: digits and `-`) or
+  `numeric9` (the 7 with two upright bars down the middle, for a narrow
+  `1`).
   A `.` or `,` lights the dot of the cell before it instead of taking a
   cell, so `1,250` needs four cells. Characters the style cannot show stay dark.
+
+  `input` says what the text is. `text` (default) is characters. `masks`
+  is the segments themselves, for what is no character (a test pattern,
+  a sweep, a lone bar): one hexadecimal number per cell, separated by
+  spaces or commas, each bit a lit segment. `levels` gives each segment a
+  brightness: one group of hexadecimal digits per cell, a digit a
+  segment from `0` (dark) to `f` (full), the first digit for bit 0. A
+  segment below full is drawn at that share of `fill`'s alpha over its
+  `unlit` colour, and its glow dims with it. Either way `justify`, a row
+  too long, and `reveal` treat a cell as they treat a character.
+
+  ```json
+  { "type": "digits", "digits": 4, "size": [64, 24], "text": "3f 06 5b 4f",
+    "display": { "segments": { "style": "numeric7", "input": "masks", "fill": "#FF5820" } } }
+  ```
+
+  The bits, the same whether a host sends masks or levels:
+
+  | Style | Bits |
+  | --- | --- |
+  | `numeric7` | 0 top, 1 upper right, 2 lower right, 3 bottom, 4 lower left, 5 upper left, 6 middle, 7 dot |
+  | `numeric9` | as `numeric7`, and 8 upper middle upright, 9 lower middle upright |
+  | `alpha14` | 0 top, 1 upper right, 2 lower right, 3 bottom, 4 lower left, 5 upper left, 6 middle left, 7 dot, 8 upper left diagonal, 9 upper middle upright, 10 upper right diagonal, 11 middle right, 12 lower right diagonal, 13 lower middle upright, 14 lower left diagonal |
+  | `alpha16` | as `alpha14`, with 0 the left half of the top bar and 3 the left half of the bottom one, and 15 the right half of the top bar, 16 the right half of the bottom one |
 
   In shows that are rendered on their own pixel grid (a gray
   `output.mode`, or `pixel_perfect` scaling) segments are drawn in whole

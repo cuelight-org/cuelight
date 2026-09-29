@@ -1,7 +1,7 @@
 //! Segment display geometry: which segments light up for a character and
 //! where each segment sits in a digit cell.
 
-use cuelight_core::{Justify, SegmentStyle};
+use cuelight_core::{Justify, SegmentInput, SegmentStyle};
 
 /// 14-segment character masks, one bit per segment:
 /// 0 a (top), 1 b (upper right), 2 c (lower right), 3 d (bottom),
@@ -9,7 +9,7 @@ use cuelight_core::{Justify, SegmentStyle};
 /// 8 h (upper left diagonal), 9 j (upper center), 10 k (upper right
 /// diagonal), 11 g2 (middle right), 12 l (lower right diagonal),
 /// 13 m (lower center), 14 n (lower left diagonal).
-fn alpha14_mask(c: char) -> u16 {
+fn alpha14_mask(c: char) -> u32 {
     match c.to_ascii_uppercase() {
         '0' => 0x443F,
         '1' => 0x0406,
@@ -61,7 +61,7 @@ fn alpha14_mask(c: char) -> u16 {
 }
 
 /// 7-segment masks: bits 0-6 are a-g (g the middle bar), 7 the dot.
-fn numeric7_mask(c: char) -> u16 {
+fn numeric7_mask(c: char) -> u32 {
     match c {
         '0' => 0x3F,
         '1' => 0x06,
@@ -80,15 +80,147 @@ fn numeric7_mask(c: char) -> u16 {
     }
 }
 
-/// The segment mask for one character of a display in `style`.
-pub fn mask(style: SegmentStyle, c: char) -> u16 {
-    match style {
-        SegmentStyle::Alpha14 => alpha14_mask(c),
-        SegmentStyle::Numeric7 => numeric7_mask(c),
+/// 16-segment masks: the 14-segment bits, with bit 0 the left half of
+/// the top bar and bit 3 the left half of the bottom one, and two more,
+/// 15 the right half of the top bar and 16 the right half of the bottom.
+fn alpha16_mask(c: char) -> u32 {
+    let m = alpha14_mask(c);
+    let mut out = m;
+    if m & 1 != 0 {
+        out |= 1 << 15;
+    }
+    if m & (1 << 3) != 0 {
+        out |= 1 << 16;
+    }
+    out
+}
+
+/// 9-segment masks: the 7-segment bits, and two upright bars down the
+/// middle, 8 the upper and 9 the lower, which make a narrow `1`.
+fn numeric9_mask(c: char) -> u32 {
+    match c {
+        '1' => 0x300,
+        _ => numeric7_mask(c),
     }
 }
 
-const DOT: u16 = 0x80;
+/// The segment mask for one character of a display in `style`.
+pub fn mask(style: SegmentStyle, c: char) -> u32 {
+    match style {
+        SegmentStyle::Alpha14 => alpha14_mask(c),
+        SegmentStyle::Alpha16 => alpha16_mask(c),
+        SegmentStyle::Numeric7 => numeric7_mask(c),
+        SegmentStyle::Numeric9 => numeric9_mask(c),
+    }
+}
+
+/// How many segments a cell of `style` has, the dot included: how many
+/// brightness digits a cell of levels takes.
+pub fn segment_count(style: SegmentStyle) -> usize {
+    match style {
+        SegmentStyle::Numeric7 => 8,
+        SegmentStyle::Numeric9 => 10,
+        SegmentStyle::Alpha14 => 15,
+        SegmentStyle::Alpha16 => 17,
+    }
+}
+
+/// The brightest a segment gets: a level of `f`.
+pub const FULL: u8 = 15;
+
+/// What one cell shows: the segments lit at each brightness, as masks
+/// by level from 1 to [`FULL`]. Characters and masks light at full.
+pub type Cell = Vec<(u32, u8)>;
+
+/// The cells of a display in `style` showing `text` as `input` says,
+/// `digits` of them, cut and placed by `justify`, only the first `shown`
+/// characters or cells lit.
+pub fn cells(
+    style: SegmentStyle,
+    input: SegmentInput,
+    text: &str,
+    digits: usize,
+    justify: Justify,
+    shown: usize,
+) -> Vec<Cell> {
+    let lit: Vec<Cell> = match input {
+        // Placed as it is spelt: a dot folds into the cell before it.
+        SegmentInput::Text => {
+            return masks(style, text, digits, justify, shown)
+                .into_iter()
+                .map(full)
+                .collect();
+        }
+        SegmentInput::Masks => tokens(text)
+            .enumerate()
+            .map(|(i, token)| {
+                let token = token.trim_start_matches("0x").trim_start_matches("0X");
+                let m = u32::from_str_radix(token, 16).unwrap_or(0);
+                if i < shown {
+                    full(m)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect(),
+        SegmentInput::Levels => tokens(text)
+            .enumerate()
+            .map(|(i, token)| match i < shown {
+                true => levels(style, token),
+                false => Vec::new(),
+            })
+            .collect(),
+    };
+    placed(lit, digits, justify)
+}
+
+fn full(mask: u32) -> Cell {
+    match mask {
+        0 => Vec::new(),
+        m => vec![(m, FULL)],
+    }
+}
+
+/// The cells a text of masks or levels holds: separated by spaces or
+/// commas.
+fn tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|t| !t.is_empty())
+}
+
+/// One cell of brightness digits, the first for bit 0; a digit that is
+/// not one, or one past the style's segments, is dark.
+fn levels(style: SegmentStyle, token: &str) -> Cell {
+    let mut by_level: Vec<(u32, u8)> = Vec::new();
+    for (bit, c) in token.chars().take(segment_count(style)).enumerate() {
+        let Some(level) = c.to_digit(16).map(|d| d as u8).filter(|d| *d > 0) else {
+            continue;
+        };
+        match by_level.iter_mut().find(|(_, l)| *l == level) {
+            Some((m, _)) => *m |= 1 << bit,
+            None => by_level.push((1 << bit, level)),
+        }
+    }
+    by_level
+}
+
+/// `cells`, `digits` of them, cut at the far side of `justify`.
+fn placed(mut cells: Vec<Cell>, digits: usize, justify: Justify) -> Vec<Cell> {
+    match justify {
+        Justify::Right => {
+            let skip = cells.len().saturating_sub(digits);
+            let mut out = vec![Vec::new(); digits.saturating_sub(cells.len())];
+            out.extend(cells.into_iter().skip(skip));
+            out
+        }
+        _ => {
+            cells.resize(digits, Vec::new());
+            cells
+        }
+    }
+}
+
+const DOT: u32 = 0x80;
 
 /// The segment mask of each of `digits` cells showing `text`. A `.` or `,`
 /// lights the dot of the cell before it rather than taking a cell of its
@@ -101,8 +233,8 @@ pub fn masks(
     digits: usize,
     justify: Justify,
     shown: usize,
-) -> Vec<u16> {
-    let mut cells: Vec<u16> = Vec::new();
+) -> Vec<u32> {
+    let mut cells: Vec<u32> = Vec::new();
     for (i, c) in text.chars().enumerate() {
         let m = mask(style, c);
         let lit = if i < shown { m } else { 0 };
@@ -175,7 +307,7 @@ pub const LEANEST: f64 = 45.0;
 /// crisp blocks with no edge left for the renderer to smooth.
 pub fn polygons(
     style: SegmentStyle,
-    mask: u16,
+    mask: u32,
     [x, y, w, h]: [f64; 4],
     snap: bool,
     look: Look,
@@ -205,12 +337,30 @@ pub fn polygons(
     let (x0, x1, xm) = (on_grid(x + pad), on_grid(x + w - pad), on_grid(x + w / 2.0));
     let (y0, y1, ym) = (on_grid(y + pad), on_grid(y + h - pad), on_grid(y + h / 2.0));
     // Segment centerlines by bit.
-    let lines: &[(u16, [f64; 2], [f64; 2])] = match style {
+    let lines: &[(u32, [f64; 2], [f64; 2])] = match style {
         SegmentStyle::Alpha14 => &[
             (0, [x0, y0], [x1, y0]),
             (1, [x1, y0], [x1, ym]),
             (2, [x1, ym], [x1, y1]),
             (3, [x0, y1], [x1, y1]),
+            (4, [x0, ym], [x0, y1]),
+            (5, [x0, y0], [x0, ym]),
+            (6, [x0, ym], [xm, ym]),
+            (8, [x0, y0], [xm, ym]),
+            (9, [xm, y0], [xm, ym]),
+            (10, [x1, y0], [xm, ym]),
+            (11, [xm, ym], [x1, ym]),
+            (12, [xm, ym], [x1, y1]),
+            (13, [xm, ym], [xm, y1]),
+            (14, [xm, ym], [x0, y1]),
+        ],
+        SegmentStyle::Alpha16 => &[
+            (0, [x0, y0], [xm, y0]),
+            (15, [xm, y0], [x1, y0]),
+            (1, [x1, y0], [x1, ym]),
+            (2, [x1, ym], [x1, y1]),
+            (3, [x0, y1], [xm, y1]),
+            (16, [xm, y1], [x1, y1]),
             (4, [x0, ym], [x0, y1]),
             (5, [x0, y0], [x0, ym]),
             (6, [x0, ym], [xm, ym]),
@@ -230,6 +380,17 @@ pub fn polygons(
             (4, [x0, ym], [x0, y1]),
             (5, [x0, y0], [x0, ym]),
             (6, [x0, ym], [x1, ym]),
+        ],
+        SegmentStyle::Numeric9 => &[
+            (0, [x0, y0], [x1, y0]),
+            (1, [x1, y0], [x1, ym]),
+            (2, [x1, ym], [x1, y1]),
+            (3, [x0, y1], [x1, y1]),
+            (4, [x0, ym], [x0, y1]),
+            (5, [x0, y0], [x0, ym]),
+            (6, [x0, ym], [x1, ym]),
+            (8, [xm, y0], [xm, ym]),
+            (9, [xm, ym], [xm, y1]),
         ],
     };
     let mut out: Vec<Vec<[f64; 2]>> = lines
@@ -382,6 +543,90 @@ fn bar(from: [f64; 2], to: [f64; 2], thickness: f64, grow: f64, snap: bool) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_nine_and_sixteen_segment_styles_extend_the_seven_and_fourteen() {
+        // A narrow 1 down the middle, the rest as on seven segments.
+        assert_eq!(mask(SegmentStyle::Numeric9, '1'), 0x300);
+        assert_eq!(mask(SegmentStyle::Numeric9, '8'), 0x7F);
+        let cell = [0.0, 0.0, 8.0, 16.0];
+        assert_eq!(
+            polygons(SegmentStyle::Numeric9, 0x300, cell, false, Look::default()).len(),
+            2
+        );
+        // The top and bottom bars in halves.
+        assert_eq!(
+            mask(SegmentStyle::Alpha16, '0'),
+            0x443F | (1 << 15) | (1 << 16)
+        );
+        assert_eq!(
+            polygons(
+                SegmentStyle::Alpha16,
+                (1 << 0) | (1 << 15),
+                cell,
+                false,
+                Look::default()
+            )
+            .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn masks_and_levels_light_the_segments_they_name() {
+        let seven = SegmentStyle::Numeric7;
+        let all = usize::MAX;
+        // Masks: one hex number per cell, justified like characters.
+        assert_eq!(
+            cells(
+                seven,
+                SegmentInput::Masks,
+                "3f, 0x06",
+                3,
+                Justify::Right,
+                all
+            ),
+            [vec![], vec![(0x3F, FULL)], vec![(0x06, FULL)]]
+        );
+        assert_eq!(
+            cells(seven, SegmentInput::Masks, "zz 80", 2, Justify::Left, all),
+            [vec![], vec![(0x80, FULL)]]
+        );
+        // Levels: a digit a segment, bit 0 first, grouped by brightness.
+        assert_eq!(
+            cells(
+                seven,
+                SegmentInput::Levels,
+                "f8f00000",
+                1,
+                Justify::Left,
+                all
+            ),
+            [vec![(0b101, FULL), (0b10, 8)]]
+        );
+        // The dot is bit 7, the eighth digit.
+        assert_eq!(
+            cells(
+                seven,
+                SegmentInput::Levels,
+                "0000000f",
+                1,
+                Justify::Left,
+                all
+            ),
+            [vec![(0x80, FULL)]]
+        );
+        // Text still spells, at full.
+        assert_eq!(
+            cells(seven, SegmentInput::Text, "1", 1, Justify::Left, all),
+            [vec![(0x06, FULL)]]
+        );
+        // Only the cells shown light.
+        assert_eq!(
+            cells(seven, SegmentInput::Masks, "3f 3f", 2, Justify::Left, 1),
+            [vec![(0x3F, FULL)], vec![]]
+        );
+    }
 
     #[test]
     fn masks_follow_the_bit_layout() {
