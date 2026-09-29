@@ -882,6 +882,7 @@ impl Engine {
             ignored_fields(raw, &understood, "", &mut self.load_warnings);
         }
         quiet_bindings(&show, true, &mut self.load_warnings);
+        dark_segment_cells(&show, &mut self.load_warnings);
         self.eased_values = eased_values(&show);
         self.value_conditions = value_conditions(&show);
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
@@ -4595,6 +4596,49 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// Warn about a segment display whose own text, given as masks or
+/// levels, has a cell that is not hexadecimal: it draws dark, which
+/// looks like a segment that does not work rather than a typo. Text a
+/// binding gives is not the document's, and is not looked at here.
+fn dark_segment_cells(show: &Show, out: &mut Vec<String>) {
+    use crate::model::SegmentInput;
+    fn walk(layers: &[Layer], out: &mut Vec<String>) {
+        for layer in layers {
+            if let LayerKind::Digits {
+                text,
+                display: DigitDisplay::Segments { input, .. },
+                ..
+            } = &layer.kind
+            {
+                let cells = text
+                    .split(|c: char| c.is_whitespace() || c == ',')
+                    .filter(|t| !t.is_empty());
+                for cell in cells {
+                    let fine = match input {
+                        SegmentInput::Masks => {
+                            let digits = cell.trim_start_matches("0x").trim_start_matches("0X");
+                            u32::from_str_radix(digits, 16).is_ok()
+                        }
+                        SegmentInput::Levels => cell.chars().all(|c| c.is_ascii_hexdigit()),
+                        SegmentInput::Text => true,
+                    };
+                    if !fine {
+                        out.push(format!(
+                            "the text of layer {:?} has a cell {cell:?} that is not hexadecimal; \
+                             it draws dark",
+                            layer.name
+                        ));
+                    }
+                }
+            }
+            walk(layer.children(), out);
+        }
+    }
+    for layers in show.layer_trees() {
+        walk(layers, out);
+    }
 }
 
 /// Warn about bindings that will quietly do nothing.

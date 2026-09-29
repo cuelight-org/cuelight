@@ -99,3 +99,33 @@ fn bundled_example_shows_load_without_warnings() {
         );
     }
 }
+
+#[test]
+fn segment_input_written_out_is_no_unknown_field_and_a_bad_cell_is_said() {
+    let show = |input: &str, text: &str| {
+        format!(
+            r##"{{ "name": "s", "size": [8, 8], "layers": [
+          {{ "name": "d", "type": "digits", "digits": 3, "size": [8, 8], "text": "{text}",
+            "display": {{ "segments": {{ "style": "numeric7", "input": "{input}", "fill": "#FFFFFF" }} }} }} ] }}"##
+        )
+    };
+    let mut engine = Engine::new();
+    engine.load_show(&show("text", "12")).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    engine.load_show(&show("masks", "3f 0x06 1ffff")).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    engine.load_show(&show("masks", "zz 3f")).unwrap();
+    let warnings = engine.load_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("\"zz\""), "{warnings:?}");
+    engine.load_show(&show("levels", "f0g")).unwrap();
+    assert_eq!(engine.load_warnings().len(), 1);
+}
