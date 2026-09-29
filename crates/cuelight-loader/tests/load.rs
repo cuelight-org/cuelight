@@ -1159,3 +1159,54 @@ fn seeking_lands_a_driver_step_at_its_instant() {
     assert!((slid(&engine) - 5.6).abs() < 1e-9, "{}", slid(&engine));
     assert!(player.unwrap().is_done());
 }
+
+#[cfg(feature = "svg")]
+#[test]
+fn an_svg_gradient_fill_is_kept_through_its_transform() {
+    use cuelight::ResolvedGradientKind;
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="10" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#ff0000"/>
+            <stop offset="1" stop-color="#0000ff" stop-opacity="0.5"/>
+          </linearGradient>
+          <radialGradient id="sun" cx="50" cy="50" r="10" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#ffffff"/>
+            <stop offset="1" stop-color="#ffaa00"/>
+          </radialGradient>
+        </defs>
+        <g transform="translate(20 0) scale(2)">
+          <rect x="0" y="0" width="10" height="10" fill="url(#sky)"/>
+        </g>
+        <circle cx="50" cy="50" r="10" fill="url(#sun)"/>
+      </svg>"##;
+    let engine = Engine::new();
+    let art = cuelight_loader::convert_svg(svg, &cuelight_loader::SvgFonts::of(&engine)).unwrap();
+    let sky = art.vector.paths[0].gradient.as_ref().expect("a gradient");
+    // In its own coordinates, and through the group's transform into the
+    // artwork's: from 20 to 40 along x.
+    assert_eq!(
+        sky.kind,
+        ResolvedGradientKind::Linear {
+            from: [0.0, 0.0],
+            to: [10.0, 0.0]
+        }
+    );
+    assert_eq!(sky.space.apply([0.0, 0.0]), [20.0, 0.0]);
+    assert_eq!(sky.space.apply([10.0, 0.0]), [40.0, 0.0]);
+    assert!(sky.straight_alpha);
+    assert_eq!(
+        sky.stops,
+        [(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 128])]
+    );
+    // The flat fill is the first stop, for a host without gradients.
+    assert_eq!(art.vector.paths[0].fill, Some([255, 0, 0, 255]));
+    let sun = art.vector.paths[1].gradient.as_ref().expect("a gradient");
+    assert_eq!(
+        sun.kind,
+        ResolvedGradientKind::Radial {
+            center: [50.0, 50.0],
+            radius: 10.0
+        }
+    );
+}

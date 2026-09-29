@@ -498,9 +498,13 @@ Layer kinds:
   SVG's own animation is not read: the show is the one source of motion.
 
   What an SVG keeps: paths, basic shapes and text (as outlines), with
-  solid fills and strokes, group transforms and opacities. A gradient
-  paints as its first stop's color; patterns, raster images, clip paths,
-  masks, filters, dashes and line joins are dropped. Animation is not
+  solid fills and strokes, group transforms and opacities. Linear and
+  radial gradient fills are kept, through their own transform and the
+  path's, and move and scale with a part like the path does; a radial
+  gradient's focal point off its centre is drawn from the centre, a
+  spread other than `pad` pads, and a gradient on a stroke paints as its
+  first stop's color. Patterns, raster images, clip paths, masks,
+  filters, dashes and line joins are dropped. Animation is not
   read: address moving parts as separate layers and animate those.
 
   Text is drawn with the show's own fonts, the ones in `assets/fonts`,

@@ -1,7 +1,7 @@
 //! SVG documents as vector artwork: what usvg makes of a file, reduced to
 //! paths with solid fills and strokes.
 
-use cuelight::{Engine, Vector, VectorPath};
+use cuelight::{Engine, ResolvedGradient, ResolvedGradientKind, Transform, Vector, VectorPath};
 use cuelight_core::PathElement;
 use std::sync::{Arc, Mutex};
 use usvg::tiny_skia_path::PathSegment;
@@ -95,7 +95,8 @@ type Asked = Arc<Mutex<Vec<String>>>;
 /// Convert an SVG document into vector artwork in its own units (the
 /// viewBox): every path, in paint order, with group transforms applied
 /// and group opacities folded into the colors. Kept: solid fills and
-/// strokes (a gradient paints as its first stop's color, a pattern is
+/// strokes, linear and radial gradient fills (see [`VectorPath::gradient`];
+/// a gradient on a stroke paints as its first stop's color, a pattern is
 /// dropped), fill rule, stroke width. Text becomes paths through the
 /// show's own fonts (see [`SvgFonts`]). Dropped: raster images, clip
 /// paths, masks, filters, stroke joins and dashes.
@@ -178,6 +179,9 @@ fn convert_path(path: &usvg::Path, opacity: f32, ids: &[String]) -> Option<Vecto
     let fill = path
         .fill()
         .and_then(|fill| color(fill.paint(), fill.opacity().get() * opacity));
+    let gradient = path
+        .fill()
+        .and_then(|fill| gradient(fill.paint(), fill.opacity().get() * opacity, transform));
     // A stroke's width scales with the transform; uniform enough for the
     // artwork this is for.
     let scale = f64::from((transform.sx * transform.sy - transform.kx * transform.ky).abs()).sqrt();
@@ -197,6 +201,60 @@ fn convert_path(path: &usvg::Path, opacity: f32, ids: &[String]) -> Option<Vecto
         fill,
         stroke,
         ids,
+        gradient,
+    })
+}
+
+/// A gradient paint as a gradient in the artwork's own units: its points
+/// through its own transform and the path's, its stops' opacity folded
+/// into their alpha. A focal point off the centre is drawn from the
+/// centre, and a spread other than `pad` pads: what the fill supports.
+fn gradient(paint: &usvg::Paint, opacity: f32, path: usvg::Transform) -> Option<ResolvedGradient> {
+    let (kind, own, stops) = match paint {
+        usvg::Paint::LinearGradient(g) => (
+            ResolvedGradientKind::Linear {
+                from: [f64::from(g.x1()), f64::from(g.y1())],
+                to: [f64::from(g.x2()), f64::from(g.y2())],
+            },
+            g.transform(),
+            g.stops(),
+        ),
+        usvg::Paint::RadialGradient(g) => (
+            ResolvedGradientKind::Radial {
+                center: [f64::from(g.cx()), f64::from(g.cy())],
+                radius: f64::from(g.r().get()),
+            },
+            g.transform(),
+            g.stops(),
+        ),
+        _ => return None,
+    };
+    // Its own coordinates into the artwork's: the gradient's transform,
+    // then the path's. Carried as it is, so an ellipse stays one.
+    let t = path.pre_concat(own);
+    let stops: Vec<(f32, [u8; 4])> = stops
+        .iter()
+        .map(|stop| {
+            let c = stop.color();
+            let alpha = (stop.opacity().get() * opacity).clamp(0.0, 1.0);
+            (
+                stop.offset().get(),
+                [c.red, c.green, c.blue, (alpha * 255.0).round() as u8],
+            )
+        })
+        .collect();
+    (!stops.is_empty()).then_some(ResolvedGradient {
+        kind,
+        stops,
+        space: Transform([
+            f64::from(t.sx),
+            f64::from(t.ky),
+            f64::from(t.kx),
+            f64::from(t.sy),
+            f64::from(t.tx),
+            f64::from(t.ty),
+        ]),
+        straight_alpha: true,
     })
 }
 

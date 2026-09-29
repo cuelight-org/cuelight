@@ -170,6 +170,7 @@ fn logo() -> Vector {
                 fill: Some([0, 0, 255, 255]),
                 stroke: None,
                 ids: Vec::new(),
+                gradient: None,
             },
             VectorPath {
                 elements: vec![
@@ -179,6 +180,7 @@ fn logo() -> Vector {
                 fill: None,
                 stroke: Some(([255, 0, 0, 255], 1.0)),
                 ids: Vec::new(),
+                gradient: None,
             },
         ],
     }

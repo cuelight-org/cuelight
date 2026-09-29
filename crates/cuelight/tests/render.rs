@@ -806,3 +806,106 @@ fn a_segment_level_dims_it_over_the_unlit_colour() {
     assert!(off < 10, "{off}");
     assert!((100..160).contains(&half), "{half}");
 }
+
+/// Vector artwork whose path carries a gradient draws the gradient.
+#[test]
+fn an_artwork_gradient_is_painted() {
+    use cuelight::{ResolvedGradient, ResolvedGradientKind, Vector, VectorPath};
+    use cuelight_core::PathElement;
+    let art = Vector {
+        width: 10.0,
+        height: 10.0,
+        paths: vec![VectorPath {
+            elements: vec![
+                PathElement::MoveTo([0.0, 0.0]),
+                PathElement::LineTo([10.0, 0.0]),
+                PathElement::LineTo([10.0, 10.0]),
+                PathElement::LineTo([0.0, 10.0]),
+                PathElement::Close,
+            ],
+            fill: Some([255, 0, 0, 255]),
+            stroke: None,
+            ids: Vec::new(),
+            gradient: Some(ResolvedGradient {
+                kind: ResolvedGradientKind::Linear {
+                    from: [0.0, 0.0],
+                    to: [10.0, 0.0],
+                },
+                stops: vec![(0.0, [255, 0, 0, 255]), (1.0, [0, 0, 255, 255])],
+                space: cuelight::Transform::IDENTITY,
+                straight_alpha: false,
+            }),
+        }],
+    };
+    let mut engine = Engine::new();
+    engine.set_vector("bar", art).unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "g", "size": [40, 10], "layers": [
+          { "name": "bar", "type": "image", "image": "bar", "size": [40, 10] } ] }"##,
+        )
+        .unwrap();
+    let Some(frame) = render(&engine) else { return };
+    let [lr, _, lb, _] = pixel(&frame, 1, 5);
+    let [rr, _, rb, _] = pixel(&frame, 38, 5);
+    assert!(lr > 200 && lb < 60, "left {lr} {lb}");
+    assert!(rb > 200 && rr < 60, "right {rr} {rb}");
+}
+
+/// An artwork gradient under an uneven scale is an ellipse, and one
+/// fading to a transparent stop keeps that stop's colour across the fade.
+#[test]
+fn an_artwork_radial_gradient_stretches_and_fades_in_its_colour() {
+    use cuelight::{ResolvedGradient, ResolvedGradientKind, Transform, Vector, VectorPath};
+    use cuelight_core::PathElement;
+    // A radial gradient of radius 1 at the origin, stretched to 20 by 5:
+    // an ellipse filling a 40 by 10 box, white in the middle fading to a
+    // transparent yellow at the rim.
+    let glow = VectorPath {
+        elements: vec![
+            PathElement::MoveTo([0.0, 0.0]),
+            PathElement::LineTo([40.0, 0.0]),
+            PathElement::LineTo([40.0, 10.0]),
+            PathElement::LineTo([0.0, 10.0]),
+            PathElement::Close,
+        ],
+        fill: Some([255, 255, 255, 255]),
+        stroke: None,
+        ids: Vec::new(),
+        gradient: Some(ResolvedGradient {
+            kind: ResolvedGradientKind::Radial {
+                center: [0.0, 0.0],
+                radius: 1.0,
+            },
+            stops: vec![(0.0, [255, 255, 255, 255]), (1.0, [255, 204, 0, 0])],
+            space: Transform([20.0, 0.0, 0.0, 5.0, 20.0, 5.0]),
+            straight_alpha: true,
+        }),
+    };
+    let mut engine = Engine::new();
+    engine
+        .set_vector(
+            "glow",
+            Vector {
+                width: 40.0,
+                height: 10.0,
+                paths: vec![glow],
+            },
+        )
+        .unwrap();
+    engine
+        .load_show(
+            r##"{ "name": "e", "size": [40, 10], "background": "#303030", "layers": [
+          { "name": "glow", "type": "image", "image": "glow" } ] }"##,
+        )
+        .unwrap();
+    let Some(frame) = render(&engine) else { return };
+    // Along the long axis, three quarters out: still inside the ellipse,
+    // so lit; a circle of the average radius would have ended there.
+    let [r, g, b, _] = pixel(&frame, 35, 5);
+    assert!(r > 0x50 && r > b, "{r} {g} {b}");
+    // Half way out the fade is warm: more red than blue, where a
+    // premultiplied fade to transparent would go grey.
+    let [r, g, b, _] = pixel(&frame, 30, 5);
+    assert!(r > b + 20 && g > b, "{r} {g} {b}");
+}

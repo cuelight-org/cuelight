@@ -17,6 +17,7 @@ fn wolf() -> Vector {
         fill: Some([255, 255, 255, 255]),
         stroke: None,
         ids: ids.iter().map(|s| (*s).to_owned()).collect(),
+        gradient: None,
     };
     Vector {
         width: 100.0,
@@ -167,6 +168,7 @@ fn a_part_scales_the_strokes_of_its_paths() {
         fill: None,
         stroke: Some(([0, 0, 0, 255], 2.0)),
         ids: vec!["eye".to_owned()],
+        gradient: None,
     };
     let art = Vector {
         width: 100.0,
@@ -191,4 +193,59 @@ fn a_part_scales_the_strokes_of_its_paths() {
     assert!((stroke(r#""scale": 2.5"#) - 5.0).abs() < 1e-9);
     // Squashed to a tenth of its height to blink: the average of the axes.
     assert!((stroke(r#""scale_y": 0.1"#) - 1.1).abs() < 1e-9);
+}
+
+#[test]
+fn an_artwork_gradient_is_placed_with_its_path() {
+    use cuelight::{ResolvedGradient, ResolvedGradientKind};
+    let art = Vector {
+        width: 100.0,
+        height: 100.0,
+        paths: vec![VectorPath {
+            elements: vec![
+                PathElement::MoveTo([0.0, 0.0]),
+                PathElement::LineTo([10.0, 0.0]),
+                PathElement::LineTo([10.0, 10.0]),
+                PathElement::Close,
+            ],
+            fill: Some([255, 0, 0, 255]),
+            stroke: None,
+            ids: vec!["sun".to_owned()],
+            gradient: Some(ResolvedGradient {
+                kind: ResolvedGradientKind::Radial {
+                    center: [5.0, 5.0],
+                    radius: 5.0,
+                },
+                stops: vec![(0.0, [255, 255, 255, 255]), (1.0, [255, 0, 0, 255])],
+                space: cuelight::Transform::IDENTITY,
+                straight_alpha: false,
+            }),
+        }],
+    };
+    let show = r##"{ "name": "g", "size": [400, 400], "layers": [
+      { "name": "icon", "type": "image", "image": "icon", "x": 100, "size": [200, 200],
+        "parts": [ { "id": "sun", "x": 10, "pivot": [5, 5], "scale": 2 } ] } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_vector("icon", art).unwrap();
+    engine.load_show(show).unwrap();
+    let layer = &engine.resolved_layers().unwrap()[0];
+    let gradient = layer.gradient.as_ref().unwrap();
+    // Kept in its own coordinates, with where it went in its space: the
+    // artwork is drawn twice its size at x 100, and the part moves the
+    // sun 10 across and doubles it about its centre.
+    assert_eq!(
+        gradient.kind,
+        ResolvedGradientKind::Radial {
+            center: [5.0, 5.0],
+            radius: 5.0
+        }
+    );
+    let centre = gradient.space.apply([5.0, 5.0]);
+    let rim = gradient.space.apply([10.0, 5.0]);
+    let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9;
+    assert!(close(centre, [100.0 + 15.0 * 2.0, 10.0]), "{centre:?}");
+    assert!(
+        (rim[0] - centre[0] - 5.0 * 2.0 * 2.0).abs() < 1e-9,
+        "{rim:?}"
+    );
 }
