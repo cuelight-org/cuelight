@@ -51,6 +51,11 @@ pub enum RenderError {
 /// cache per frame still renders correctly, just without upload reuse.
 pub struct ImageCache {
     entries: HashMap<String, (u64, vello::peniko::ImageData)>,
+    /// Images that live on the GPU already, by the name the show draws
+    /// them under: a video frame the browser decoded. Each is a texture
+    /// registered with the renderer, drawn in place of whatever pixels
+    /// the engine holds under that name.
+    external: HashMap<String, vello::peniko::ImageData>,
     /// Sprite sheet cells cut out of registered images, by image name and
     /// cell rectangle, with the image revision they were cut from.
     cells: HashMap<(String, [u32; 4]), (u64, vello::peniko::ImageData)>,
@@ -75,6 +80,7 @@ impl Default for ImageCache {
     fn default() -> Self {
         Self {
             entries: HashMap::new(),
+            external: HashMap::new(),
             cells: HashMap::new(),
             reduced: HashMap::new(),
             bitmaps: ByteLru::new(MAX_BITMAP_BYTES),
@@ -179,6 +185,27 @@ impl ImageCache {
         Self::default()
     }
 
+    fn set_external(
+        &mut self,
+        renderer: &mut vello::Renderer,
+        name: &str,
+        texture: Option<wgpu::Texture>,
+    ) {
+        if let Some(old) = self.external.remove(name) {
+            renderer.unregister_texture(old);
+        }
+        if let Some(texture) = texture {
+            self.external
+                .insert(name.to_owned(), renderer.register_texture(texture));
+        }
+    }
+
+    fn touch_external(&mut self, renderer: &mut vello::Renderer, name: &str) {
+        if let Some(image) = self.external.get(name) {
+            renderer.mark_override_image_dirty(image);
+        }
+    }
+
     fn get(&mut self, name: &str, data: &crate::engine::ImageData) -> vello::peniko::ImageData {
         match self.entries.get(name) {
             Some((revision, image)) if *revision == data.revision() => image.clone(),
@@ -201,6 +228,10 @@ impl ImageCache {
         cell: Option<[u32; 4]>,
         onto: f64,
     ) -> vello::peniko::ImageData {
+        // On the GPU already: drawn as it is, never reduced.
+        if let Some(external) = self.external.get(name) {
+            return external.clone();
+        }
         let whole = match cell {
             None => self.get(name, data),
             Some(cell) => self.cell(name, data, cell),
@@ -879,6 +910,35 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// The device frames are drawn with, for a host that makes textures
+    /// of its own to draw; see [`Renderer::set_external_image`].
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// Draw `texture` wherever the show draws the image `name`, in place
+    /// of the pixels the engine holds under it; `None` goes back to
+    /// those. For a picture that is on the GPU already, such as a video
+    /// frame a browser decoded, so it never crosses to the CPU. The
+    /// engine still needs an image under `name` for the layer to draw
+    /// at all: a pixel will do, since the size drawn is the layer's.
+    /// The texture is `Rgba8Unorm` with `COPY_SRC` among its usages,
+    /// since the renderer copies it into its image atlas. After writing
+    /// to it, [`Renderer::touch_external_image`].
+    pub fn set_external_image(&mut self, name: &str, texture: Option<wgpu::Texture>) {
+        self.images.set_external(&mut self.renderer, name, texture);
+    }
+
+    /// Say the texture behind the external image `name` has new
+    /// content, so the next frame reads it again.
+    pub fn touch_external_image(&mut self, name: &str) {
+        self.images.touch_external(&mut self.renderer, name);
+    }
+
     /// What it ended up rendering on: adapter name, kind, backend and
     /// driver.
     pub fn adapter(&self) -> &wgpu::AdapterInfo {
@@ -1348,6 +1408,24 @@ impl NativeTarget {
 impl Presenter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Draw `texture` wherever the show draws the image `name`; see
+    /// [`Renderer::set_external_image`], which is the same on the
+    /// offscreen renderer. `renderer` is the one frames are rendered
+    /// with, since the texture is registered with it.
+    pub fn set_external_image(
+        &mut self,
+        renderer: &mut vello::Renderer,
+        name: &str,
+        texture: Option<wgpu::Texture>,
+    ) {
+        self.images.set_external(renderer, name, texture);
+    }
+
+    /// See [`Renderer::touch_external_image`].
+    pub fn touch_external_image(&mut self, renderer: &mut vello::Renderer, name: &str) {
+        self.images.touch_external(renderer, name);
     }
 
     /// How the canvas is brought to the surface: `contain` unless the

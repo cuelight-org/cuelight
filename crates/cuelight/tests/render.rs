@@ -714,3 +714,69 @@ fn a_show_on_a_pixel_grid_keeps_its_own_colours() {
         assert!(palette, "{grid:?}");
     }
 }
+
+/// A texture the host made, drawn where the show draws an image of that
+/// name: what a video frame decoded by a browser goes through.
+#[test]
+fn an_external_texture_is_drawn_in_place_of_the_images_pixels() {
+    let Some(renderer) = shared() else { return };
+    let mut renderer = renderer.lock().unwrap_or_else(|e| e.into_inner());
+    let show = r##"{ "name": "ext", "size": [8, 8], "layers": [
+      { "name": "clip", "type": "image", "image": "clip", "size": [8, 8] } ] }"##;
+    let mut engine = Engine::new();
+    // A pixel under the name, so the layer draws; the texture is what
+    // is seen.
+    engine
+        .set_image("clip", 1, 1, vec![0, 0, 255, 255])
+        .unwrap();
+    engine.load_show(show).unwrap();
+    let texture = renderer
+        .device()
+        .create_texture(&cuelight::vello::wgpu::TextureDescriptor {
+            label: Some("test-external"),
+            size: cuelight::vello::wgpu::Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: cuelight::vello::wgpu::TextureDimension::D2,
+            format: cuelight::vello::wgpu::TextureFormat::Rgba8Unorm,
+            usage: cuelight::vello::wgpu::TextureUsages::COPY_DST
+                | cuelight::vello::wgpu::TextureUsages::COPY_SRC
+                | cuelight::vello::wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+    let green = [0u8, 255, 0, 255].repeat(4);
+    renderer.queue().write_texture(
+        cuelight::vello::wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: cuelight::vello::wgpu::Origin3d::ZERO,
+            aspect: cuelight::vello::wgpu::TextureAspect::All,
+        },
+        &green,
+        cuelight::vello::wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(2),
+        },
+        cuelight::vello::wgpu::Extent3d {
+            width: 2,
+            height: 2,
+            depth_or_array_layers: 1,
+        },
+    );
+    // Before: the engine's blue pixel. After: the texture's green.
+    let before = renderer.render_to_rgba(&engine).unwrap();
+    assert_eq!(pixel(&before, 4, 4), [0, 0, 255, 255]);
+    renderer.set_external_image("clip", Some(texture));
+    renderer.touch_external_image("clip");
+    let after = renderer.render_to_rgba(&engine).unwrap();
+    assert_eq!(pixel(&after, 4, 4), [0, 255, 0, 255]);
+    // Let go of: the pixels again.
+    renderer.set_external_image("clip", None);
+    let back = renderer.render_to_rgba(&engine).unwrap();
+    assert_eq!(pixel(&back, 4, 4), [0, 0, 255, 255]);
+}

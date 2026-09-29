@@ -38,6 +38,26 @@
 //! `wasm-bindgen --target web`. It is a plain build; for production see the
 //! note in that script on shrinking the download.
 //!
+//! Video plays through the browser: one `<video>` element per clip the
+//! show ships, off the page, decoding what the engine says is playing,
+//! its frames copied on the GPU into a texture the renderer draws where
+//! the layer is, with rotation, tint, blend modes and the output passes
+//! as any image. The element runs on its own clock and is put right
+//! only when it is off by more than a moment, which is what a loop, a
+//! seek or a stall looks like. A clip's soundtrack is the element's
+//! own sound: its volume follows the layer's `gain`, the groups above
+//! it and any ducking, through the engine's voice for the play, and it
+//! stays muted until the first gesture lets sound through, as sounds
+//! do. Buses do not apply to it. Every clip's length is read before the
+//! clock starts, so `on_end` lands where the show says on any
+//! connection. Each video layer that plays has an element of its own,
+//! so two layers on one clip run at their own positions; a browser
+//! decodes only a handful at once, so a show with many wants them few.
+//! The frame is copied from the element on the GPU, which a browser
+//! allows only for a clip from the page's own origin (or one served with
+//! CORS): a show fetched from elsewhere plays its sound and draws no
+//! picture.
+//!
 //! Sound goes through WebAudio: the folder's `assets/sounds/` are decoded
 //! by the browser and the engine's voice list drives buffer sources and
 //! gain nodes (`cuelight_audio::WebAudio`). Browsers keep audio silent until the page has
@@ -70,7 +90,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 
@@ -79,7 +99,9 @@ use cuelight::vello;
 use cuelight::Engine;
 use cuelight_audio::WebAudio;
 use cuelight_core::{Event, Value};
-use cuelight_loader::{Applied, Driver, DriverPlayer, Manifest, Step, MANIFEST_FILE};
+use cuelight_loader::{
+    Applied, Driver, DriverPlayer, Manifest, Step, MANIFEST_FILE, VIDEO_EXTENSIONS,
+};
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
 use wasm_bindgen::prelude::*;
@@ -116,27 +138,198 @@ async fn fetch(url: &str) -> Result<Vec<u8>, JsValue> {
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 
+/// A show as fetched: its files, and where its clips are.
+struct Fetched {
+    files: BTreeMap<String, Vec<u8>>,
+    /// Each clip by the name the show plays it under, and a URL a
+    /// `<video>` element can play: the file where it lies for a folder,
+    /// a blob of its bytes for a pack.
+    clips: Vec<(String, String)>,
+}
+
+/// Whether `file`, a path in the show, is a clip: the browser plays
+/// those from where they are rather than reading them into memory.
+fn is_clip(file: &str) -> bool {
+    file.rsplit_once('.')
+        .is_some_and(|(_, e)| VIDEO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// The name a show plays the clip at `file` under: its stem for a file
+/// in `assets/videos/`, the path itself for one named by path.
+fn clip_name(file: &str) -> String {
+    match file.strip_prefix("assets/videos/") {
+        Some(rest) => rest
+            .rsplit_once('.')
+            .map_or(rest, |(stem, _)| stem)
+            .to_owned(),
+        None => file.to_owned(),
+    }
+}
+
 /// Fetch a show: a packed `.cuelight` file, unpacked here, or the folder
 /// at `base` (ending in `/`): its manifest, then the files it lists, all
-/// at once.
-async fn fetch_show(base: &str) -> Result<BTreeMap<String, Vec<u8>>, JsValue> {
+/// at once. Clips are not read: a folder's stay where they are, and a
+/// pack's become blobs, for the `<video>` elements to play.
+async fn fetch_show(base: &str) -> Result<Fetched, JsValue> {
     if base.ends_with(".cuelight") {
         let bytes = fetch(base).await?;
-        return cuelight_loader::unpack(&bytes).map_err(|e| error(format!("{base}: {e}")));
+        let mut files =
+            cuelight_loader::unpack(&bytes).map_err(|e| error(format!("{base}: {e}")))?;
+        let names: Vec<String> = files.keys().filter(|f| is_clip(f)).cloned().collect();
+        let mut clips = Vec::new();
+        for name in names {
+            let bytes = files.remove(&name).unwrap_or_default();
+            let array = js_sys::Uint8Array::from(bytes.as_slice());
+            let parts = js_sys::Array::new();
+            parts.push(&array.buffer());
+            let blob = web_sys::Blob::new_with_buffer_source_sequence(&parts)?;
+            let url = web_sys::Url::create_object_url_with_blob(&blob)?;
+            clips.push((clip_name(&name), url));
+        }
+        return Ok(Fetched { files, clips });
     }
     let manifest_url = format!("{base}{MANIFEST_FILE}");
     let manifest = String::from_utf8(fetch(&manifest_url).await?)
         .map_err(|e| e.to_string())
         .and_then(|json| Manifest::from_json(&json))
         .map_err(|e| error(format!("{manifest_url}: {e}")))?;
-    let fetches = manifest.files.iter().map(|file| async move {
-        let bytes = fetch(&format!("{base}{file}")).await?;
-        Ok::<_, JsValue>((file.clone(), bytes))
-    });
-    futures_util::future::try_join_all(fetches)
-        .await
-        .map(|files| files.into_iter().collect())
+    let clips = manifest
+        .files
+        .iter()
+        .filter(|f| is_clip(f))
+        .map(|f| (clip_name(f), format!("{base}{f}")))
+        .collect();
+    let fetches = manifest
+        .files
+        .iter()
+        .filter(|f| !is_clip(f))
+        .map(|file| async move {
+            let bytes = fetch(&format!("{base}{file}")).await?;
+            Ok::<_, JsValue>((file.clone(), bytes))
+        });
+    let files = futures_util::future::try_join_all(fetches)
+        .await?
+        .into_iter()
+        .collect();
+    Ok(Fetched { files, clips })
 }
+
+/// A `<video>` element for the clip at `url`, off the page, with its
+/// length and size read: the engine wants both before the clock starts,
+/// so that a clip's end lands where the show says on any connection.
+async fn open_clip(url: &str) -> Result<(web_sys::HtmlVideoElement, f64, [u32; 2]), JsValue> {
+    let document = window()?.document().ok_or_else(|| error("no document"))?;
+    let element: web_sys::HtmlVideoElement = document.create_element("video")?.dyn_into()?;
+    element.set_muted(true);
+    element.set_preload("auto");
+    // Inline on phones, where a video would otherwise take the screen.
+    element.set_attribute("playsinline", "")?;
+    element.set_src(url);
+    let ready = js_sys::Promise::new(&mut |resolve, reject| {
+        let _ = element.add_event_listener_with_callback("loadedmetadata", &resolve);
+        let _ = element.add_event_listener_with_callback("error", &reject);
+    });
+    JsFuture::from(ready)
+        .await
+        .map_err(|_| error(format!("{url}: the browser could not open the clip")))?;
+    let duration = element.duration();
+    if !duration.is_finite() || duration <= 0.0 {
+        return Err(error(format!("{url}: the clip has no length")));
+    }
+    let size = [element.video_width(), element.video_height()];
+    Ok((element, duration, size))
+}
+
+/// A clip the show ships: where the browser plays it from, and the
+/// element its length was read with, kept for the first layer to play it.
+struct Clip {
+    url: String,
+    spare: Option<web_sys::HtmlVideoElement>,
+}
+
+/// A `<video>` element for the clip at `url`, off the page, muted until
+/// a play says otherwise.
+fn clip_element(url: &str) -> Result<web_sys::HtmlVideoElement, JsValue> {
+    let document = window()?.document().ok_or_else(|| error("no document"))?;
+    let element: web_sys::HtmlVideoElement = document.create_element("video")?.dyn_into()?;
+    element.set_muted(true);
+    element.set_preload("auto");
+    // Inline on phones, where a video would otherwise take the screen.
+    element.set_attribute("playsinline", "")?;
+    element.set_src(url);
+    Ok(element)
+}
+
+/// Let an element's decoder go at once: a browser keeps it until the
+/// element is collected otherwise, and has only so many.
+fn release(element: &web_sys::HtmlVideoElement) {
+    element.pause().ok();
+    let _ = element.remove_attribute("src");
+    element.load();
+}
+
+/// What one video layer shows: an element of its own, so two layers on
+/// one clip each run at their own position, and the texture its frames
+/// are copied into, drawn under the layer's frame key.
+struct Screen {
+    /// The clip it plays, by the name the show plays it under.
+    video: String,
+    element: web_sys::HtmlVideoElement,
+    texture: Option<wgpu::Texture>,
+    size: [u32; 2],
+    /// Whether the texture is registered with the renderer under the key.
+    drawn: bool,
+    /// The browser refused to play it (an autoplay policy, a decode
+    /// error): not asked again until the next gesture, so a refusal is
+    /// one line in the console and not one a frame.
+    refused: Rc<std::cell::Cell<bool>>,
+    /// What a refusal calls, made once for the element.
+    on_refused: Closure<dyn FnMut(JsValue)>,
+}
+
+impl Screen {
+    fn new(video: &str, element: web_sys::HtmlVideoElement) -> Screen {
+        let refused = Rc::new(std::cell::Cell::new(false));
+        let flag = refused.clone();
+        let name = video.to_owned();
+        let on_refused = Closure::new(move |why: JsValue| {
+            if !flag.get() {
+                web_sys::console::warn_1(
+                    &format!(
+                        "cuelight: clip {name:?} would not play: {}",
+                        js_error_text(&why)
+                    )
+                    .into(),
+                );
+            }
+            flag.set(true);
+        });
+        Screen {
+            video: video.to_owned(),
+            element,
+            texture: None,
+            size: [0, 0],
+            drawn: false,
+            refused,
+            on_refused,
+        }
+    }
+
+    /// Ask the element to play, unless it refused since the last gesture.
+    fn play(&self) {
+        if self.refused.get() {
+            return;
+        }
+        if let Ok(promise) = self.element.play() {
+            let _ = promise.catch(&self.on_refused);
+        }
+    }
+}
+
+/// How far a clip may run from where the engine says it is before it
+/// is put right: a seek is not frame-accurate and stutters, so it is
+/// saved for a loop, a scrub, a restart or a stall.
+const CLIP_SLACK: f64 = 0.25;
 
 fn to_js(value: &Value) -> JsValue {
     match value {
@@ -240,9 +433,183 @@ struct Inner {
     pending_frame: Option<i32>,
     /// The page's sound, when the browser gave us an audio context.
     audio: Option<WebAudio>,
+    /// The show's clips, by the name the show plays them under.
+    clips: HashMap<String, Clip>,
+    /// What each video layer shows, by its frame key.
+    screens: HashMap<String, Screen>,
 }
 
 impl Inner {
+    /// Make the video layers match what the engine says is playing. Each
+    /// layer that plays has an element of its own, so two layers on one
+    /// clip run at their own positions: it runs at the play's position
+    /// give or take [`CLIP_SLACK`], paused or not, its volume the play's
+    /// voice's gain, muted until sound may be heard; its frame is copied
+    /// on the GPU into the texture the renderer draws under the layer's
+    /// frame key. A layer that stops playing lets its element go.
+    fn sync_clips(&mut self, voices: &[cuelight_core::Voice]) {
+        if self.clips.is_empty() {
+            return;
+        }
+        let plays = self.engine.videos().unwrap_or_default();
+        let audible = self
+            .audio
+            .as_ref()
+            .is_some_and(|audio| audio.enabled() && audio.running());
+        let handle = &self.context.devices[self.surface.dev_id];
+        for play in &plays {
+            let Some(clip) = self.clips.get_mut(&play.video) else {
+                continue;
+            };
+            // A layer pointed at another clip starts that one afresh.
+            let stale = self
+                .screens
+                .get(&play.frame)
+                .is_some_and(|screen| screen.video != play.video);
+            if stale {
+                if let Some(old) = self.screens.remove(&play.frame) {
+                    release(&old.element);
+                    if old.drawn {
+                        self.presenter
+                            .set_external_image(&mut self.renderer, &play.frame, None);
+                    }
+                }
+            }
+            if !self.screens.contains_key(&play.frame) {
+                let element = match clip.spare.take() {
+                    Some(element) => element,
+                    None => match clip_element(&clip.url) {
+                        Ok(element) => element,
+                        Err(_) => continue,
+                    },
+                };
+                self.screens
+                    .insert(play.frame.clone(), Screen::new(&play.video, element));
+            }
+            let Some(screen) = self.screens.get_mut(&play.frame) else {
+                continue;
+            };
+            let element = &screen.element;
+            // The clock: the element's own, put right only when it has
+            // strayed, since a seek lands where the browser can and not
+            // on the frame asked for. Paused, it is still put right, so a
+            // seek while paused shows the frame it landed on.
+            element.set_loop(play.looping);
+            if (element.current_time() - play.position).abs() > CLIP_SLACK {
+                element.set_current_time(play.position);
+            }
+            if self.paused {
+                if !element.paused() {
+                    element.pause().ok();
+                }
+            } else if element.paused() {
+                screen.play();
+            }
+            // The sound: the layer's gain and everything above it, as
+            // the engine worked it out for this play's voice.
+            let gain = voices
+                .iter()
+                .find(|v| v.id == play.id)
+                .map_or(0.0, |v| v.gain.clamp(0.0, 1.0));
+            element.set_muted(!audible || gain <= 0.0);
+            element.set_volume(gain);
+            // The picture: the frame the element shows now, copied on the
+            // GPU into a texture the renderer draws under this layer's key.
+            if element.ready_state() < 2 {
+                continue;
+            }
+            let size = [element.video_width(), element.video_height()];
+            if size[0] == 0 || size[1] == 0 {
+                continue;
+            }
+            if screen.texture.is_none() || screen.size != size {
+                screen.texture = Some(handle.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("cuelight-clip"),
+                    size: wgpu::Extent3d {
+                        width: size[0],
+                        height: size[1],
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    // Written by the browser's copy, which wants a render
+                    // attachment; read by the renderer's copy into its atlas.
+                    usage: wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                }));
+                screen.size = size;
+                screen.drawn = false;
+            }
+            let Some(texture) = &screen.texture else {
+                continue;
+            };
+            handle.queue.copy_external_image_to_texture(
+                &wgpu::CopyExternalImageSourceInfo {
+                    source: wgpu::ExternalImageSource::HTMLVideoElement(element.clone()),
+                    origin: wgpu::Origin2d::ZERO,
+                    flip_y: false,
+                },
+                wgpu::CopyExternalImageDestInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                    color_space: wgpu::PredefinedColorSpace::Srgb,
+                    premultiplied_alpha: true,
+                },
+                wgpu::Extent3d {
+                    width: size[0],
+                    height: size[1],
+                    depth_or_array_layers: 1,
+                },
+            );
+            if !screen.drawn {
+                self.presenter.set_external_image(
+                    &mut self.renderer,
+                    &play.frame,
+                    Some(texture.clone()),
+                );
+                screen.drawn = true;
+            }
+            self.presenter
+                .touch_external_image(&mut self.renderer, &play.frame);
+            // The engine draws the layer only once an image is registered
+            // under the key; the texture stands in for the pixels.
+            if self.engine.image(&play.frame).is_none() {
+                let _ = self.engine.set_image(&play.frame, 1, 1, vec![0; 4]);
+            }
+        }
+        // A layer that stopped playing lets its element go, back to its
+        // clip for the next layer when the clip has none spare.
+        let gone: Vec<String> = self
+            .screens
+            .keys()
+            .filter(|key| !plays.iter().any(|p| p.frame == **key))
+            .cloned()
+            .collect();
+        for key in gone {
+            let Some(screen) = self.screens.remove(&key) else {
+                continue;
+            };
+            screen.element.pause().ok();
+            if screen.drawn {
+                self.presenter
+                    .set_external_image(&mut self.renderer, &key, None);
+            }
+            match self.clips.get_mut(&screen.video) {
+                Some(clip) if clip.spare.is_none() => clip.spare = Some(screen.element),
+                // Not needed: let its decoder go now rather than when the
+                // element is collected, since a browser has only so many.
+                _ => release(&screen.element),
+            }
+        }
+    }
+
     /// Pixels per CSS pixel on this screen, for turning a pointer's
     /// place on the element into a place on the surface.
     fn pixel_ratio(&self) -> f64 {
@@ -318,11 +685,11 @@ impl Inner {
         }
         self.engine.advance_to(target);
         let events = self.engine.drain_events();
+        let voices = self.engine.voices().unwrap_or_default();
         if let Some(audio) = &mut self.audio {
-            if let Ok(voices) = self.engine.voices() {
-                audio.apply(&voices);
-            }
+            audio.apply(&voices);
         }
+        self.sync_clips(&voices);
 
         self.sync_size();
         let surface = &self.surface;
@@ -412,10 +779,37 @@ impl CuelightPlayer {
         } else {
             format!("{url}/")
         };
-        let files = fetch_show(&base).await?;
+        let Fetched { files, clips } = fetch_show(&base).await?;
         let mut engine = Engine::new();
         let loaded = cuelight_loader::load_from_memory(&mut engine, &files)
             .map_err(|e| error(format!("{base}: {e}")))?;
+        // Clips: opened by the browser, their lengths and sizes read
+        // before the clock starts. A clip's soundtrack is registered as
+        // a sound too, so the engine reports the play's voice with the
+        // layer's gain, which is what the element's volume follows.
+        let mut opened: HashMap<String, Clip> = HashMap::new();
+        let mut clip_warnings = Vec::new();
+        for (name, url) in clips {
+            match open_clip(&url).await {
+                Ok((element, duration, size)) => {
+                    let registered = engine
+                        .set_video(&name, duration, [f64::from(size[0]), f64::from(size[1])])
+                        .and_then(|()| engine.set_sound(&name, duration));
+                    if let Err(e) = registered {
+                        clip_warnings.push(format!("clip {name:?}: {e}"));
+                        continue;
+                    }
+                    opened.insert(
+                        name,
+                        Clip {
+                            url,
+                            spare: Some(element),
+                        },
+                    );
+                }
+                Err(e) => clip_warnings.push(format!("clip {name:?}: {}", js_error_text(&e))),
+            }
+        }
         let mut warnings: Vec<String> = engine
             .load_warnings()
             .iter()
@@ -427,6 +821,7 @@ impl CuelightPlayer {
                 .iter()
                 .map(|file| format!("asset {file:?} was skipped: no decoder for this format")),
         );
+        warnings.extend(clip_warnings);
         // Sounds: decoded by the browser, registered by duration.
         let mut audio = match WebAudio::new() {
             Ok(audio) => Some(audio),
@@ -502,6 +897,8 @@ impl CuelightPlayer {
             on_error: None,
             pending_frame: None,
             audio,
+            clips: opened,
+            screens: HashMap::new(),
         }));
         let frame = start_frames(&inner)?;
         let gestures = listen_for_gestures(&inner)?;
@@ -858,6 +1255,19 @@ impl CuelightPlayer {
 
 impl Drop for CuelightPlayer {
     fn drop(&mut self) {
+        // Every clip's decoder goes now, not when the elements are
+        // collected: a page that swaps shows makes a player per show.
+        {
+            let inner = self.inner.borrow();
+            for screen in inner.screens.values() {
+                release(&screen.element);
+            }
+            for clip in inner.clips.values() {
+                if let Some(spare) = &clip.spare {
+                    release(spare);
+                }
+            }
+        }
         let pending = self.inner.borrow_mut().pending_frame.take();
         if let (Some(id), Some(window)) = (pending, web_sys::window()) {
             let _ = window.cancel_animation_frame(id);
@@ -890,8 +1300,13 @@ fn listen_for_gestures(inner: &Rc<RefCell<Inner>>) -> Result<Vec<GestureListener
         let weak = Rc::downgrade(inner);
         let closure = Closure::new(move || {
             if let Some(inner) = weak.upgrade() {
-                if let Some(audio) = &inner.borrow().audio {
+                let inner = inner.borrow();
+                if let Some(audio) = &inner.audio {
                     audio.resume();
+                }
+                // A gesture is what a refused clip was waiting for.
+                for screen in inner.screens.values() {
+                    screen.refused.set(false);
                 }
             }
         });
