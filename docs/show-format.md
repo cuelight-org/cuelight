@@ -452,6 +452,33 @@ Layer kinds:
   shows write `"type": "vector"` with the name in a `vector` field, and
   still load: both spellings mean this layer.
 
+  **Parts.** A character drawn as one SVG keeps its moving pieces inside
+  it. `parts` names elements of the artwork by the `id` the SVG gives
+  them and moves each on its own:
+
+  ```json
+  { "type": "image", "image": "wolf", "parts": [
+      { "id": "jaw", "pivot": [118, 70],
+        "timelines": [{ "name": "teeth", "trigger": "tap_teeth", "tracks": [
+          { "property": "rotation", "keys": [{ "t": 0, "v": 0 }, { "t": 0.25, "v": -20, "ease": "back_out" }] }] }] },
+      { "id": "tail", "pivot": [214, 44], "bindings": [{ "property": "rotation", "variable": "wag" }] },
+      { "id": "eye", "timelines": [ ... ] } ] }
+  ```
+
+  A part takes the transform properties (`x`, `y`, `rotation`, `scale`,
+  `scale_x`, `scale_y`), `opacity` and `visible`, with timelines and
+  bindings as a layer has them, applied in the artwork's own coordinates
+  on top of what the SVG already says. `pivot` is the point it turns and
+  scales around, in artwork coordinates, since a part has no box an
+  `anchor` could name; left out, it is the centre of the element's bounds.
+  Parts nest the way the SVG's groups do: turning `head` carries `jaw` and
+  `eye` inside it, whether or not they are parts themselves. Loaded, a
+  part is a layer of its own under the artwork layer, named after its id,
+  so it is animated, bound, traced and addressed like any layer. A part
+  naming an id the artwork has no element of is reported at load and
+  moves nothing, since artwork is a host asset that may still arrive. The
+  SVG's own animation is not read: the show is the one source of motion.
+
   What an SVG keeps: paths, basic shapes and text (as outlines), with
   solid fills and strokes, group transforms and opacities. A gradient
   paints as its first stop's color; patterns, raster images, clip paths,

@@ -894,6 +894,13 @@
             "image": {
               "type": "string"
             },
+            "parts": {
+              "description": "Elements of vector artwork the show moves on their own, each\nnamed by the `id` the SVG gives it; see [`Part`]. Held as\nlayers of the [`Part`](LayerKind::Part) kind, so a part is\nanimated, bound, traced and addressed like any layer, as the\nchildren of this one.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Part"
+              }
+            },
             "repeat": {
               "description": "Tile the artwork across `size` instead of stretching to it.",
               "anyOf": [
@@ -946,6 +953,37 @@
           "required": [
             "type",
             "image"
+          ]
+        },
+        {
+          "description": "One element of the vector artwork of the layer above it, moved on\nits own. Only ever a child of an artwork layer, made from its\n`parts`; never written as a layer of its own. Its transform\nproperties, `opacity` and `visible` apply in the artwork's own\ncoordinates, on top of what the SVG says, around `pivot`.",
+          "type": "object",
+          "properties": {
+            "id": {
+              "description": "The element's `id` in the SVG. Every path under that element\nmoves with it, and a part inside another part moves with\nboth, as the SVG's groups nest.",
+              "type": "string"
+            },
+            "pivot": {
+              "description": "The point the part turns and scales around, in the artwork's\ncoordinates; the centre of its bounds when omitted.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "part"
+            }
+          },
+          "required": [
+            "type",
+            "id"
           ]
         },
         {
@@ -1407,6 +1445,85 @@
           "type": "string",
           "const": "gray4"
         }
+      ]
+    },
+    "Part": {
+      "description": "An element of vector artwork the show moves on its own, as it is\nwritten in a document: the `parts` of an artwork layer.\n\nA character drawn as one SVG keeps its moving pieces inside it; a\npart names one by the `id` the SVG gives it and takes the transform\nproperties, `opacity` and `visible` a layer has, with timelines and\nbindings, applied in the artwork's own coordinates on top of what\nthe SVG says. Parts nest the way the SVG's groups do: turning the\nelement `head` carries `jaw` and `eye` inside it. Loaded, a part is\na [`Layer`] of the [`Part`](LayerKind::Part) kind, a child of its\nartwork layer, named after its id.",
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Binding"
+          }
+        },
+        "id": {
+          "description": "The element's `id` in the SVG.",
+          "type": "string"
+        },
+        "opacity": {
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "pivot": {
+          "description": "The point it turns and scales around, in the artwork's\ncoordinates; the centre of its bounds when omitted.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "rotation": {
+          "description": "Degrees, clockwise, around the pivot.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "scale": {
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "scale_x": {
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "scale_y": {
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        },
+        "timelines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Timeline"
+          }
+        },
+        "visible": {
+          "type": "boolean",
+          "default": true
+        },
+        "x": {
+          "description": "Moved by this much, in the artwork's units.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "y": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "id"
       ]
     },
     "Pass": {

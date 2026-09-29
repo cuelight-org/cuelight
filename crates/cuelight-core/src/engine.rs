@@ -3727,8 +3727,10 @@ enum Site {
     Pass(Option<usize>, usize),
     /// The font style of this name.
     Font(String),
-    /// The layer at this path down this tree.
-    Layer(Root, Vec<usize>),
+    /// The layer at this path down this tree: each step an index and
+    /// whether it is into the `parts` of an artwork layer rather than
+    /// the `children` of a group.
+    Layer(Root, Vec<(usize, bool)>),
     /// The scene at this index.
     Scene(usize),
 }
@@ -3753,9 +3755,9 @@ impl Site {
                     Root::Show => "layers".to_owned(),
                     Root::Scene(i) => format!("scenes[{i}].layers"),
                 };
-                for (depth, i) in path.iter().enumerate() {
+                for (depth, (i, parts)) in path.iter().enumerate() {
                     if depth > 0 {
-                        out.push_str(".children");
+                        out.push_str(if *parts { ".parts" } else { ".children" });
                     }
                     out.push_str(&format!("[{i}]"));
                 }
@@ -3794,10 +3796,13 @@ impl Site {
                     Root::Show => raw.get_mut("layers")?,
                     Root::Scene(i) => raw.get_mut("scenes")?.get_mut(*i)?.get_mut("layers")?,
                 };
-                for i in above {
-                    list = list.get_mut(*i)?.get_mut("children")?;
+                // Which list a step descends into is what the step
+                // after it says it is in.
+                for (k, (i, _)) in above.iter().enumerate() {
+                    let key = if path[k + 1].1 { "parts" } else { "children" };
+                    list = list.get_mut(*i)?.get_mut(key)?;
                 }
-                (list, *last)
+                (list, last.0)
             }
             _ => return None,
         };
@@ -3835,9 +3840,13 @@ impl Site {
                     list.remove(i);
                 }
             }
-            Site::Layer(..) => {
+            Site::Layer(_, path) => {
+                let part = path.last().is_some_and(|(_, parts)| *parts);
                 if let Some((list, i)) = self.list_of(raw) {
-                    list[i] = serde_json::json!({ "name": "", "type": "group", "children": [] });
+                    list[i] = match part {
+                        true => serde_json::json!({ "id": "" }),
+                        false => serde_json::json!({ "name": "", "type": "group", "children": [] }),
+                    };
                 }
             }
             Site::Scene(_) => {
@@ -3913,7 +3922,7 @@ fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &m
         );
     }
     if let Some(list) = raw.get_mut("layers") {
-        salvage_layers(list, Root::Show, &mut Vec::new(), findings, blanked);
+        salvage_layers(list, Root::Show, &mut Vec::new(), false, findings, blanked);
     }
     field::<Output>(raw, "output", "output", findings);
     entries::<crate::model::FontStyle>(raw.get_mut("fonts"), "fonts", findings);
@@ -3927,7 +3936,14 @@ fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &m
             let here = format!("scenes[{i}]");
             field::<Output>(scene, "output", &format!("{here}.output"), findings);
             if let Some(list) = scene.get_mut("layers") {
-                salvage_layers(list, Root::Scene(i), &mut Vec::new(), findings, blanked);
+                salvage_layers(
+                    list,
+                    Root::Scene(i),
+                    &mut Vec::new(),
+                    false,
+                    findings,
+                    blanked,
+                );
             }
             if let Err(e) = serde_json::from_value::<crate::model::Scene>(scene.clone()) {
                 findings.push(Finding {
@@ -3947,7 +3963,8 @@ fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &m
 fn salvage_layers(
     list: &mut serde_json::Value,
     root: Root,
-    path: &mut Vec<usize>,
+    path: &mut Vec<(usize, bool)>,
+    parts: bool,
     findings: &mut Vec<Finding>,
     blanked: &mut Vec<Site>,
 ) {
@@ -3955,17 +3972,29 @@ fn salvage_layers(
         return;
     };
     for (i, layer) in list.iter_mut().enumerate() {
-        path.push(i);
+        path.push((i, parts));
         if let Some(children) = layer.get_mut("children") {
-            salvage_layers(children, root, path, findings, blanked);
+            salvage_layers(children, root, path, false, findings, blanked);
         }
-        if let Err(e) = serde_json::from_value::<Layer>(layer.clone()) {
+        if let Some(inner) = layer.get_mut("parts") {
+            salvage_layers(inner, root, path, true, findings, blanked);
+        }
+        let parses = match parts {
+            true => serde_json::from_value::<crate::model::Part>(layer.clone()).map(|_| ()),
+            false => serde_json::from_value::<Layer>(layer.clone()).map(|_| ()),
+        };
+        if let Err(e) = parses {
             let site = Site::Layer(root, path.clone());
             findings.push(Finding {
                 path: site.path(),
                 message: e.to_string(),
             });
-            *layer = serde_json::json!({ "name": "", "type": "group", "children": [] });
+            // A blank of the kind the list holds: an empty group, or a
+            // part of nothing.
+            *layer = match parts {
+                true => serde_json::json!({ "id": "" }),
+                false => serde_json::json!({ "name": "", "type": "group", "children": [] }),
+            };
             blanked.push(site);
         }
         path.pop();
@@ -4045,25 +4074,42 @@ fn validate(show: &Show, out: &mut Vec<Problem>) {
     fn layers(
         show: &Show,
         root: Root,
-        path: &mut Vec<usize>,
+        path: &mut Vec<(usize, bool)>,
         list: &[Layer],
+        parts: bool,
         out: &mut Vec<Problem>,
     ) {
         for (i, layer) in list.iter().enumerate() {
-            path.push(i);
-            if let Err(error) = layer_problem(show, layer) {
+            path.push((i, parts));
+            let problem = match (&layer.kind, parts) {
+                // A part is made from an artwork layer's `parts`, and
+                // is nothing anywhere else.
+                (LayerKind::Part { .. }, false) => Err(Error::InvalidShow(format!(
+                    "layer {:?} is a part, which only the parts of an artwork layer hold",
+                    layer.name
+                ))),
+                _ => layer_problem(show, layer),
+            };
+            if let Err(error) = problem {
                 out.push(Problem {
                     site: Site::Layer(root, path.clone()),
                     error,
                 });
             }
-            layers(show, root, path, layer.children(), out);
+            layers(show, root, path, layer.children(), layer.holds_parts(), out);
             path.pop();
         }
     }
-    layers(show, Root::Show, &mut Vec::new(), &show.layers, out);
+    layers(show, Root::Show, &mut Vec::new(), &show.layers, false, out);
     for (i, scene) in show.scenes.iter().enumerate() {
-        layers(show, Root::Scene(i), &mut Vec::new(), &scene.layers, out);
+        layers(
+            show,
+            Root::Scene(i),
+            &mut Vec::new(),
+            &scene.layers,
+            false,
+            out,
+        );
     }
 }
 

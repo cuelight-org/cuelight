@@ -250,6 +250,29 @@ fn test_font() -> Vec<u8> {
     .unwrap()
 }
 
+#[cfg(feature = "svg")]
+#[test]
+fn artwork_keeps_the_ids_of_the_elements_its_paths_are_in() {
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <rect id="body" x="0" y="50" width="10" height="10" fill="#fff"/>
+        <g id="head">
+          <rect x="50" y="0" width="10" height="10" fill="#fff"/>
+          <g><rect id="jaw" x="50" y="20" width="10" height="10" fill="#fff"/></g>
+        </g>
+      </svg>"##;
+    let engine = Engine::new();
+    let art = cuelight_loader::convert_svg(svg, &cuelight_loader::SvgFonts::of(&engine)).unwrap();
+    let ids: Vec<Vec<String>> = art.vector.paths.iter().map(|p| p.ids.clone()).collect();
+    assert_eq!(
+        ids,
+        [
+            vec!["body".to_owned()],
+            vec!["head".to_owned()],
+            vec!["head".to_owned(), "jaw".to_owned()]
+        ]
+    );
+}
+
 #[cfg(all(feature = "svg", feature = "outline-fonts"))]
 #[test]
 fn svg_text_is_drawn_with_the_shows_own_fonts() {

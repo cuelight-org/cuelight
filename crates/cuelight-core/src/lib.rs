@@ -65,9 +65,9 @@ pub use engine::{
 pub use model::{
     parse_color, revealed, sample_keys, Align, Binding, Blend, Border, DigitDisplay, Direction,
     DotShape, Dots, Duck, Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind,
-    Listened, Media, MediaKind, Model, NumberFormat, Output, OutputMode, Pass, Property, Reading,
-    Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet, Show, Stages,
-    Stroke, Tile, Timeline, Track, Transition, Triggers, When, FORMAT, MAIN_BUS,
+    Listened, Media, MediaKind, Model, NumberFormat, Output, OutputMode, Part, Pass, Property,
+    Reading, Reel, ReelCells, Retrigger, Scaling, Scene, SegmentStyle, Shadow, Shape, Sheet, Show,
+    Stages, Stroke, Tile, Timeline, Track, Transition, Triggers, When, FORMAT, MAIN_BUS,
 };
 pub use path::{PathData, PathElement};
 pub use value::Value;

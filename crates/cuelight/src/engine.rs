@@ -191,6 +191,9 @@ pub struct VectorPath {
     pub fill: Option<[u8; 4]>,
     /// Stroke color and width, in the artwork's units.
     pub stroke: Option<([u8; 4], f64)>,
+    /// The `id`s of the elements this path is inside, outermost first,
+    /// its own last: what a show's `parts` name to move it.
+    pub ids: Vec<String>,
 }
 
 /// One glyph of a [`ResolvedShape::GlyphRun`]: its id in the font and the
@@ -207,6 +210,39 @@ pub struct PlacedGlyph {
 struct RegisteredFont {
     font: BitmapFont,
     pages: Vec<Rgba>,
+}
+
+/// The bounds of every element id in `vector`, over the paths inside
+/// it: `[x, y, width, height]` in the artwork's own units.
+fn element_bounds(vector: &Vector) -> HashMap<String, [f64; 4]> {
+    let mut out: HashMap<String, [f64; 4]> = HashMap::new();
+    for path in &vector.paths {
+        let Some([x, y, w, h]) = PathElement::bounds(&path.elements) else {
+            continue;
+        };
+        for id in &path.ids {
+            let joined = match out.get(id) {
+                None => [x, y, w, h],
+                Some([bx, by, bw, bh]) => {
+                    let (left, top) = (bx.min(x), by.min(y));
+                    let (right, bottom) = ((bx + bw).max(x + w), (by + bh).max(y + h));
+                    [left, top, right - left, bottom - top]
+                }
+            };
+            out.insert(id.clone(), joined);
+        }
+    }
+    out
+}
+
+/// What a show's part does to the element it names, this frame.
+#[derive(Debug, Clone, Copy)]
+struct Moved {
+    /// In the artwork's own coordinates.
+    transform: Transform,
+    opacity: f64,
+    /// Not drawn at all.
+    hidden: bool,
 }
 
 /// How a text layer gets drawn, see `Engine::text_draw`.
@@ -290,6 +326,10 @@ pub struct Engine {
     core: cuelight_core::Engine,
     images: BTreeMap<String, ImageData>,
     vectors: BTreeMap<String, Vector>,
+    /// Per vector, the bounds of every element id its paths carry, worked
+    /// out once when it is registered: what a part with no pivot of its
+    /// own turns around, asked for every frame.
+    part_bounds: BTreeMap<String, HashMap<String, [f64; 4]>>,
     fonts: BTreeMap<String, Arc<RegisteredFont>>,
     outline_fonts: BTreeMap<String, FontData>,
     text_cache: Mutex<TextCache>,
@@ -639,6 +679,8 @@ impl Engine {
                 vector.width, vector.height
             )));
         }
+        self.part_bounds
+            .insert(name.to_owned(), element_bounds(&vector));
         self.vectors.insert(name.to_owned(), vector);
         Ok(())
     }
@@ -740,7 +782,9 @@ impl Engine {
     /// whose font is not registered.
     fn content_box(&self, root: Root, layer: &Layer, path: &[usize]) -> Option<[f64; 4]> {
         let [x, y, w, h] = match &layer.kind {
-            LayerKind::Group { .. } | LayerKind::Audio { .. } => return None,
+            LayerKind::Group { .. } | LayerKind::Audio { .. } | LayerKind::Part { .. } => {
+                return None
+            }
             LayerKind::Shape { shape, .. } => match shape {
                 Shape::Rect { rect, .. } => *rect,
                 Shape::Circle {
@@ -1150,6 +1194,59 @@ impl Engine {
         }
     }
 
+    /// What each of `parts` does to its element of `art` now, by id: a
+    /// transform in the artwork's own coordinates, around the part's
+    /// pivot (the centre of the element's bounds when it names none),
+    /// with its opacity; a part that is not visible hides its element.
+    fn parts_of(
+        &self,
+        root: Root,
+        parts: &[Layer],
+        path: &mut Vec<usize>,
+        image: &str,
+    ) -> HashMap<String, Moved> {
+        let bounds = self.part_bounds.get(image);
+        let mut out = HashMap::new();
+        for (i, part) in parts.iter().enumerate() {
+            let LayerKind::Part { id, pivot } = &part.kind else {
+                continue;
+            };
+            path.push(i);
+            let number = |prop| self.core.number(root, part, path, prop);
+            let moved = if self.core.is_visible(root, part, path) {
+                let pivot = pivot
+                    .or_else(|| {
+                        let [x, y, w, h] = *bounds?.get(id)?;
+                        Some([x + w / 2.0, y + h / 2.0])
+                    })
+                    .unwrap_or([0.0, 0.0]);
+                let scale = number(Property::Scale);
+                let transform = Transform::translate(number(Property::X), number(Property::Y))
+                    .then(Transform::translate(pivot[0], pivot[1]))
+                    .then(Transform::rotate(number(Property::Rotation)))
+                    .then(Transform::scale(
+                        scale * number(Property::ScaleX),
+                        scale * number(Property::ScaleY),
+                    ))
+                    .then(Transform::translate(-pivot[0], -pivot[1]));
+                Moved {
+                    transform,
+                    opacity: number(Property::Opacity).clamp(0.0, 1.0),
+                    hidden: false,
+                }
+            } else {
+                Moved {
+                    transform: Transform::IDENTITY,
+                    opacity: 0.0,
+                    hidden: true,
+                }
+            };
+            path.pop();
+            out.insert(id.clone(), moved);
+        }
+        out
+    }
+
     /// Whether `style` is drawn as exact pixels: an outline font the
     /// style asks it of, or any outline font on a show rendered on its
     /// own pixel grid, where nothing should sit between two pixels.
@@ -1357,6 +1454,8 @@ impl Engine {
                 match &layer.kind {
                     // Heard, not seen.
                     LayerKind::Audio { .. } => {}
+                    // Drawn by its artwork layer, which reads it.
+                    LayerKind::Part { .. } => {}
                     LayerKind::Group { children, clip, .. } => {
                         // A blended group is composited as one picture.
                         let mut marker = |shape: ResolvedShape| {
@@ -1500,6 +1599,7 @@ impl Engine {
                         size,
                         sheet,
                         repeat,
+                        parts,
                         ..
                     } => {
                         // Vector artwork under the same name, drawn as
@@ -1510,6 +1610,7 @@ impl Engine {
                             false => self.vectors.get(image),
                         };
                         if let Some(art) = art {
+                            let moved = self.parts_of(root, parts, path, image);
                             let tint = self.core.text(root, layer, path, Property::Tint);
                             let tint = parse_color(&tint).unwrap_or([255; 4]);
                             let tile = repeat.map(|tile| {
@@ -1542,6 +1643,7 @@ impl Engine {
                                 box_size,
                                 tile,
                                 tint,
+                                &moved,
                             );
                         }
                         // Missing images are skipped, not an error: the
@@ -1965,6 +2067,7 @@ fn push_vector(
     box_size: [f64; 2],
     tile: Option<Tiled>,
     tint: [u8; 4],
+    moved: &HashMap<String, Moved>,
 ) {
     let [x, y] = placed.origin;
     let scale = placed.scale;
@@ -1977,9 +2080,29 @@ fn push_vector(
             mix(color[3], tint[3]),
         ]
     };
+    // What the parts a path is inside do to it, outermost first, so a
+    // jaw turns with the head it is in: none of them, the identity.
+    let part_of = |item: &VectorPath| -> Option<(Transform, f64)> {
+        let mut transform = Transform::IDENTITY;
+        let mut opacity = 1.0;
+        for id in &item.ids {
+            let Some(part) = moved.get(id) else {
+                continue;
+            };
+            if part.hidden {
+                return None;
+            }
+            transform = transform.then(part.transform);
+            opacity *= part.opacity;
+        }
+        Some((transform, opacity))
+    };
     let paths = |at: [f64; 2], size: [f64; 2], out: &mut Vec<ResolvedLayer>| {
         let (sx, sy) = (size[0] / art.width, size[1] / art.height);
         for item in &art.paths {
+            let Some((by, opacity)) = part_of(item) else {
+                continue;
+            };
             out.push(ResolvedLayer {
                 gradient: None,
                 overflow: placed.overflow,
@@ -1989,12 +2112,17 @@ fn push_vector(
                     elements: item
                         .elements
                         .iter()
-                        .map(|e| e.map(|[px, py]| [at[0] + px * sx, at[1] + py * sy]))
+                        .map(|e| {
+                            e.map(|p| {
+                                let [px, py] = by.apply(p);
+                                [at[0] + px * sx, at[1] + py * sy]
+                            })
+                        })
                         .collect(),
                     stroke: item.stroke.map(|(c, w)| (stain(c), w * (sx + sy) / 2.0)),
                 },
                 color: stain(item.fill.unwrap_or([0; 4])),
-                opacity: placed.opacity,
+                opacity: placed.opacity * opacity,
                 blend: placed.blend,
                 transform: placed.transform,
             });
@@ -2130,6 +2258,7 @@ fn quiet_artwork(show: &Show, vectors: &BTreeMap<String, Vector>, out: &mut Vec<
                 image,
                 sheet,
                 frame,
+                parts,
                 ..
             } = &layer.kind
             {
@@ -2139,6 +2268,22 @@ fn quiet_artwork(show: &Show, vectors: &BTreeMap<String, Vector>, out: &mut Vec<
                          which only pixels have",
                         layer.name
                     ));
+                }
+                // Only artwork already registered can say which ids it
+                // has; one registered later is taken at its word.
+                if let Some(art) = vectors.get(image) {
+                    for part in parts {
+                        let LayerKind::Part { id, .. } = &part.kind else {
+                            continue;
+                        };
+                        if !art.paths.iter().any(|p| p.ids.iter().any(|n| n == id)) {
+                            out.push(format!(
+                                "layer {:?} names a part {id:?}, which artwork {image:?} \
+                                 has no element of; the part moves nothing",
+                                layer.name
+                            ));
+                        }
+                    }
                 }
             }
             walk(layer.children(), vectors, out);
