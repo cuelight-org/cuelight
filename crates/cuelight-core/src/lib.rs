@@ -66,7 +66,7 @@ pub use engine::{
 };
 pub use model::{
     parse_color, revealed, sample_keys, Align, Binding, Blend, Border, DigitDisplay, Direction,
-    DotShape, Dots, Duck, Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind,
+    DotShape, Dots, Duck, Edges, Fill, FontStyle, Glow, Gradient, Justify, Key, Layer, LayerKind,
     Listened, Media, MediaKind, Model, NumberFormat, Output, OutputMode, Part, Pass, Press,
     Property, Reading, Reel, ReelCells, Retrigger, Scaling, Scene, SegmentInput, SegmentStyle,
     Shadow, Shape, Sheet, Show, Stages, Stroke, Tile, Timeline, Track, Transition, Triggers, When,

@@ -909,3 +909,32 @@ fn an_artwork_radial_gradient_stretches_and_fades_in_its_colour() {
     let [r, g, b, _] = pixel(&frame, 30, 5);
     assert!(r > b + 20 && g > b, "{r} {g} {b}");
 }
+
+/// On a pixel grid with hard edges a circle is a disc of whole dots:
+/// every pixel the background or the fill, where soft edges shade its rim.
+#[test]
+fn hard_edges_draw_a_circle_in_whole_pixels() {
+    let show = |edges: &str| {
+        format!(
+            r##"{{ "name": "h", "size": [16, 16], "background": "#000000",
+          "output": {{ "scaling": "pixel_perfect"{edges} }},
+          "layers": [ {{ "name": "ball", "type": "shape", "shape": {{ "circle": [8, 8, 5.3] }},
+                        "fill": "#FFFFFF", "x": 0.3, "rotation": 7 }} ] }}"##
+        )
+    };
+    let shades = |edges: &str| {
+        let mut engine = Engine::new();
+        engine.load_show(&show(edges)).unwrap();
+        render(&engine).map(|frame| {
+            let mut reds: Vec<u8> = frame.pixels.chunks(4).map(|px| px[0]).collect();
+            reds.sort_unstable();
+            reds.dedup();
+            reds
+        })
+    };
+    let (Some(hard), Some(soft)) = (shades(r#", "edges": "hard""#), shades("")) else {
+        return;
+    };
+    assert_eq!(hard, [0, 255], "only the background and the fill");
+    assert!(soft.len() > 2, "soft edges shade the rim: {soft:?}");
+}

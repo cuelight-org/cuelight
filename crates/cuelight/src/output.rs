@@ -141,6 +141,7 @@ mod tests {
     #[test]
     fn tint_parses_and_defaults_to_white() {
         let output = Output {
+            edges: None,
             mode: Some(OutputMode::Gray4),
             tint: Some("#FF5820".into()),
             scaling: None,
@@ -151,6 +152,7 @@ mod tests {
             Some(gray4([255, 88, 32]))
         );
         let output = Output {
+            edges: None,
             mode: Some(OutputMode::Gray4),
             tint: None,
             scaling: None,
@@ -161,6 +163,7 @@ mod tests {
             Some(gray4([255, 255, 255]))
         );
         let output = Output {
+            edges: None,
             mode: Some(OutputMode::Gray4),
             tint: Some("orange".into()),
             scaling: None,

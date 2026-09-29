@@ -1801,6 +1801,14 @@ impl Engine {
         self.effective_output().scaling.unwrap_or_default()
     }
 
+    /// Whether shapes are drawn with hard edges: on the canvas's own
+    /// pixel grid ([`pixel_grid`](Engine::pixel_grid)), with `edges` set to
+    /// `hard` in the active output.
+    pub fn hard_edges(&self) -> bool {
+        self.pixel_grid()
+            && self.effective_output().edges.unwrap_or_default() == crate::model::Edges::Hard
+    }
+
     /// Whether the frame is made on the canvas's own pixel grid: a gray
     /// output mode, or pixel-perfect scaling.
     ///

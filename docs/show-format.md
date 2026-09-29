@@ -302,6 +302,20 @@ many canvas pixels a `cover` cuts off; the web player takes `player.fit`.
 Offline renders are canvas-sized
 and have no fit.
 
+`edges` says how the edges of shapes fall on a show drawn on its own
+pixel grid (a gray `mode`, or `pixel_perfect` scaling): `soft` (default)
+smooths them, and `hard` lights a pixel only where its centre is inside
+the shape, so a circle is a disc of whole dots, a rotated rect a
+staircase, and a shape that moves steps a dot at a time rather than
+fading dots in and out. It holds for fills and clips; outlines, images
+and text are drawn as they are (images on a pixel grid keep their pixels
+already). A scene may set it too. A show not on its pixel grid ignores
+it.
+
+```json
+"output": { "scaling": "pixel_perfect", "edges": "hard" }
+```
+
 `passes` lists effects applied to the finished frame as it is shown, in
 order. One exists so far, `dots`, the dot matrix look: every canvas pixel
 becomes a separate dot on black.
