@@ -140,6 +140,8 @@ file) plays automatically; a second argument names another one, and
 that does not load whole, logging what was left out. `--fit cover` fills
 the window with the show instead of fitting it inside, `--fit fill`
 fills it losing the show's shape, and Tab cycles the three while playing.
+Frames are drawn at the display's refresh rate; `--fps 30` draws at most
+30 a second instead, which a wall that runs all day may want.
 
 More shows live in the
 [cuelight-examples](https://github.com/francisdb/cuelight-examples)

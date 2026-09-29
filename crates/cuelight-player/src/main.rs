@@ -277,6 +277,9 @@ struct App {
     /// Fastest refresh rate any monitor offers, for pacing redraws while
     /// the window is resized and the display cannot be asked.
     fastest_hertz: f64,
+    /// The most frames a second to draw, when asked for with `--fps`;
+    /// otherwise the display's refresh paces the frames.
+    rate: Option<f64>,
     mailbox_while_resizing: bool,
     /// When the surface last changed size, while it still presents with
     /// mailbox because of that.
@@ -819,9 +822,15 @@ impl App {
                 .map_or(self.fastest_hertz, |millihertz| {
                     f64::from(millihertz) / 1000.0
                 });
+            // Never faster than a rate asked for.
+            let hertz = self.rate.map_or(hertz, |rate| rate.min(hertz));
             // Counted from this frame's start, so drawing time is not added
             // on top of every interval.
             self.redraw_at = Some(now + Duration::from_secs_f64(1.0 / hertz));
+        } else if let Some(rate) = self.rate {
+            // A rate of its own: come back when the next frame is due,
+            // counted from this one's start; vsync still bounds it.
+            self.redraw_at = Some(now + Duration::from_secs_f64(1.0 / rate));
         } else {
             state.window.request_redraw();
         }
@@ -1056,6 +1065,19 @@ struct Cli {
     /// them while playing.
     #[arg(long, value_enum, default_value_t = FitArg::Contain)]
     fit: FitArg,
+    /// Draw at most this many frames a second rather than at the
+    /// display's refresh rate: a wall that shows a ticker all day need
+    /// not draw it 240 times a second. The show's clock is unaffected.
+    #[arg(long, value_parser = positive_rate)]
+    fps: Option<f64>,
+}
+
+/// A frame rate from the command line: a number above 0.
+fn positive_rate(given: &str) -> Result<f64, String> {
+    match given.parse::<f64>() {
+        Ok(rate) if rate.is_finite() && rate > 0.0 => Ok(rate),
+        _ => Err(format!("{given:?} is not a rate above 0")),
+    }
 }
 
 /// [`Fit`] as a command line word.
@@ -1367,6 +1389,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         pending_size: None,
         fitted: false,
         fastest_hertz: 60.0,
+        rate: cli.fps,
         mailbox_while_resizing: false,
         resized_at: None,
         redraw_at: None,
