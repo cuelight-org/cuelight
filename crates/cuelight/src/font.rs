@@ -253,18 +253,19 @@ impl Rgba {
         self.pixels[i..i + 4].copy_from_slice(&px);
     }
 
-    /// A silhouette of one colour, its edge spread over `reach` pixels by a
-    /// gaussian: a soft shadow. The picture grows by the reach on every
-    /// side, which is what the returned padding says, so it is drawn that
-    /// much up and to the left of where the hard one would be.
-    pub(crate) fn blurred(&self, reach: f64) -> (Rgba, i32) {
-        let pad = reach.ceil().max(0.0) as i32;
+    /// A silhouette of one colour, its edge softened by a gaussian of blur
+    /// radius `blur` as CSS `text-shadow` defines it, a standard deviation
+    /// of half the radius: a soft shadow. The picture grows by three
+    /// deviations on every side, where the gaussian has all but faded,
+    /// which is what the returned padding says, so it is drawn that much
+    /// up and to the left of where the hard one would be.
+    pub(crate) fn blurred(&self, blur: f64) -> (Rgba, i32) {
+        let sigma = blur.max(0.0) / 2.0;
+        let pad = (sigma * 3.0).ceil() as i32;
         if pad == 0 {
             return (self.clone(), 0);
         }
-        // Three deviations out is where a gaussian has all but faded: the
-        // reach an author sees.
-        let sigma = (reach / 3.0).max(0.1);
+        let sigma = sigma.max(0.1);
         let kernel: Vec<f64> = (-pad..=pad)
             .map(|i| (-(f64::from(i) * f64::from(i)) / (2.0 * sigma * sigma)).exp())
             .collect();
@@ -619,6 +620,20 @@ kerning first=65 second=66 amount=-1
 
     /// The same font with a pixel of padding declared inside every
     /// glyph rect: what a border is drawn into, and not ink.
+    /// The deviation is half the blur, as CSS defines it: a lone dot
+    /// blurred by 2 falls to the gaussian's value at one deviation one
+    /// pixel out, about 0.61 of its centre.
+    #[test]
+    fn a_blur_is_a_deviation_of_half_its_value() {
+        let mut dot = Rgba::transparent(1, 1);
+        dot.set(0, 0, [0, 0, 0, 255]);
+        let (soft, pad) = dot.blurred(2.0);
+        assert_eq!(pad, 3);
+        let alpha = |x: i32, y: i32| f64::from(soft.get(x, y)[3]);
+        let ratio = alpha(pad + 1, pad) / alpha(pad, pad);
+        assert!((ratio - (-0.5f64).exp()).abs() < 0.02, "{ratio}");
+    }
+
     #[test]
     fn padding_inside_a_glyph_rect_is_not_measured() {
         let fnt = FNT.replace(
