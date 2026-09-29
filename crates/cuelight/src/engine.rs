@@ -2057,6 +2057,7 @@ fn kind_name(kind: &LayerKind) -> &'static str {
         LayerKind::Digits { .. } => "digits",
         LayerKind::Video { .. } => "video",
         LayerKind::Audio { .. } => "audio",
+        LayerKind::Part { .. } => "part",
     }
 }
 /// The items of a frame under `at`, in paint order, clips honoured.
