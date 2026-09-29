@@ -264,3 +264,22 @@ fn on_a_pixel_grid_outline_fonts_are_pixels_unless_told_otherwise() {
     let err = engine.load_show(bad).unwrap_err().to_string();
     assert!(err.contains("remove pixels"), "{err}");
 }
+
+#[test]
+fn a_shadow_blur_on_an_outline_font_is_said_to_be_drawn_hard() {
+    let show = SHOW.replace(
+        r##""shadow": { "color": "#00000080", "offset": [3, 2] }"##,
+        r##""shadow": { "color": "#00000080", "offset": [3, 2], "blur": 4 }"##,
+    );
+    assert_ne!(show, SHOW);
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(&show).unwrap();
+    let warnings = engine.load_warnings();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("\"cast\"") && w.contains("drawn hard")),
+        "{warnings:?}"
+    );
+}

@@ -411,6 +411,21 @@ impl Engine {
         if let Some(show) = self.core.show() {
             quiet_artwork(show, &self.vectors, &mut self.warnings);
         }
+        // An outline font drawn from its outlines has no raster to spread
+        // a shadow's edge over yet: said, rather than drawn hard quietly.
+        #[cfg(feature = "outline-fonts")]
+        if let Some(show) = self.core.show() {
+            for (name, style) in &show.fonts {
+                let blurred = style.shadow.as_ref().is_some_and(|s| s.blur > 0.0);
+                if blurred && self.outline_fonts.contains_key(&style.file) && !self.pixels(style) {
+                    self.warnings.push(format!(
+                        "the shadow of font style {name:?} is drawn hard: its blur is drawn \
+                         for bitmap fonts and outline fonts drawn as pixels, not yet from \
+                         an outline font's outlines"
+                    ));
+                }
+            }
+        }
     }
 
     /// The core this engine wraps: the show, its state and its clock,
@@ -1014,12 +1029,21 @@ impl Engine {
                 ))
             })
             .clone();
+        // A soft shadow is the hard one with its edge spread.
+        let blur = match as_shadow {
+            true => style.shadow.as_ref().map_or(0.0, |s| s.blur),
+            false => 0.0,
+        };
         let raster = styled
             .rasterize(text, size, align, shown)
             .map(|(rgba, offset, container)| {
+                let (rgba, pad) = match blur > 0.0 {
+                    true => rgba.blurred(blur),
+                    false => (rgba, 0),
+                };
                 Arc::new(TextRaster {
                     image: ImageData::generated(rgba),
-                    offset,
+                    offset: [offset[0] - pad, offset[1] - pad],
                     container,
                 })
             });
