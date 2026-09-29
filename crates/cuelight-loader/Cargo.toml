@@ -50,6 +50,9 @@ schema = ["dep:schemars", "cuelight-core/schema"]
 render-cli = ["dep:clap", "png", "cuelight/render", "dep:cuelight-audio", "dep:cuelight-video"]
 
 [[bin]]
+name = "cuelight-check"
+
+[[bin]]
 name = "cuelight-pack"
 required-features = ["pack"]
 

@@ -160,7 +160,13 @@ fn a_clean_show_has_no_findings_and_a_finding_reads_as_one_line() {
     let finding = Finding {
         path: "layers[2]".into(),
         message: "invalid color literal \"blue\"".into(),
+        kind: cuelight_core::FindingKind::Error,
     };
+    assert_eq!(finding.kind.name(), "error");
+    assert_eq!(
+        cuelight_core::FindingKind::parse("unwise"),
+        Some(cuelight_core::FindingKind::Unwise)
+    );
     assert_eq!(
         finding.to_string(),
         "layers[2]: invalid color literal \"blue\""

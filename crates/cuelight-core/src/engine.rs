@@ -855,39 +855,18 @@ impl Engine {
         json: &str,
         check: impl FnOnce(&Show, &mut Vec<Finding>),
     ) -> Result<Vec<Finding>, Error> {
-        let mut raw = parse_document(json)?;
-        let mut findings = Vec::new();
-        // Layers and scenes are blanked rather than taken out until the
-        // end, so every finding names the place the author sees, not
-        // one shifted by the drops before it.
-        let mut blanked: Vec<Site> = Vec::new();
-        salvage(&mut raw, &mut findings, &mut blanked);
-        let mut show = parse_show(&raw)?;
-        loop {
-            let problems = problems(&show);
-            if problems.is_empty() {
-                break;
-            }
-            // Dropping one thing can leave another wanting it, so the
-            // checks run again until nothing is left to drop. Later
-            // sites first, so the index of an earlier one still holds.
-            for problem in problems.iter().rev() {
-                problem.site.drop_from(&mut raw);
-            }
-            for problem in problems {
-                findings.push(problem.finding());
-                if problem.site.is_blanked() {
-                    blanked.push(problem.site);
-                }
-            }
-            show = parse_show(&raw)?;
-        }
+        let Salvaged {
+            mut raw,
+            findings: mut found,
+            blanked,
+            ..
+        } = salvaged(json)?;
         remove_blanks(&mut raw, blanked);
-        show = parse_show(&raw)?;
+        let show = parse_show(&raw)?;
         debug_assert!(problems(&show).is_empty());
-        check(&show, &mut findings);
+        check(&show, &mut found);
         self.install(&raw, show);
-        Ok(findings)
+        Ok(found)
     }
 
     /// Take a show that passed every check, replacing the current one.
@@ -896,7 +875,7 @@ impl Engine {
         if let Ok(understood) = serde_json::to_value(&show) {
             ignored_fields(raw, &understood, "", &mut self.load_warnings);
         }
-        quiet_bindings(&show, &mut self.load_warnings);
+        quiet_bindings(&show, true, &mut self.load_warnings);
         self.eased_values = eased_values(&show);
         self.value_conditions = value_conditions(&show);
         (self.transition_sites, self.debounce_sites) = binding_sites(&show);
@@ -3660,6 +3639,65 @@ fn binding_sites(show: &Show) -> (Vec<TransitionSite>, Vec<ReadSite>) {
     out
 }
 
+/// A document with everything a tolerant load drops blanked in place,
+/// so that what is left parses and every path still means what it does
+/// in the document the author sees.
+pub(crate) struct Salvaged {
+    /// The document, the blanks still in.
+    pub raw: serde_json::Value,
+    /// What it parses to: a show `load_show` would take, blanks and all.
+    pub show: Show,
+    /// What was dropped, and why.
+    pub findings: Vec<Finding>,
+    /// The places blanked, to be taken out before the show is played.
+    pub blanked: Vec<Site>,
+}
+
+impl Salvaged {
+    /// The paths of the blanks, as the document names them.
+    pub fn blank_paths(&self) -> Vec<String> {
+        self.blanked.iter().map(Site::path).collect()
+    }
+}
+
+/// Salvage `json`: drop whatever does not parse or a strict load would
+/// refuse, each drop a finding, until what is left is a show
+/// `load_show` takes. Layers and scenes are blanked rather than taken
+/// out, so every finding names the place the author sees, not one
+/// shifted by the drops before it; see [`remove_blanks`].
+pub(crate) fn salvaged(json: &str) -> Result<Salvaged, Error> {
+    let mut raw = parse_document(json)?;
+    let mut findings = Vec::new();
+    let mut blanked: Vec<Site> = Vec::new();
+    salvage(&mut raw, &mut findings, &mut blanked);
+    let mut show = parse_show(&raw)?;
+    loop {
+        let problems = problems(&show);
+        if problems.is_empty() {
+            break;
+        }
+        // Dropping one thing can leave another wanting it, so the
+        // checks run again until nothing is left to drop. Later sites
+        // first, so the index of an earlier one still holds.
+        for problem in problems.iter().rev() {
+            problem.site.drop_from(&mut raw);
+        }
+        for problem in problems {
+            findings.push(problem.finding());
+            if problem.site.is_blanked() {
+                blanked.push(problem.site);
+            }
+        }
+        show = parse_show(&raw)?;
+    }
+    Ok(Salvaged {
+        raw,
+        show,
+        findings,
+        blanked,
+    })
+}
+
 /// Parse a show document as JSON, refusing a format this engine does
 /// not read before interpreting anything else: its fields may mean
 /// something this engine would get wrong.
@@ -3699,6 +3737,59 @@ fn parse_show(raw: &serde_json::Value) -> Result<Show, Error> {
 pub struct Finding {
     pub path: String,
     pub message: String,
+    /// What sort of thing it is, so a host can show or keep the sorts it
+    /// cares about.
+    #[serde(default)]
+    pub kind: FindingKind,
+}
+
+/// What sort of thing a [`Finding`] is. Sorts, not severities: which of
+/// them matter is the reader's call, and a project may care about one
+/// and not another.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingKind {
+    /// Wrong: what a strict load refuses, and a tolerant load drops.
+    #[default]
+    Error,
+    /// A name with nothing behind it: a file the show names that is
+    /// not there, a variable nothing declares, a driver step into
+    /// nothing. It runs, and that part of it does nothing.
+    Missing,
+    /// Dead weight: a file, layer, timeline, scene, variable or font
+    /// style nothing uses.
+    Unused,
+    /// Works today and will surprise someone: a field the engine does
+    /// not know, two layers of one name, a habit that costs.
+    Unwise,
+}
+
+impl FindingKind {
+    /// The four, in the order they are worth reading.
+    pub const ALL: [FindingKind; 4] = [
+        FindingKind::Error,
+        FindingKind::Missing,
+        FindingKind::Unused,
+        FindingKind::Unwise,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            FindingKind::Error => "error",
+            FindingKind::Missing => "missing",
+            FindingKind::Unused => "unused",
+            FindingKind::Unwise => "unwise",
+        }
+    }
+
+    /// The kind `name` names.
+    pub fn parse(name: &str) -> Option<FindingKind> {
+        FindingKind::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+    }
 }
 
 impl std::fmt::Display for Finding {
@@ -3719,6 +3810,7 @@ impl Problem {
         Finding {
             path: self.site.path(),
             message: self.error.to_string(),
+            kind: FindingKind::Error,
         }
     }
 }
@@ -3726,7 +3818,7 @@ impl Problem {
 /// A place in the document a problem is about, and that a tolerant load
 /// drops to be rid of it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Site {
+pub(crate) enum Site {
     Background,
     /// The tint of the show's output, or of the scene's at this index.
     Tint(Option<usize>),
@@ -3744,7 +3836,7 @@ enum Site {
 
 impl Site {
     /// Where this is, as a path in the document.
-    fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         fn output(scene: Option<usize>) -> String {
             match scene {
                 None => "output".to_owned(),
@@ -3902,6 +3994,7 @@ fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &m
                 findings.push(Finding {
                     path: path.to_owned(),
                     message: e.to_string(),
+                    kind: FindingKind::Error,
                 });
                 object.remove(key);
             }
@@ -3922,6 +4015,7 @@ fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &m
                     findings.push(Finding {
                         path: format!("{path}.{name}"),
                         message: e.to_string(),
+                        kind: FindingKind::Error,
                     });
                     false
                 }
@@ -3956,6 +4050,7 @@ fn salvage(raw: &mut serde_json::Value, findings: &mut Vec<Finding>, blanked: &m
                 findings.push(Finding {
                     path: here,
                     message: e.to_string(),
+                    kind: FindingKind::Error,
                 });
                 let site = Site::Scene(i);
                 *scene = serde_json::json!({ "name": "", "layers": [] });
@@ -3995,6 +4090,7 @@ fn salvage_layers(
             findings.push(Finding {
                 path: site.path(),
                 message: e.to_string(),
+                kind: FindingKind::Error,
             });
             // A blank of the kind the list holds: an empty group, or a
             // part of nothing.
@@ -4472,8 +4568,11 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
 /// what they start at, so that is what is checked. Values written in the
 /// show itself, like the colors and styles a `map` lists, are errors at
 /// load instead.
-fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
-    fn walk(show: &Show, layers: &[Layer], out: &mut Vec<String>) {
+/// With `undeclared`, a binding reading a variable the show does not
+/// declare is one of them; the audit says that itself, with the
+/// binding's place, and asks for the rest.
+pub(crate) fn quiet_bindings(show: &Show, undeclared: bool, out: &mut Vec<String>) {
+    fn walk(show: &Show, layers: &[Layer], undeclared: bool, out: &mut Vec<String>) {
         for layer in layers {
             for binding in &layer.bindings {
                 // A curve bends a number, and these properties never hold
@@ -4523,11 +4622,14 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
                     continue;
                 }
                 let Some(value) = show.variables.get(name) else {
-                    out.push(format!(
-                        "the {:?} binding of layer {:?} reads variable {name:?}, which the show \
-                         does not declare; it does nothing until a host sets that variable",
-                        binding.property, layer.name
-                    ));
+                    if undeclared {
+                        out.push(format!(
+                            "the {:?} binding of layer {:?} reads variable {name:?}, which the \
+                             show does not declare; it does nothing until a host sets that \
+                             variable",
+                            binding.property, layer.name
+                        ));
+                    }
                     continue;
                 };
                 // With a map it is the mapped values that reach the
@@ -4561,11 +4663,11 @@ fn quiet_bindings(show: &Show, out: &mut Vec<String>) {
                     ));
                 }
             }
-            walk(show, layer.children(), out);
+            walk(show, layer.children(), undeclared, out);
         }
     }
     for layers in show.layer_trees() {
-        walk(show, layers, out);
+        walk(show, layers, undeclared, out);
     }
 }
 
@@ -4585,7 +4687,7 @@ fn also(key: &str) -> Option<&'static str> {
 /// Collect the paths of object keys present in `given` but absent from
 /// `understood` (the same document after a round trip through the model),
 /// which are the fields deserialization silently dropped.
-fn ignored_fields(
+pub(crate) fn ignored_fields(
     given: &serde_json::Value,
     understood: &serde_json::Value,
     path: &str,

@@ -49,6 +49,7 @@
 //! [`Transition::step_response`]. An editor that drew them with math of
 //! its own would disagree with the engine sooner or later.
 
+mod audit;
 mod easing;
 mod engine;
 mod lamp;
@@ -56,11 +57,12 @@ mod model;
 mod path;
 mod value;
 
+pub use audit::{audit, audit_document, Audited};
 pub use easing::Easing;
 pub use engine::{
     frame_key, layer_at, root_layers, row_cells, Cause, Ending, Engine, Error, Event, Finding,
-    Firing, Happened, Influence, LayerPath, Playing, ResolvedValue, Root, TimelineOwner,
-    TimelineRef, Traced, VideoInfo, Voice, Which, SAME_INSTANT,
+    FindingKind, Firing, Happened, Influence, LayerPath, Playing, ResolvedValue, Root,
+    TimelineOwner, TimelineRef, Traced, VideoInfo, Voice, Which, SAME_INSTANT,
 };
 pub use model::{
     parse_color, revealed, sample_keys, Align, Binding, Blend, Border, DigitDisplay, Direction,

@@ -678,6 +678,33 @@ fn a_lenient_load_keeps_going_and_says_what_it_passed() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[test]
+fn a_sound_a_binding_can_point_at_by_path_is_read_and_has_to_be_there() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-bound-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("music")).unwrap();
+    std::fs::write(dir.join("music/up.wav"), b"not really").unwrap();
+    let show = |down: &str| {
+        format!(
+            r##"{{ "name": "bound", "size": [8, 8], "variables": {{ "mood": 0 }}, "layers": [
+              {{ "name": "tune", "type": "audio", "sound": "music/up.wav",
+                 "bindings": [{{ "property": "sound", "variable": "mood",
+                                "map": {{ "0": "music/up.wav", "1": "{down}" }} }}] }} ] }}"##
+        )
+    };
+    // A name the binding maps to is a file the show needs: read with the
+    // rest, so the host has it when the binding points there.
+    std::fs::write(dir.join("show.json"), show("music/up.wav")).unwrap();
+    let mut engine = Engine::new();
+    let loaded = load(&mut engine, &dir).unwrap();
+    assert_eq!(loaded.sounds.len(), 1, "{:?}", loaded.sounds);
+    // And one that is not there is refused, as any named file is.
+    std::fs::write(dir.join("show.json"), show("music/down.wav")).unwrap();
+    let err = load(&mut Engine::new(), &dir).unwrap_err().to_string();
+    assert!(err.contains("music/down.wav"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[cfg(feature = "pack")]
 #[test]
 fn packing_refuses_a_show_that_names_a_file_that_is_not_there() {
