@@ -13,8 +13,8 @@ use crate::segments;
 use cuelight_core::{
     frame_key, parse_color, revealed, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill,
     Finding, Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
-    Press, Property, Reel, ReelCells, ResolvedValue, Root, Scaling, Shape, Sheet, Show, Traced,
-    Value, Voice,
+    Press, Property, Reel, ReelCells, ResolvedValue, Root, Sampling, Scaling, Shape, Sheet, Show,
+    Traced, Value, Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1084,6 +1084,7 @@ impl Engine {
             blend,
             overflow,
             transform,
+            ..
         } = *placed;
         // Colors were validated at load.
         let style = self.core.show().and_then(|s| s.fonts.get(style_name));
@@ -1249,6 +1250,7 @@ impl Engine {
                     shape: ResolvedShape::Image {
                         image: name.to_owned(),
                         tile: None,
+                        nearest: placed.nearest,
                         source: None,
                         x: x + left * placed.scale,
                         y: y + top * placed.scale,
@@ -1493,6 +1495,7 @@ impl Engine {
                 let on = at.rem_euclid(ring.len() as f64) as usize;
                 let placed = Placed {
                     origin: [cell_x, y + slide * character_h + centring],
+                    nearest: reel.sampling == Sampling::Nearest,
                     ..*placed
                 };
                 match (&reel.cells, &reel.font) {
@@ -1711,6 +1714,7 @@ impl Engine {
                                 shape: ResolvedShape::Image {
                                     image: key,
                                     tile: None,
+                                    nearest: false,
                                     source: None,
                                     x,
                                     y,
@@ -1730,6 +1734,7 @@ impl Engine {
                         sheet,
                         repeat,
                         parts,
+                        sampling,
                         ..
                     } => {
                         // Vector artwork under the same name, drawn as
@@ -1769,6 +1774,7 @@ impl Engine {
                                     opacity,
                                     blend: layer.blend,
                                     transform,
+                                    nearest: false,
                                 },
                                 box_size,
                                 tile,
@@ -1817,6 +1823,7 @@ impl Engine {
                                     width: width * scale,
                                     height: height * scale,
                                     tile,
+                                    nearest: *sampling == Sampling::Nearest,
                                 },
                                 // Validated at load, and a binding only
                                 // ever feeds it a color it could parse.
@@ -1849,6 +1856,7 @@ impl Engine {
                             opacity,
                             blend: layer.blend,
                             transform,
+                            nearest: false,
                         };
                         let cells = (*digits as usize, *justify);
                         match display {
@@ -2058,6 +2066,7 @@ impl Engine {
                             opacity,
                             blend: layer.blend,
                             transform,
+                            nearest: false,
                         };
                         self.push_text(
                             &mut built.items,
@@ -2543,6 +2552,8 @@ fn push_vector(
 /// Where a piece of a layer lands, shared by everything the walk adds.
 #[derive(Debug, Clone, Copy)]
 struct Placed<'a> {
+    /// Images drawn for it are read without filtering.
+    nearest: bool,
     name: &'a str,
     layer: &'a LayerPath,
     /// Top-left corner on the canvas.
@@ -2850,6 +2861,8 @@ pub enum ResolvedShape {
         /// Repeat one tile across the box instead of stretching the image
         /// to fill it.
         tile: Option<Tiled>,
+        /// Read without filtering: each source pixel a hard-edged block.
+        nearest: bool,
     },
     /// Text in an outline font: fill the outlines of `glyphs` from `font`
     /// at `size` pixels per em with the layer's color, after drawing

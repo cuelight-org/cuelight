@@ -387,6 +387,20 @@ impl Output {
     }
 }
 
+/// How an image's pixels are read when it is drawn at another size.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum Sampling {
+    /// Filtered: smooth at any size.
+    #[default]
+    Smooth,
+    /// Each source pixel a block with hard edges, at any scale and
+    /// rotation: pixel art, a pattern from a tiny tile, a mosaic. Its
+    /// edges are still smoothed where they are not upright or level.
+    Nearest,
+}
+
 /// How hosts should scale the rendered frame up to their surface.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -765,6 +779,10 @@ fn is_zero(n: &f64) -> bool {
     *n == 0.0
 }
 
+fn is_smooth(sampling: &Sampling) -> bool {
+    *sampling == Sampling::Smooth
+}
+
 fn default_visible() -> bool {
     true
 }
@@ -828,6 +846,11 @@ pub enum LayerKind {
         /// Tile the artwork across `size` instead of stretching to it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repeat: Option<Tile>,
+        /// How the pixels are read when drawn at another size: `smooth`
+        /// (default) or `nearest`. The layer's own choice, whatever the
+        /// show's `scaling`. Nothing to vector artwork.
+        #[serde(default, skip_serializing_if = "is_smooth")]
+        sampling: Sampling,
         /// Elements of vector artwork the show moves on their own, each
         /// named by the `id` the SVG gives it; see [`Part`]. Held as
         /// layers of the [`Part`](LayerKind::Part) kind, so a part is
@@ -1163,6 +1186,10 @@ pub struct Reel {
     /// Without it a symbol is drawn as its own character, in `font`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cells: Option<ReelCells>,
+    /// How cells given as images are read when drawn at another size;
+    /// see [`Sampling`].
+    #[serde(default, skip_serializing_if = "is_smooth")]
+    pub sampling: Sampling,
     /// Seconds one move takes; above 0.
     pub duration: f64,
     /// How a step progresses; the same easings timelines know.

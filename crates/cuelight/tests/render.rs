@@ -938,3 +938,35 @@ fn hard_edges_draw_a_circle_in_whole_pixels() {
     assert_eq!(hard, [0, 255], "only the background and the fill");
     assert!(soft.len() > 2, "soft edges shade the rim: {soft:?}");
 }
+
+/// A tiny image drawn large reads as blocks with `nearest`, and as a
+/// blend without it.
+#[test]
+fn nearest_sampling_draws_each_source_pixel_as_a_block() {
+    let show = |sampling: &str| {
+        format!(
+            r##"{{ "name": "n", "size": [40, 40], "layers": [
+          {{ "name": "board", "type": "image", "image": "checker", "size": [40, 40]{sampling} }} ] }}"##
+        )
+    };
+    let draw = |sampling: &str| {
+        let mut engine = Engine::new();
+        // Black, white / white, black.
+        let px = [
+            0, 0, 0, 255, 255, 255, 255, 255, //
+            255, 255, 255, 255, 0, 0, 0, 255,
+        ];
+        engine.set_image("checker", 2, 2, px.to_vec()).unwrap();
+        engine.load_show(&show(sampling)).unwrap();
+        render(&engine)
+    };
+    let (Some(nearest), Some(smooth)) = (draw(r#", "sampling": "nearest""#), draw("")) else {
+        return;
+    };
+    // Just either side of the middle: hard black and white with nearest.
+    assert_eq!(pixel(&nearest, 18, 10)[0], 0);
+    assert_eq!(pixel(&nearest, 21, 10)[0], 255);
+    // Smooth blends across the same edge.
+    let blended = pixel(&smooth, 18, 10)[0];
+    assert!((20..235).contains(&blended), "{blended}");
+}

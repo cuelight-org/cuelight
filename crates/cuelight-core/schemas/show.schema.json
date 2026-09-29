@@ -941,6 +941,10 @@
                 }
               ]
             },
+            "sampling": {
+              "description": "How the pixels are read when drawn at another size: `smooth`\n(default) or `nearest`. The layer's own choice, whatever the\nshow's `scaling`. Nothing to vector artwork.",
+              "$ref": "#/$defs/Sampling"
+            },
             "sheet": {
               "description": "Treat the image as a grid of equally sized cells and draw one:\nthe one the `frame` property selects. Pixels only.",
               "anyOf": [
@@ -1808,6 +1812,10 @@
             "$ref": "#/$defs/Key"
           }
         },
+        "sampling": {
+          "description": "How cells given as images are read when drawn at another size;\nsee [`Sampling`].",
+          "$ref": "#/$defs/Sampling"
+        },
         "spin": {
           "description": "Trigger name, or list of names, that sets the row spinning: every\ncell travels its `turns` and lands on the symbol its text names at\nthat moment, whether or not that is the one it already shows.",
           "$ref": "#/$defs/Triggers",
@@ -1906,6 +1914,21 @@
           "description": "Let the play finish, then play: the trigger waits its turn, up to\n`voices` of them waiting at once.",
           "type": "string",
           "const": "queue"
+        }
+      ]
+    },
+    "Sampling": {
+      "description": "How an image's pixels are read when it is drawn at another size.",
+      "oneOf": [
+        {
+          "description": "Filtered: smooth at any size.",
+          "type": "string",
+          "const": "smooth"
+        },
+        {
+          "description": "Each source pixel a block with hard edges, at any scale and\nrotation: pixel art, a pattern from a tiny tile, a mosaic. Its\nedges are still smoothed where they are not upright or level.",
+          "type": "string",
+          "const": "nearest"
         }
       ]
     },
