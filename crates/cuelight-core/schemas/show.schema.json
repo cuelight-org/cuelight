@@ -158,6 +158,15 @@
             "$ref": "#/$defs/Value"
           }
         },
+        "min_digits": {
+          "description": "At least this many digits before the point, zero-filled on the\nleft (text bindings only): a page `03`, a clock's `09`. A minimum,\nnever a cut; the sign comes before the zeros, and with `thousands`\nthe zeros are grouped like any digits (`0,005`).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "offset": {
           "type": "number",
           "format": "double",

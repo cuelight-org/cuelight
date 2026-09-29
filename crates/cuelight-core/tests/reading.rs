@@ -198,3 +198,45 @@ fn a_condition_follows_a_value_the_show_animates_from_the_instant_it_turns() {
         x_of(&engine, "lamp")
     );
 }
+
+#[test]
+fn a_bound_number_is_zero_filled_to_its_minimum_digits() {
+    use cuelight_core::NumberFormat::{Plain, Thousands};
+    // The issue's table: min_digits 2, decimals 1, both.
+    for (n, padded, decimal, both) in [
+        (3.0, "03", "3.0", "03.0"),
+        (12.0, "12", "12.0", "12.0"),
+        (123.0, "123", "123.0", "123.0"),
+        (-3.0, "-03", "-3.0", "-03.0"),
+    ] {
+        assert_eq!(Plain.format_padded(n, None, Some(2)), padded);
+        assert_eq!(Plain.format_padded(n, Some(1), None), decimal);
+        assert_eq!(Plain.format_padded(n, Some(1), Some(2)), both);
+    }
+    // Grouped like any digits under thousands.
+    assert_eq!(Thousands.format_padded(5.0, None, Some(4)), "0,005");
+    assert_eq!(Thousands.format_padded(12345.0, None, Some(4)), "12,345");
+    // Through a binding: after scale and rounding, before the words.
+    let show = r##"{ "name": "p", "size": [8, 8], "variables": { "page": 3 },
+      "fonts": { "f": { "file": "f" } },
+      "layers": [{ "name": "count", "type": "text", "text": "", "font": "f",
+        "bindings": [{ "property": "text", "variable": "page", "min_digits": 2,
+                       "suffix": " / 09" }] }] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let text = |engine: &Engine| {
+        engine
+            .values()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.property == Property::Text)
+            .unwrap()
+            .value
+            .to_text()
+    };
+    assert_eq!(text(&engine), "03 / 09");
+    engine.set_variable("page", 12.0);
+    assert_eq!(text(&engine), "12 / 09");
+    let bad = show.replace(r#""min_digits": 2"#, r#""min_digits": 40"#);
+    assert!(Engine::new().load_show(&bad).is_err());
+}
