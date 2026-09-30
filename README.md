@@ -6,7 +6,7 @@ that into frames. Written in Rust, rendering with
 [vello](https://github.com/linebender/vello) and
 [wgpu](https://github.com/gfx-rs/wgpu).
 
-See it running: the [examples website](https://francisdb.github.io/cuelight-examples/)
+See it running: the [examples website](https://cuelight-org.github.io/cuelight-examples/)
 plays the example shows live in the browser (needs WebGPU).
 
 > Status: early. The engine, the show format and the players work, but
@@ -144,10 +144,10 @@ Frames are drawn at the display's refresh rate; `--fps 30` draws at most
 30 a second instead, which a wall that runs all day may want.
 
 More shows live in the
-[cuelight-examples](https://github.com/francisdb/cuelight-examples)
+[cuelight-examples](https://github.com/cuelight-org/cuelight-examples)
 repository, one show folder each, playable directly with the player and
 running live on the
-[examples website](https://francisdb.github.io/cuelight-examples/).
+[examples website](https://cuelight-org.github.io/cuelight-examples/).
 
 The windowed examples log startup info (render backend, windowing system,
 window size and scale) and events; set `RUST_LOG=debug` for more detail.
