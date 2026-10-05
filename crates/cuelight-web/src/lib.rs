@@ -40,7 +40,9 @@
 //!
 //! Video plays through the browser: one `<video>` element per clip the
 //! show ships, off the page, decoding what the engine says is playing,
-//! its frames copied on the GPU into a texture the renderer draws where
+//! its frames drawn into a canvas and copied from there on the GPU (every
+//! browser copies a canvas; not every one copies a `<video>`) into a
+//! texture the renderer draws where
 //! the layer is, with rotation, tint, blend modes and the output passes
 //! as any image. The element runs on its own clock and is put right
 //! only when it is off by more than a moment, which is what a loop, a
@@ -53,10 +55,9 @@
 //! connection. Each video layer that plays has an element of its own,
 //! so two layers on one clip run at their own positions; a browser
 //! decodes only a handful at once, so a show with many wants them few.
-//! The frame is copied from the element on the GPU, which a browser
-//! allows only for a clip from the page's own origin (or one served with
-//! CORS): a show fetched from elsewhere plays its sound and draws no
-//! picture.
+//! A browser lets the page have a clip's pixels only when it is from the
+//! page's own origin (or served with CORS): a show fetched from elsewhere
+//! plays its sound and draws no picture, with a warning in the console.
 //!
 //! Sound goes through WebAudio: the folder's `assets/sounds/` are decoded
 //! by the browser and the engine's voice list drives buffer sources and
@@ -85,7 +86,9 @@
 //! not compile, a validation error) stops the frames rather than drawing
 //! black on: it is logged, listed by `player.warnings()` and handed to
 //! `player.onError`, so a page can show it where a phone user can read
-//! it. The crate is empty on targets other than `wasm32`.
+//! it. A frame that panics is handed to `onError` the same way, and the
+//! player is dead after it: its frames stop and every call answers as if
+//! there were no show. The crate is empty on targets other than `wasm32`.
 #![cfg(target_arch = "wasm32")]
 
 use std::cell::RefCell;
@@ -284,6 +287,16 @@ struct Screen {
     refused: Rc<std::cell::Cell<bool>>,
     /// What a refusal calls, made once for the element.
     on_refused: Closure<dyn FnMut(JsValue)>,
+    /// The canvas each frame is drawn into before it is copied to the
+    /// GPU: every browser copies a canvas, and not every one copies a
+    /// `<video>`.
+    canvas: Option<(
+        web_sys::OffscreenCanvas,
+        web_sys::OffscreenCanvasRenderingContext2d,
+    )>,
+    /// The clip is from another origin, without CORS: the browser keeps
+    /// its pixels from the page, so it plays its sound and is not drawn.
+    foreign: bool,
 }
 
 impl Screen {
@@ -311,7 +324,49 @@ impl Screen {
             drawn: false,
             refused,
             on_refused,
+            canvas: None,
+            foreign: false,
         }
+    }
+
+    /// The element's frame now, drawn into a canvas of `size` for the
+    /// GPU to copy; `None` when there is nothing to copy. A clip the
+    /// browser keeps from the page is found out on its first frame,
+    /// since copying its canvas would fail inside the GPU call.
+    fn frame(&mut self, size: [u32; 2]) -> Option<web_sys::OffscreenCanvas> {
+        if self.foreign {
+            return None;
+        }
+        let fresh = self
+            .canvas
+            .as_ref()
+            .is_none_or(|(canvas, _)| [canvas.width(), canvas.height()] != size);
+        if fresh {
+            let canvas = web_sys::OffscreenCanvas::new(size[0], size[1]).ok()?;
+            let context = canvas
+                .get_context("2d")
+                .ok()??
+                .dyn_into::<web_sys::OffscreenCanvasRenderingContext2d>()
+                .ok()?;
+            self.canvas = Some((canvas, context));
+        }
+        let (canvas, context) = self.canvas.as_ref()?;
+        context
+            .draw_image_with_html_video_element(&self.element, 0.0, 0.0)
+            .ok()?;
+        if fresh && context.get_image_data(0.0, 0.0, 1.0, 1.0).is_err() {
+            web_sys::console::warn_1(
+                &format!(
+                    "cuelight: clip {:?} is from another origin without CORS: \
+                     it plays its sound and is not drawn",
+                    self.video
+                )
+                .into(),
+            );
+            self.foreign = true;
+            return None;
+        }
+        Some(canvas.clone())
     }
 
     /// Ask the element to play, unless it refused since the last gesture.
@@ -401,6 +456,48 @@ fn event_to_js(event: &Event) -> JsValue {
     object.into()
 }
 
+/// What stopped the player, kept apart from its state: a panic leaves
+/// that borrowed for good, and the page must still hear of it.
+#[derive(Default)]
+struct Reports {
+    warnings: RefCell<Vec<String>>,
+    on_error: RefCell<Option<js_sys::Function>>,
+}
+
+impl Reports {
+    /// Keep `message` with the warnings and hand it to the page.
+    fn fail(&self, message: &str) {
+        self.warnings.borrow_mut().push(message.to_owned());
+        let on_error = self.on_error.borrow().clone();
+        if let Some(on_error) = on_error {
+            let _ = on_error.call1(&JsValue::NULL, &JsValue::from_str(message));
+        }
+    }
+}
+
+thread_local! {
+    /// The reports of the player whose frame is running, for the panic
+    /// hook: a frame runs from `requestAnimationFrame`, where a panic
+    /// reaches nothing on the page.
+    static IN_FRAME: RefCell<Option<Rc<Reports>>> = const { RefCell::new(None) };
+}
+
+/// Log a panic, and report one in a frame through that player's
+/// `onError`. The player is dead after it: its state stays borrowed,
+/// its frames stop and its calls answer as if it had no show.
+fn install_panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            console_error_panic_hook::hook(info);
+            let reports = IN_FRAME.with(|cell| cell.try_borrow_mut().ok()?.take());
+            if let Some(reports) = reports {
+                reports.fail(&format!("the player stopped: {info}"));
+            }
+        }));
+    });
+}
+
 struct Inner {
     engine: Engine,
     script: Option<Driver>,
@@ -411,7 +508,6 @@ struct Inner {
     driver_playing: bool,
     /// The clock is stopped: frames still paint, nothing advances.
     paused: bool,
-    warnings: Vec<String>,
     /// What the GPU reported since the last frame, from wgpu's
     /// uncaptured-error handler: it runs outside the frame, so the
     /// frame loop picks these up and stops.
@@ -428,7 +524,6 @@ struct Inner {
     anchor_ms: Option<f64>,
     on_event: Option<js_sys::Function>,
     on_driver: Option<js_sys::Function>,
-    on_error: Option<js_sys::Function>,
     pending_frame: Option<i32>,
     /// The page's sound, when the browser gave us an audio context.
     audio: Option<WebAudio>,
@@ -514,8 +609,9 @@ impl Inner {
                 .map_or(0.0, |v| v.gain.clamp(0.0, 1.0));
             element.set_muted(!audible || gain <= 0.0);
             element.set_volume(gain);
-            // The picture: the frame the element shows now, copied on the
-            // GPU into a texture the renderer draws under this layer's key.
+            // The picture: the frame the element shows now, drawn into a
+            // canvas and copied from there on the GPU into a texture the
+            // renderer draws under this layer's key.
             if element.ready_state() < 2 {
                 continue;
             }
@@ -546,12 +642,15 @@ impl Inner {
                 screen.size = size;
                 screen.drawn = false;
             }
+            let Some(frame) = screen.frame(size) else {
+                continue;
+            };
             let Some(texture) = &screen.texture else {
                 continue;
             };
             handle.queue.copy_external_image_to_texture(
                 &wgpu::CopyExternalImageSourceInfo {
-                    source: wgpu::ExternalImageSource::HTMLVideoElement(element.clone()),
+                    source: wgpu::ExternalImageSource::OffscreenCanvas(frame),
                     origin: wgpu::Origin2d::ZERO,
                     flip_y: false,
                 },
@@ -758,6 +857,7 @@ impl Inner {
 #[wasm_bindgen]
 pub struct CuelightPlayer {
     inner: Rc<RefCell<Inner>>,
+    reports: Rc<Reports>,
     // Owns the frame callback; the callback itself only holds weak
     // references, so dropping the player ends the loop.
     _frame: Rc<RefCell<Option<FrameCallback>>>,
@@ -769,7 +869,7 @@ pub struct CuelightPlayer {
 impl CuelightPlayer {
     /// Fetch the show folder at `url` and start playing it in `canvas`.
     pub async fn create(canvas: HtmlCanvasElement, url: String) -> Result<CuelightPlayer, JsValue> {
-        console_error_panic_hook::set_once();
+        install_panic_hook();
         // wgpu and vello say what went wrong through `log`; without a
         // logger that went nowhere.
         let _ = console_log::init_with_level(log::Level::Warn);
@@ -894,7 +994,6 @@ impl CuelightPlayer {
             driver: loaded.driver.clone().map(DriverPlayer::new),
             driver_playing: loaded.driver.is_some(),
             script: loaded.driver,
-            warnings,
             gpu_errors,
             canvas,
             context,
@@ -904,16 +1003,20 @@ impl CuelightPlayer {
             anchor_ms: None,
             on_event: None,
             on_driver: None,
-            on_error: None,
             pending_frame: None,
             audio,
             clips: opened,
             screens: HashMap::new(),
         }));
-        let frame = start_frames(&inner)?;
+        let reports = Rc::new(Reports {
+            warnings: RefCell::new(warnings),
+            on_error: RefCell::default(),
+        });
+        let frame = start_frames(&inner, &reports)?;
         let gestures = listen_for_gestures(&inner)?;
         Ok(CuelightPlayer {
             inner,
+            reports,
             _frame: frame,
             _gestures: gestures,
         })
@@ -923,11 +1026,8 @@ impl CuelightPlayer {
     /// a key press on the page before it lets audio through.
     #[wasm_bindgen(getter, js_name = audioRunning)]
     pub fn audio_running(&self) -> bool {
-        self.inner
-            .borrow()
-            .audio
-            .as_ref()
-            .is_some_and(WebAudio::running)
+        self.state()
+            .is_some_and(|inner| inner.audio.as_ref().is_some_and(WebAudio::running))
     }
 
     /// Ask the browser to let sound through; only works from within a
@@ -935,7 +1035,7 @@ impl CuelightPlayer {
     /// page, so pages rarely need this.
     #[wasm_bindgen(js_name = resumeAudio)]
     pub fn resume_audio(&self) {
-        if let Some(audio) = &self.inner.borrow().audio {
+        if let Some(audio) = self.state().as_ref().and_then(|inner| inner.audio.as_ref()) {
             audio.resume();
         }
     }
@@ -949,23 +1049,26 @@ impl CuelightPlayer {
     /// context.
     #[wasm_bindgen(getter, js_name = audioEnabled)]
     pub fn audio_enabled(&self) -> bool {
-        self.inner
-            .borrow()
-            .audio
-            .as_ref()
-            .is_some_and(WebAudio::enabled)
+        self.state()
+            .is_some_and(|inner| inner.audio.as_ref().is_some_and(WebAudio::enabled))
     }
 
     #[wasm_bindgen(setter, js_name = audioEnabled)]
     pub fn set_audio_enabled(&self, enabled: bool) {
-        if let Some(audio) = &mut self.inner.borrow_mut().audio {
+        if let Some(audio) = self
+            .state_mut()
+            .as_mut()
+            .and_then(|inner| inner.audio.as_mut())
+        {
             audio.set_enabled(enabled);
         }
     }
 
     /// Fire a trigger.
     pub fn trigger(&self, name: &str) {
-        self.inner.borrow_mut().engine.trigger(name);
+        if let Some(mut inner) = self.state_mut() {
+            inner.engine.trigger(name);
+        }
     }
 
     /// Press a key, by the name the browser gives it
@@ -973,7 +1076,7 @@ impl CuelightPlayer {
     /// returns that trigger, or `null` when the show says nothing about
     /// it, so a page can leave the key to the browser.
     pub fn key(&self, key: &str) -> Option<String> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.state_mut()?;
         let fired = inner.engine.key(key)?;
         let at = inner.engine.time();
         inner.live.record(at, fired.clone());
@@ -988,7 +1091,7 @@ impl CuelightPlayer {
     /// `null` when the press landed in the letterbox beside the canvas
     /// or on nothing that answers.
     pub fn press(&self, x: f64, y: f64) -> Option<String> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.state_mut()?;
         let size = inner.engine.show()?.size;
         // CSS pixels to the surface the frame was presented on.
         let ratio = inner.pixel_ratio();
@@ -1027,7 +1130,9 @@ impl CuelightPlayer {
     /// page that wants a pointer cursor over what can be pressed.
     #[wasm_bindgen(js_name = pressedAt)]
     pub fn pressed_at(&self, x: f64, y: f64) -> JsValue {
-        let inner = self.inner.borrow();
+        let Some(inner) = self.state() else {
+            return JsValue::UNDEFINED;
+        };
         let Some(size) = inner.engine.show().map(|show| show.size) else {
             return JsValue::UNDEFINED;
         };
@@ -1059,7 +1164,9 @@ impl CuelightPlayer {
     /// `fill`, as CSS's `object-fit` names them.
     #[wasm_bindgen(getter)]
     pub fn fit(&self) -> String {
-        self.inner.borrow().presenter.fit().name().to_owned()
+        self.state()
+            .map(|inner| inner.presenter.fit().name().to_owned())
+            .unwrap_or_default()
     }
 
     /// Bring the show to the canvas as `fit` says from the next frame
@@ -1068,30 +1175,37 @@ impl CuelightPlayer {
     pub fn set_fit(&self, fit: &str) -> Result<(), JsValue> {
         let fit = Fit::parse(fit)
             .ok_or_else(|| error(format!("{fit:?} is not a fit: contain, cover or fill")))?;
-        self.inner.borrow_mut().presenter.set_fit(fit);
+        if let Some(mut inner) = self.state_mut() {
+            inner.presenter.set_fit(fit);
+        }
         Ok(())
     }
 
     /// Set a variable to a boolean, a number or a string.
     pub fn set(&self, name: &str, value: JsValue) -> Result<(), JsValue> {
         let value = from_js(&value)?;
-        self.inner.borrow_mut().engine.set_variable(name, value);
+        if let Some(mut inner) = self.state_mut() {
+            inner.engine.set_variable(name, value);
+        }
         Ok(())
     }
 
     /// A variable's current value, `undefined` when the show has none by
     /// that name.
     pub fn get(&self, name: &str) -> JsValue {
-        let inner = self.inner.borrow();
-        inner
-            .engine
-            .variable(name)
-            .map_or(JsValue::UNDEFINED, to_js)
+        self.state().map_or(JsValue::UNDEFINED, |inner| {
+            inner
+                .engine
+                .variable(name)
+                .map_or(JsValue::UNDEFINED, to_js)
+        })
     }
 
     /// The triggers the show listens to, sorted.
     pub fn actions(&self) -> Vec<String> {
-        let inner = self.inner.borrow();
+        let Some(inner) = self.state() else {
+            return Vec::new();
+        };
         inner
             .engine
             .show()
@@ -1107,8 +1221,10 @@ impl CuelightPlayer {
     /// trigger nobody hears are listed too, as heard anywhere.
     pub fn listeners(&self) -> JsValue {
         use cuelight_core::Listened;
-        let inner = self.inner.borrow();
         let object = js_sys::Object::new();
+        let Some(inner) = self.state() else {
+            return object.into();
+        };
         let listeners = inner.engine.show().map(|show| show.listeners());
         for (name, listened) in listeners.unwrap_or_default() {
             let place = js_sys::Object::new();
@@ -1128,8 +1244,10 @@ impl CuelightPlayer {
 
     /// The show's variables with their current values, as an object.
     pub fn variables(&self) -> JsValue {
-        let inner = self.inner.borrow();
         let object = js_sys::Object::new();
+        let Some(inner) = self.state() else {
+            return object.into();
+        };
         for name in inner
             .engine
             .show()
@@ -1147,7 +1265,9 @@ impl CuelightPlayer {
 
     /// The show's scene names, in document order.
     pub fn scenes(&self) -> Vec<String> {
-        let inner = self.inner.borrow();
+        let Some(inner) = self.state() else {
+            return Vec::new();
+        };
         inner.engine.show().map_or_else(Vec::new, |show| {
             show.scenes.iter().map(|s| s.name.clone()).collect()
         })
@@ -1155,61 +1275,61 @@ impl CuelightPlayer {
 
     #[wasm_bindgen(getter, js_name = activeScene)]
     pub fn active_scene(&self) -> Option<String> {
-        self.inner.borrow().engine.active_scene().map(str::to_owned)
+        self.state()?.engine.active_scene().map(str::to_owned)
     }
 
     /// The show's canvas size, e.g. for the page to set an aspect ratio.
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 {
-        self.inner
-            .borrow()
-            .engine
-            .show()
-            .map_or(0, |show| show.size[0])
+        self.state()
+            .and_then(|inner| inner.engine.show().map(|show| show.size[0]))
+            .unwrap_or(0)
     }
 
     #[wasm_bindgen(getter)]
     pub fn height(&self) -> u32 {
-        self.inner
-            .borrow()
-            .engine
-            .show()
-            .map_or(0, |show| show.size[1])
+        self.state()
+            .and_then(|inner| inner.engine.show().map(|show| show.size[1]))
+            .unwrap_or(0)
     }
 
     /// What loading complained about, and what stopped the frames since
     /// (a GPU error, a frame that failed); also logged to the console.
     pub fn warnings(&self) -> Vec<String> {
-        self.inner.borrow().warnings.clone()
+        self.reports.warnings.borrow().clone()
     }
 
     /// Call `callback` with a message when the GPU reports an error or a
     /// frame fails; the frames stop then, since the next would fail the
     /// same way, while the page keeps the player to read `warnings()`
-    /// from. `null` stops it. The message is logged to the console
-    /// either way.
+    /// from. A frame that panics stops the player for good: every call
+    /// after it answers as if there were no show. `null` stops it. The
+    /// message is logged to the console either way.
     #[wasm_bindgen(js_name = onError)]
     pub fn on_error(&self, callback: Option<js_sys::Function>) {
-        self.inner.borrow_mut().on_error = callback;
+        *self.reports.on_error.borrow_mut() = callback;
     }
 
     /// Whether the show folder came with a driver script.
     #[wasm_bindgen(getter, js_name = hasDriver)]
     pub fn has_driver(&self) -> bool {
-        self.inner.borrow().script.is_some()
+        self.state().is_some_and(|inner| inner.script.is_some())
     }
 
     /// Whether the driver script is playing: false once paused or finished.
     #[wasm_bindgen(getter, js_name = driverPlaying)]
     pub fn driver_playing(&self) -> bool {
-        let inner = self.inner.borrow();
-        inner.driver_playing && inner.driver.as_ref().is_some_and(|d| !d.is_done())
+        self.state().is_some_and(|inner| {
+            inner.driver_playing && inner.driver.as_ref().is_some_and(|d| !d.is_done())
+        })
     }
 
     /// Continue the driver script, from the top when it had finished.
     #[wasm_bindgen(js_name = driverPlay)]
     pub fn driver_play(&self) {
-        let mut inner = self.inner.borrow_mut();
+        let Some(mut inner) = self.state_mut() else {
+            return;
+        };
         if inner.driver.as_ref().is_some_and(DriverPlayer::is_done) {
             inner.driver = inner.script.clone().map(DriverPlayer::new);
         }
@@ -1218,29 +1338,35 @@ impl CuelightPlayer {
 
     #[wasm_bindgen(js_name = driverPause)]
     pub fn driver_pause(&self) {
-        self.inner.borrow_mut().driver_playing = false;
+        if let Some(mut inner) = self.state_mut() {
+            inner.driver_playing = false;
+        }
     }
 
     /// Stop the clock. Frames keep painting, so a resize or a seek still
     /// shows, but nothing advances and the driver stops with it.
     pub fn pause(&self) {
-        self.inner.borrow_mut().paused = true;
+        if let Some(mut inner) = self.state_mut() {
+            inner.paused = true;
+        }
     }
 
     /// Start the clock again from where it stopped.
     pub fn resume(&self) {
-        self.inner.borrow_mut().paused = false;
+        if let Some(mut inner) = self.state_mut() {
+            inner.paused = false;
+        }
     }
 
     #[wasm_bindgen(getter)]
     pub fn paused(&self) -> bool {
-        self.inner.borrow().paused
+        self.state().is_none_or(|inner| inner.paused)
     }
 
     /// Seconds of show time that have passed.
     #[wasm_bindgen(getter)]
     pub fn time(&self) -> f64 {
-        self.inner.borrow().engine.time()
+        self.state().map_or(0.0, |inner| inner.engine.time())
     }
 
     /// Put the show at `seconds`, forwards or backwards.
@@ -1252,7 +1378,9 @@ impl CuelightPlayer {
     /// there would have, and costs well under a millisecond, so a page
     /// may call this as a scrub bar moves.
     pub fn seek(&self, seconds: f64) {
-        let mut inner = self.inner.borrow_mut();
+        let Some(mut inner) = self.state_mut() else {
+            return;
+        };
         let script = inner.script.clone();
         let live = inner.live.clone();
         let Inner { engine, .. } = &mut *inner;
@@ -1267,7 +1395,9 @@ impl CuelightPlayer {
     /// `{ type: "trigger", name }`; `null` stops it.
     #[wasm_bindgen(js_name = onEvent)]
     pub fn on_event(&self, callback: Option<js_sys::Function>) {
-        self.inner.borrow_mut().on_event = callback;
+        if let Some(mut inner) = self.state_mut() {
+            inner.on_event = callback;
+        }
     }
 
     /// Call `callback` with every step of the driver script as it fires,
@@ -1277,7 +1407,22 @@ impl CuelightPlayer {
     /// reported.
     #[wasm_bindgen(js_name = onDriver)]
     pub fn on_driver(&self, callback: Option<js_sys::Function>) {
-        self.inner.borrow_mut().on_driver = callback;
+        if let Some(mut inner) = self.state_mut() {
+            inner.on_driver = callback;
+        }
+    }
+}
+
+impl CuelightPlayer {
+    /// The player's state, or `None` once a panic has left it borrowed:
+    /// a dead player answers every call as if it had no show, rather
+    /// than panicking again for each.
+    fn state(&self) -> Option<std::cell::Ref<'_, Inner>> {
+        self.inner.try_borrow().ok()
+    }
+
+    fn state_mut(&self) -> Option<std::cell::RefMut<'_, Inner>> {
+        self.inner.try_borrow_mut().ok()
     }
 }
 
@@ -1285,8 +1430,7 @@ impl Drop for CuelightPlayer {
     fn drop(&mut self) {
         // Every clip's decoder goes now, not when the elements are
         // collected: a page that swaps shows makes a player per show.
-        {
-            let inner = self.inner.borrow();
+        if let Ok(inner) = self.inner.try_borrow() {
             for screen in inner.screens.values() {
                 release(&screen.element);
             }
@@ -1296,7 +1440,11 @@ impl Drop for CuelightPlayer {
                 }
             }
         }
-        let pending = self.inner.borrow_mut().pending_frame.take();
+        let pending = self
+            .inner
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut inner| inner.pending_frame.take());
         if let (Some(id), Some(window)) = (pending, web_sys::window()) {
             let _ = window.cancel_animation_frame(id);
         }
@@ -1328,7 +1476,9 @@ fn listen_for_gestures(inner: &Rc<RefCell<Inner>>) -> Result<Vec<GestureListener
         let weak = Rc::downgrade(inner);
         let closure = Closure::new(move || {
             if let Some(inner) = weak.upgrade() {
-                let inner = inner.borrow();
+                let Ok(inner) = inner.try_borrow() else {
+                    return;
+                };
                 if let Some(audio) = &inner.audio {
                     audio.resume();
                 }
@@ -1346,14 +1496,20 @@ fn listen_for_gestures(inner: &Rc<RefCell<Inner>>) -> Result<Vec<GestureListener
 
 /// Start the `requestAnimationFrame` loop. The returned cell owns the
 /// callback; the loop ends when it is dropped.
-fn start_frames(inner: &Rc<RefCell<Inner>>) -> Result<Rc<RefCell<Option<FrameCallback>>>, JsValue> {
+fn start_frames(
+    inner: &Rc<RefCell<Inner>>,
+    reports: &Rc<Reports>,
+) -> Result<Rc<RefCell<Option<FrameCallback>>>, JsValue> {
     fn request(window: &web_sys::Window, inner: &RefCell<Inner>, callback: &FrameCallback) {
         let id = window.request_animation_frame(callback.as_ref().unchecked_ref());
-        inner.borrow_mut().pending_frame = id.ok();
+        if let Ok(mut inner) = inner.try_borrow_mut() {
+            inner.pending_frame = id.ok();
+        }
     }
 
     let cell: Rc<RefCell<Option<FrameCallback>>> = Rc::new(RefCell::new(None));
     let (weak_cell, weak_inner) = (Rc::downgrade(&cell), Rc::downgrade(inner));
+    let reports = reports.clone();
     let callback = Closure::new(move |now_ms: f64| {
         let (Some(cell), Some(inner)): (Option<Rc<_>>, Option<Rc<RefCell<Inner>>>) =
             (Weak::upgrade(&weak_cell), Weak::upgrade(&weak_inner))
@@ -1362,25 +1518,28 @@ fn start_frames(inner: &Rc<RefCell<Inner>>) -> Result<Rc<RefCell<Option<FrameCal
         };
         // The borrow ends before any callback runs: a callback may well
         // call back into the player.
-        let (result, failed, on_event, on_driver, on_error) = {
-            let mut inner = inner.borrow_mut();
+        let (result, failed, on_event, on_driver) = {
+            let Ok(mut inner) = inner.try_borrow_mut() else {
+                return;
+            };
             inner.pending_frame = None;
             // What the GPU reported since the last frame comes first: a
             // frame that failed after it failed because of it.
             let mut failed: Vec<String> =
                 std::mem::take(&mut *inner.gpu_errors.lock().unwrap_or_else(|p| p.into_inner()));
+            // A panic in the frame is reported through these.
+            IN_FRAME.with(|cell| *cell.borrow_mut() = Some(reports.clone()));
             let result = inner.frame(now_ms);
+            IN_FRAME.with(|cell| cell.borrow_mut().take());
             if let Err(e) = &result {
                 web_sys::console::error_1(&format!("cuelight: {e}").into());
                 failed.push(e.clone());
             }
-            inner.warnings.extend(failed.iter().cloned());
             (
                 result,
                 failed,
                 inner.on_event.clone(),
                 inner.on_driver.clone(),
-                inner.on_error.clone(),
             )
         };
         // The driver's steps first: what the show did this frame follows
@@ -1401,10 +1560,8 @@ fn start_frames(inner: &Rc<RefCell<Inner>>) -> Result<Rc<RefCell<Option<FrameCal
         // canvas drawing black on is what hid the error in the first
         // place.
         if !failed.is_empty() {
-            if let Some(on_error) = on_error {
-                for message in &failed {
-                    let _ = on_error.call1(&JsValue::NULL, &JsValue::from_str(message));
-                }
+            for message in &failed {
+                reports.fail(message);
             }
             return;
         }
