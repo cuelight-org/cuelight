@@ -8,7 +8,7 @@
 //! finished frame: [`Renderer`] does it after readback, hosts rendering on
 //! their own device can run [`OutputPass`] on the GPU.
 
-use crate::engine::{Engine, ResolvedLayer, ResolvedShape};
+use crate::engine::{Engine, ResolvedLayer, ResolvedShape, Transform};
 use crate::lru::ByteLru;
 use crate::output::{OutputColor, LUMA_WEIGHTS};
 use cuelight_core::{parse_color, Blend, DotShape, Error, OutputMode, Pass, PathElement, Scaling};
@@ -496,7 +496,11 @@ fn build_scene(
                     .brush(color)
                     .draw(Fill::NonZero, run());
             }
-            ResolvedShape::Path { elements, stroke } => {
+            ResolvedShape::Path {
+                elements,
+                stroke,
+                stroke_space,
+            } => {
                 let path = bez_path(&elements);
                 if layer.color[3] > 0 || layer.gradient.is_some() {
                     show.fill(Fill::NonZero, placement, paint, brush_space, &path);
@@ -505,7 +509,24 @@ fn build_scene(
                     let alpha = (f64::from(a) / 255.0 * layer.opacity).clamp(0.0, 1.0);
                     let stroke = Stroke::new(width);
                     let color = Color::from_rgba8(r, g, b, (alpha * 255.0).round() as u8);
-                    show.stroke(&stroke, placement, color, None, &path);
+                    // Stroked in its own space and the outline mapped onto
+                    // the canvas, so it squashes with the shape; flattened
+                    // to a line, there is no outline to draw.
+                    let space = stroke_space.map(|space| (space, space.invert()));
+                    match space {
+                        None => show.stroke(&stroke, placement, color, None, &path),
+                        Some((space, Some(back))) => {
+                            let space = Affine::new(space.0);
+                            show.stroke(
+                                &stroke,
+                                placement * space,
+                                color,
+                                None,
+                                &(Affine::new(back.0) * path),
+                            );
+                        }
+                        Some((_, None)) => {}
+                    }
                 }
             }
             ResolvedShape::Polygon { points } => {
@@ -703,10 +724,14 @@ fn bounds(shape: &ResolvedShape) -> Option<Rect> {
         ResolvedShape::Path {
             ref elements,
             stroke,
+            stroke_space,
         } => {
             let [x, y, w, h] = PathElement::bounds(elements)?;
             let half = stroke.map_or(0.0, |(_, width)| width / 2.0);
-            Rect::new(x - half, y - half, x + w + half, y + h + half)
+            // A round pen of that width, through the space it is drawn in.
+            let [a, b, c, d, ..] = stroke_space.map_or(Transform::IDENTITY.0, |s| s.0);
+            let (hx, hy) = (half * a.hypot(c), half * b.hypot(d));
+            Rect::new(x - hx, y - hy, x + w + hx, y + h + hy)
         }
         _ => return None,
     })

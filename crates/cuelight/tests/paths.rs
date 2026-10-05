@@ -26,7 +26,10 @@ fn a_path_shape_resolves_into_canvas_coordinates() {
     let layers = resolved(&engine);
     assert_eq!(layers.len(), 1);
     assert_eq!(layers[0].color, [255, 0, 0, 255]);
-    let ResolvedShape::Path { elements, stroke } = &layers[0].shape else {
+    let ResolvedShape::Path {
+        elements, stroke, ..
+    } = &layers[0].shape
+    else {
         panic!("{:?}", layers[0].shape);
     };
     assert_eq!(stroke, &None);
@@ -63,7 +66,10 @@ fn a_stroked_rect_becomes_a_path_with_a_scaled_stroke() {
         ))
         .unwrap();
     let layers = resolved(&engine);
-    let ResolvedShape::Path { elements, stroke } = &layers[0].shape else {
+    let ResolvedShape::Path {
+        elements, stroke, ..
+    } = &layers[0].shape
+    else {
         panic!("{:?}", layers[0].shape);
     };
     assert_eq!(stroke, &Some(([0, 255, 0, 255], 3.0)));
@@ -92,7 +98,10 @@ fn a_stroked_circle_is_four_arcs() {
         ))
         .unwrap();
     let layers = resolved(&engine);
-    let ResolvedShape::Path { elements, stroke } = &layers[0].shape else {
+    let ResolvedShape::Path {
+        elements, stroke, ..
+    } = &layers[0].shape
+    else {
         panic!("{:?}", layers[0].shape);
     };
     assert_eq!(stroke, &Some(([255, 255, 255, 255], 1.0)));
@@ -203,7 +212,10 @@ fn a_vector_layer_draws_its_paths_scaled_into_size() {
     let layers = resolved(&engine);
     assert_eq!(layers.len(), 2);
     assert_eq!(layers[0].color, [0, 0, 255, 255]);
-    let ResolvedShape::Path { elements, stroke } = &layers[0].shape else {
+    let ResolvedShape::Path {
+        elements, stroke, ..
+    } = &layers[0].shape
+    else {
         panic!()
     };
     assert_eq!(stroke, &None);
