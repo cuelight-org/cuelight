@@ -135,12 +135,19 @@ pub struct Pointer {
     pub y: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub over: Option<String>,
+    /// The name of the topmost pressable layer drawn under the pointer,
+    /// the one a press there would hit; `""` over nothing. Only
+    /// pressable layers count, as for a press: an overlay drawn on top
+    /// is see-through. Set by a host that draws the show
+    /// (`cuelight::Engine::point`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub under: Option<String>,
 }
 
 impl Pointer {
     /// The variable names it sets.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        [&self.x, &self.y, &self.over]
+        [&self.x, &self.y, &self.over, &self.under]
             .into_iter()
             .flatten()
             .map(String::as_str)

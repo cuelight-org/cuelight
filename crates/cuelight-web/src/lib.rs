@@ -809,7 +809,6 @@ impl Inner {
             self.anchor_ms = Some(now_ms - time * 1000.0);
             (target, dt) = (time, 0.0);
         }
-        self.point();
         let mut applied = Vec::new();
         if self.driver_playing && !self.paused {
             if let Some(driver) = &mut self.driver {
@@ -817,6 +816,9 @@ impl Inner {
             }
         }
         self.engine.advance_to(target);
+        // After the clock, so what is under the pointer is read from the
+        // frame about to be drawn.
+        self.point();
         let events = self.engine.drain_events();
         let voices = self.engine.voices().unwrap_or_default();
         if let Some(audio) = &mut self.audio {

@@ -672,7 +672,8 @@ impl Engine {
     /// at that place stopped at the canvas edge, left where they were
     /// when the pointer has gone, and `over` to whether it is on the
     /// canvas. A variable that would not change is not set again, so a
-    /// host may call this on every frame or every move alike.
+    /// host may call this on every frame or every move alike. `under`
+    /// needs the frame as drawn, and is set by `cuelight::Engine::point`.
     pub fn point(&mut self, at: Option<[f64; 2]>) {
         let Some(show) = self.show.as_ref() else {
             return;

@@ -255,8 +255,19 @@ keeps up to date:
   leaves `x` and `y` where it was last, and `over` goes `false`.
 - With several fingers down, the first one is the pointer until it
   lifts.
+- `under` is the name of the topmost pressable layer drawn under the
+  pointer, the one a press there would hit, and `""` over nothing or
+  once the pointer has gone. Only pressable layers count, as for a
+  press, so an overlay drawn on top is see-through. It follows the frame
+  as drawn: a layer that moves under a still pointer is under it. A
+  hover highlight on a tile is one binding:
 
-Any of the three may be left out. They are ordinary variables, so
+  ```json
+  { "property": "opacity", "variable": "hovered", "map": { "tile_3": 1 }, "default": 0,
+    "transition": { "duration": 0.2 } }
+  ```
+
+Any of them may be left out. They are ordinary variables, so
 bindings, curves and transitions read them as any other, and they need
 not be declared, though declaring them gives the show a place to start
 from. A [show value](#values-the-show-animates) of the same name, with a wandering

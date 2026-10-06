@@ -1633,6 +1633,13 @@
             "null"
           ]
         },
+        "under": {
+          "description": "The name of the topmost pressable layer drawn under the pointer,\nthe one a press there would hit; `\"\"` over nothing. Only\npressable layers count, as for a press: an overlay drawn on top\nis see-through. Set by a host that draws the show\n(`cuelight::Engine::point`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "x": {
           "type": [
             "string",
