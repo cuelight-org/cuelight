@@ -1569,6 +1569,9 @@ A timeline is a keyframed animation owned by its layer:
   past an end (`back_out` overshoots and comes back: a reel snapping
   against its stop), `elastic_out` arrives fast and rings around the end,
   `bounce_out` hits the end and bounces off it without passing it.
+- Keys go in time order; a show with a track whose keys go back in time
+  is refused. Two keys at the same instant are a jump from one value to
+  the other.
 - The timeline's duration is its longest track's last key. When it ends
   it stops and its properties fall back (see precedence); with `loop`
   the playhead wraps instead. For a seamless loop, author each track's
