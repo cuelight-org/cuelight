@@ -520,9 +520,33 @@ impl Engine {
         self.core.key(key)
     }
 
-    /// See [`cuelight_core::Engine::point`].
+    /// See [`cuelight_core::Engine::point`]; this one also keeps the
+    /// show's `input.pointer.under` set to the name of the topmost
+    /// pressable layer drawn under the pointer, the one a press there
+    /// would hit, and `""` over nothing or once the pointer has gone.
+    ///
+    /// Working that out resolves the frame, so it is done only for a
+    /// show that names `under`, and only while there is a pointer.
     pub fn point(&mut self, at: Option<[f64; 2]>) {
         self.core.point(at);
+        let Some(name) = self
+            .core
+            .show()
+            .and_then(|show| show.input.pointer.as_ref())
+            .and_then(|pointer| pointer.under.clone())
+        else {
+            return;
+        };
+        let under = at
+            .and_then(|at| {
+                let drawn = self.drawn().ok()?;
+                pressable_at(&drawn, at).map(|(_, _, layer)| layer.clone())
+            })
+            .unwrap_or_default();
+        let under = Value::Text(under);
+        if self.core.variable(&name) != Some(&under) {
+            self.core.set_variable(&name, under);
+        }
     }
 
     /// See [`cuelight_core::Engine::trigger`].
@@ -765,15 +789,10 @@ impl Engine {
     /// over nothing pressable, which a host may show as a plain cursor.
     pub fn pressed(&self, at: [f64; 2]) -> Option<Pressed> {
         let drawn = self.drawn().ok()?;
-        hit_items(&drawn, at).into_iter().rev().find_map(|i| {
-            let (_, press) = drawn
-                .pressable
-                .iter()
-                .find(|(range, _)| range.contains(&i))?;
-            Some(Pressed {
-                trigger: press.trigger.clone(),
-                open: press.open.clone(),
-            })
+        let (_, press, _) = pressable_at(&drawn, at)?;
+        Some(Pressed {
+            trigger: press.trigger.clone(),
+            open: press.open.clone(),
         })
     }
 
@@ -2093,9 +2112,11 @@ impl Engine {
                     }
                 }
                 if let Some(press) = &layer.press {
-                    built
-                        .pressable
-                        .push((from..built.items.len(), press.clone()));
+                    built.pressable.push((
+                        from..built.items.len(),
+                        press.clone(),
+                        layer.name.clone(),
+                    ));
                 }
                 if let (Some((started, mark, misses_before)), Some(costs)) =
                     (measuring, built.profile.as_mut())
@@ -2232,6 +2253,18 @@ fn kind_name(kind: &LayerKind) -> &'static str {
         LayerKind::Part { .. } => "part",
     }
 }
+/// The topmost pressable layer drawn under `at`: its items, what a press
+/// on it does and its name. Only pressable layers count; anything else is
+/// see-through.
+fn pressable_at(drawn: &Drawn, at: [f64; 2]) -> Option<&(std::ops::Range<usize>, Press, String)> {
+    hit_items(drawn, at).into_iter().rev().find_map(|i| {
+        drawn
+            .pressable
+            .iter()
+            .find(|(range, _, _)| range.contains(&i))
+    })
+}
+
 /// The items of a frame under `at`, in paint order, clips honoured.
 /// Markers cover nothing.
 fn hit_items(drawn: &Drawn, at: [f64; 2]) -> Vec<usize> {
@@ -2388,11 +2421,11 @@ struct Drawn {
     /// Per visible layer, what it cost, when the frame is being
     /// profiled.
     profile: Option<Vec<LayerCost>>,
-    /// Per pressable layer, the items it drew and what a press on them
-    /// does, in paint order. Item ranges rather than shapes, so a press
-    /// is tested against the very geometry the frame drew, clips and
-    /// transforms included.
-    pressable: Vec<(std::ops::Range<usize>, Press)>,
+    /// Per pressable layer, the items it drew, what a press on them does
+    /// and the layer's name, in paint order. Item ranges rather than
+    /// shapes, so a press is tested against the very geometry the frame
+    /// drew, clips and transforms included.
+    pressable: Vec<(std::ops::Range<usize>, Press, String)>,
 }
 
 /// What a layer takes from the tree above it.

@@ -699,9 +699,11 @@ impl App {
         if stalled {
             log::info!("a stall longer than {A_STALL:.0}s: the show goes on from where it stopped");
         }
-        self.point();
         self.advance_driver(dt);
         self.engine.advance_to(target);
+        // After the clock, so what is under the pointer is read from the
+        // frame about to be drawn.
+        self.point();
         for event in self.engine.drain_events() {
             log::info!("show event: {event:?}");
         }

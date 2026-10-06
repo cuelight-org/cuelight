@@ -320,3 +320,62 @@ fn a_pointer_that_has_not_moved_sets_nothing_again() {
     engine.point(Some([30.0, 20.0]));
     assert!(engine.drain_trace().is_empty());
 }
+
+/// Two pressable tiles, one sliding right, under an overlay that is not
+/// pressable.
+const HOVER: &str = r##"{ "name": "hover", "size": [100, 50],
+  "input": { "pointer": { "under": "hovered" } },
+  "layers": [
+    { "name": "tile_1", "type": "shape", "shape": { "rect": [0, 0, 20, 20] }, "fill": "#FF0000",
+      "press": { "trigger": "one" } },
+    { "name": "tile_2", "type": "shape", "shape": { "rect": [0, 30, 20, 20] }, "fill": "#00FF00",
+      "press": { "trigger": "two" },
+      "timelines": [ { "name": "slide", "autoplay": true,
+        "tracks": [ { "property": "x", "keys": [ { "t": 0, "v": 0 }, { "t": 1, "v": 50 } ] } ] } ] },
+    { "name": "vignette", "type": "shape", "shape": { "rect": [0, 0, 100, 50] }, "fill": "#00000080" },
+    { "name": "glow", "type": "shape", "shape": { "rect": [0, 0, 20, 20] }, "fill": "#FFFFFF",
+      "bindings": [ { "property": "opacity", "variable": "hovered", "map": { "tile_1": 1 },
+                      "default": 0, "transition": { "duration": 0.2 } } ] }
+  ] }"##;
+
+#[test]
+fn the_pointer_says_which_pressable_layer_is_under_it() {
+    let mut engine = Engine::new();
+    engine.load_show(HOVER).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    // The overlay drawn on top is see-through, as it is for a press.
+    engine.point(Some([10.0, 10.0]));
+    assert_eq!(engine.value("hovered"), Some("tile_1".into()));
+    // The highlight bound to it fades in.
+    let glow = |engine: &Engine| {
+        let layers = engine.resolved_layers().unwrap();
+        layers
+            .iter()
+            .find(|l| l.name == "glow")
+            .map_or(0.0, |l| l.opacity)
+    };
+    engine.advance_to(0.2);
+    assert!((glow(&engine) - 1.0).abs() < 1e-9, "{}", glow(&engine));
+    engine.point(Some([50.0, 10.0]));
+    assert_eq!(engine.value("hovered"), Some("".into()));
+    // Gone, nothing is under it.
+    engine.point(Some([10.0, 10.0]));
+    engine.point(None);
+    assert_eq!(engine.value("hovered"), Some("".into()));
+}
+
+#[test]
+fn a_layer_that_moves_under_a_still_pointer_is_under_it() {
+    let mut engine = Engine::new();
+    engine.load_show(HOVER).unwrap();
+    engine.point(Some([60.0, 40.0]));
+    assert_eq!(engine.value("hovered"), Some("".into()));
+    // Slid to x 45 to 65 by now: under the pointer that has not moved.
+    engine.advance_to(0.9);
+    engine.point(Some([60.0, 40.0]));
+    assert_eq!(engine.value("hovered"), Some("tile_2".into()));
+}
