@@ -799,6 +799,85 @@ impl Engine {
         })
     }
 
+    /// The box of the layer at `layer` as drawn now, its children
+    /// included: the box a press and `input.pointer.under` test against,
+    /// for a host that outlines a layer, an editor showing what is
+    /// selected. `None` when it draws nothing, hidden or clipped away.
+    ///
+    /// When all it draws is placed one way, the box is in that space and
+    /// `transform` places it, so a turned or unevenly scaled layer is
+    /// outlined turned with it. A group whose children are placed each
+    /// their own way gets the box round them all on the canvas, with no
+    /// transform. A clip cuts the box where it is in the same space, and
+    /// cuts the box on the canvas otherwise. Rects, circles, paths and
+    /// images by the box they fill, text by its lines.
+    pub fn bounds(&self, layer: &LayerPath) -> Option<LayerBounds> {
+        let drawn = self.drawn().ok()?;
+        let inside =
+            |path: &LayerPath| path.root == layer.root && path.indices.starts_with(&layer.indices);
+        let mut clips: Vec<Option<([f64; 4], Transform)>> = Vec::new();
+        // Each box in its own space, and the canvas boxes of the clips
+        // in another space that cut it.
+        let mut boxes: Vec<([f64; 4], Transform, Vec<[f64; 4]>)> = Vec::new();
+        for item in &drawn.items {
+            match &item.shape {
+                ResolvedShape::ClipBegin { shape } => {
+                    clips.push(shape_box(shape).map(|b| (b, item.transform)));
+                    continue;
+                }
+                ResolvedShape::ClipEnd => {
+                    clips.pop();
+                    continue;
+                }
+                _ => {}
+            }
+            if !inside(&item.layer) {
+                continue;
+            }
+            let Some(mut own) = shape_box(&item.shape) else {
+                continue;
+            };
+            let mut cuts = Vec::new();
+            let mut shown = true;
+            for (clip, space) in clips.iter().flatten() {
+                if *space == item.transform {
+                    match intersection(own, *clip) {
+                        Some(cut) => own = cut,
+                        // Clipped away: it draws nothing.
+                        None => shown = false,
+                    }
+                } else {
+                    cuts.push(on_canvas(*clip, *space));
+                }
+            }
+            if shown {
+                boxes.push((own, item.transform, cuts));
+            }
+        }
+        let (first, space, _) = boxes.first()?;
+        let one_space = boxes
+            .iter()
+            .all(|(_, t, cuts)| t == space && cuts.is_empty());
+        if one_space {
+            let rect = boxes.iter().fold(*first, |all, (b, ..)| union(all, *b));
+            return Some(LayerBounds {
+                rect,
+                transform: *space,
+            });
+        }
+        let rect = boxes
+            .iter()
+            .filter_map(|(b, t, cuts)| {
+                cuts.iter()
+                    .try_fold(on_canvas(*b, *t), |b, cut| intersection(b, *cut))
+            })
+            .reduce(union)?;
+        Some(LayerBounds {
+            rect,
+            transform: Transform::IDENTITY,
+        })
+    }
+
     /// The layers drawn under `at`, topmost first, by the same test a
     /// press uses: a rect and a circle exact, anything else by its box.
     /// Every layer with something under the point is listed, the ones
@@ -2269,6 +2348,74 @@ fn kind_name(kind: &LayerKind) -> &'static str {
         LayerKind::Part { .. } => "part",
     }
 }
+/// The box a drawn shape fills, `[x, y, width, height]` in its own
+/// space; `None` for a marker, which draws nothing.
+fn shape_box(shape: &ResolvedShape) -> Option<[f64; 4]> {
+    let around = |points: &mut dyn Iterator<Item = [f64; 2]>| {
+        let [x0, y0] = points.next()?;
+        let [mut l, mut t, mut r, mut b] = [x0, y0, x0, y0];
+        for [x, y] in points {
+            (l, t, r, b) = (l.min(x), t.min(y), r.max(x), b.max(y));
+        }
+        Some([l, t, r - l, b - t])
+    };
+    match shape {
+        ResolvedShape::Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+        | ResolvedShape::Image {
+            x,
+            y,
+            width,
+            height,
+            ..
+        }
+        | ResolvedShape::Bitmap {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => Some([*x, *y, *width, *height]),
+        ResolvedShape::Circle { cx, cy, radius } => {
+            Some([cx - radius, cy - radius, radius * 2.0, radius * 2.0])
+        }
+        ResolvedShape::Polygon { points } => around(&mut points.iter().copied()),
+        ResolvedShape::Path { elements, .. } => PathElement::bounds(elements),
+        ResolvedShape::GlyphRun { lines, .. } => lines.iter().copied().reduce(union),
+        ResolvedShape::ClipBegin { .. }
+        | ResolvedShape::ClipEnd
+        | ResolvedShape::BlendBegin { .. }
+        | ResolvedShape::BlendEnd => None,
+    }
+}
+
+/// The smallest box round both.
+fn union([ax, ay, aw, ah]: [f64; 4], [bx, by, bw, bh]: [f64; 4]) -> [f64; 4] {
+    let (l, t) = (ax.min(bx), ay.min(by));
+    let (r, b) = ((ax + aw).max(bx + bw), (ay + ah).max(by + bh));
+    [l, t, r - l, b - t]
+}
+
+/// Where two boxes overlap; `None` when they do not.
+fn intersection([ax, ay, aw, ah]: [f64; 4], [bx, by, bw, bh]: [f64; 4]) -> Option<[f64; 4]> {
+    let (l, t) = (ax.max(bx), ay.max(by));
+    let (r, b) = ((ax + aw).min(bx + bw), (ay + ah).min(by + bh));
+    (r >= l && b >= t).then_some([l, t, r - l, b - t])
+}
+
+/// The box on the canvas round `rect` placed by `transform`.
+fn on_canvas([x, y, w, h]: [f64; 4], transform: Transform) -> [f64; 4] {
+    let corners = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].map(|p| transform.apply(p));
+    corners.iter().skip(1).fold(
+        [corners[0][0], corners[0][1], 0.0, 0.0],
+        |all, &[px, py]| union(all, [px, py, 0.0, 0.0]),
+    )
+}
+
 /// The topmost pressable layer drawn under `at`: its items, what a press
 /// on it does and its name. Only pressable layers count; anything else is
 /// see-through.
@@ -2838,6 +2985,17 @@ fn resolve_shape(
             stroke_space: None,
         },
     }
+}
+
+/// A layer's box as drawn; see [`Engine::bounds`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayerBounds {
+    /// `[x, y, width, height]` in the space `transform` places on the
+    /// canvas.
+    pub rect: [f64; 4],
+    /// Where the box is on the canvas: the identity when `rect` is in
+    /// canvas coordinates already.
+    pub transform: Transform,
 }
 
 /// One paintable item of the flattened show, in canvas coordinates.
