@@ -882,7 +882,7 @@ impl Inner {
                 .create_view(&wgpu::TextureViewDescriptor::default()),
         );
         handle.queue.submit([encoder.finish()]);
-        texture.present();
+        handle.queue.present(texture);
         Ok(Happened { applied, events })
     }
 }

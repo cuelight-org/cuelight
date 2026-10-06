@@ -139,7 +139,7 @@ fn gpu_output_pass_matches_cpu_conversion() {
         .slice(..)
         .map_async(wgpu::MapMode::Read, |r| r.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let mapped = buffer.slice(..).get_mapped_range();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
     let mut gpu = Vec::new();
     for row in 0..height {
         let start = (row * bytes_per_row) as usize;
