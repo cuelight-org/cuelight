@@ -48,17 +48,42 @@ fn present(
     gpu: &mut Gpu,
     presenter: &mut Presenter,
     engine: &Engine,
-    [width, height]: [u32; 2],
+    target: [u32; 2],
 ) -> Vec<[u8; 4]> {
     let presented = presenter
-        .present(
+        .present(engine, &gpu.device, &gpu.queue, &mut gpu.renderer, target)
+        .unwrap();
+    read_back(gpu, &presented, target)
+}
+
+/// Present the part `view` of `engine` into a `target` and read it back.
+fn present_view(
+    gpu: &mut Gpu,
+    presenter: &mut Presenter,
+    engine: &Engine,
+    target: [u32; 2],
+    view: [f64; 4],
+) -> Vec<[u8; 4]> {
+    let presented = presenter
+        .present_view(
             engine,
             &gpu.device,
             &gpu.queue,
             &mut gpu.renderer,
-            [width, height],
+            target,
+            view,
         )
         .unwrap();
+    read_back(gpu, &presented, target)
+}
+
+/// Render what was presented into a `width` x `height` texture and read
+/// its pixels back.
+fn read_back(
+    gpu: &mut Gpu,
+    presented: &cuelight::render::Presented,
+    [width, height]: [u32; 2],
+) -> Vec<[u8; 4]> {
     let extent = wgpu::Extent3d {
         width,
         height,
@@ -342,4 +367,107 @@ fn a_bleeding_layer_reaches_into_the_letterbox() {
             at(32, y)
         );
     }
+}
+
+/// A 1920 x 1080 canvas in four colored quarters, on blue.
+const QUARTERS: &str = r##"{ "name": "q", "size": [1920, 1080], "background": "#0000FF", "layers": [
+    { "name": "tl", "type": "shape", "shape": { "rect": [0, 0, 960, 540] }, "fill": "#FF0000" },
+    { "name": "tr", "type": "shape", "shape": { "rect": [960, 0, 960, 540] }, "fill": "#00FF00" },
+    { "name": "bl", "type": "shape", "shape": { "rect": [0, 540, 960, 540] }, "fill": "#FFFFFF" },
+    { "name": "br", "type": "shape", "shape": { "rect": [960, 540, 960, 540] }, "fill": "#000000" }
+  ] }"##;
+
+#[test]
+fn a_view_draws_part_of_the_canvas_at_three_times_its_size() {
+    let Some(mut gpu) = gpu() else { return };
+    let mut engine = Engine::new();
+    engine.load_show(QUARTERS).unwrap();
+    let mut presenter = Presenter::new();
+    // A 640 x 360 window on the canvas, around its middle, at 3x: the
+    // whole canvas at that zoom would be a 5760 x 3240 frame.
+    let target = [1920, 1080];
+    let pixels = present_view(
+        &mut gpu,
+        &mut presenter,
+        &engine,
+        target,
+        [640.0, 360.0, 640.0, 360.0],
+    );
+    let at = |x: u32, y: u32| pixels[(y * target[0] + x) as usize];
+    // The middle of the canvas lands in the middle of the target, 3x.
+    assert_eq!(at(100, 100), [255, 0, 0, 255], "top left quarter");
+    assert_eq!(at(1800, 100), [0, 255, 0, 255], "top right quarter");
+    assert_eq!(at(100, 1000), [255, 255, 255, 255], "bottom left quarter");
+    assert_eq!(at(1800, 1000), [0, 0, 0, 255], "bottom right quarter");
+    // Canvas x 960 is the target's middle: 3 x (960 - 640) = 960.
+    assert_eq!(at(957, 100), [255, 0, 0, 255]);
+    assert_eq!(at(963, 100), [0, 255, 0, 255]);
+}
+
+#[test]
+fn a_view_past_the_canvas_shows_the_background() {
+    let Some(mut gpu) = gpu() else { return };
+    let mut engine = Engine::new();
+    engine.load_show(QUARTERS).unwrap();
+    let mut presenter = Presenter::new();
+    // From 100 canvas pixels left of the canvas, at 1x.
+    let pixels = present_view(
+        &mut gpu,
+        &mut presenter,
+        &engine,
+        [200, 100],
+        [-100.0, 0.0, 200.0, 100.0],
+    );
+    assert_eq!(pixels[10], [0, 0, 255, 255], "beside the canvas");
+    assert_eq!(pixels[150], [255, 0, 0, 255], "on it");
+}
+
+#[test]
+fn a_view_of_a_pixel_show_is_part_of_its_own_size_frame() {
+    let Some(mut gpu) = gpu() else { return };
+    let mut engine = Engine::new();
+    engine.load_show(SHOW).unwrap();
+    let mut presenter = Presenter::new();
+    // The right half of the 4 x 2 gray canvas, each canvas pixel a 4 x 4
+    // block: all of it the tinted mid gray, none of the white half.
+    let whole = present(&mut gpu, &mut presenter, &engine, [4, 2]);
+    let gray = whole[3];
+    let pixels = present_view(
+        &mut gpu,
+        &mut presenter,
+        &engine,
+        [8, 8],
+        [2.0, 0.0, 2.0, 2.0],
+    );
+    assert!(pixels.iter().all(|p| *p == gray), "{pixels:?}");
+}
+
+#[test]
+fn a_point_maps_back_through_a_view() {
+    use cuelight::render::{canvas_at_view, canvas_point_view};
+    let view = [640.0, 360.0, 640.0, 360.0];
+    let target = [1920, 1080];
+    assert_eq!(
+        canvas_at_view([1920, 1080], target, view, [960.0, 540.0]),
+        Some([960.0, 540.0])
+    );
+    assert_eq!(
+        canvas_at_view([1920, 1080], target, view, [0.0, 0.0]),
+        Some([640.0, 360.0])
+    );
+    // Off the canvas: a view that reaches past it.
+    let wide = [-100.0, 0.0, 200.0, 100.0];
+    assert_eq!(
+        canvas_at_view([1920, 1080], [200, 100], wide, [10.0, 50.0]),
+        None
+    );
+    assert_eq!(
+        canvas_point_view([200, 100], wide, [10.0, 50.0]),
+        Some([-90.0, 50.0])
+    );
+    // A view with no area shows nothing and maps nothing.
+    assert_eq!(
+        canvas_point_view(target, [0.0, 0.0, 0.0, 10.0], [1.0, 1.0]),
+        None
+    );
 }
