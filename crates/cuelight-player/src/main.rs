@@ -843,7 +843,7 @@ impl App {
         );
         device_handle.queue.submit([encoder.finish()]);
         let presenting = Instant::now();
-        surface_texture.present();
+        device_handle.queue.present(surface_texture);
         let waited = presenting.elapsed().as_secs_f64() * 1000.0;
         // Two frames of a 60 Hz display queue up behind vsync as a matter
         // of course.

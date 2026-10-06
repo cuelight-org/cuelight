@@ -115,7 +115,7 @@ fn present(
     gpu.device
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
-    let mapped = buffer.slice(..).get_mapped_range();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
     let mut pixels = Vec::new();
     for row in 0..height {
         let start = (row * bytes_per_row) as usize;

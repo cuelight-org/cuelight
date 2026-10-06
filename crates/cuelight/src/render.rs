@@ -1018,6 +1018,7 @@ impl Renderer {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(|_| RenderError::NoAdapter)?;
         let adapter_info = adapter.get_info();
@@ -1186,7 +1187,9 @@ impl Renderer {
             .map_err(|e| RenderError::Readback(e.to_string()))?
             .map_err(|e| RenderError::Readback(e.to_string()))?;
 
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|e| RenderError::Readback(e.to_string()))?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
         for row in 0..height {
             let start = (row * bytes_per_row) as usize;
