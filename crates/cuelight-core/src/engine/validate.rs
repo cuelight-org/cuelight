@@ -3,6 +3,14 @@
 
 use super::*;
 
+/// Whether `keys` go back in time somewhere. Sampling takes them in the
+/// order given, so keys out of order animate something other than what
+/// they say; two at the same instant are a jump, and fine.
+fn out_of_order(keys: &[crate::model::Key]) -> bool {
+    keys.windows(2)
+        .any(|pair| matches!(pair, [a, b] if b.t < a.t))
+}
+
 /// What is wrong with a set of `offset` keys, if anything: they carry
 /// motion added on top of a move, so they run forward from 0 and have to
 /// come back to where they started.
@@ -110,6 +118,17 @@ fn validate(show: &Show, out: &mut Vec<Problem>) {
     }
     // A value's timelines follow the rule a layer's do.
     for (name, value) in &show.values {
+        let unordered = value.timelines.iter().find(|tl| out_of_order(&tl.keys));
+        if let Some(timeline) = unordered {
+            out.push(Problem {
+                site: Site::Value(name.clone()),
+                error: Error::InvalidShow(format!(
+                    "timeline {:?} of value {name:?} needs its keys in time order",
+                    timeline.name
+                )),
+            });
+            continue;
+        }
         let carried = value.timelines.iter().find(|tl| tl.carry && !tl.looping);
         if let Some(timeline) = carried {
             out.push(Problem {
@@ -309,6 +328,12 @@ fn layer_problem(show: &Show, layer: &Layer) -> Result<(), Error> {
             return Err(Error::InvalidShow(format!(
                 "timeline {:?} of layer {:?} carries, which only a loop does",
                 timeline.name, layer.name
+            )));
+        }
+        if let Some(track) = timeline.tracks.iter().find(|t| out_of_order(&t.keys)) {
+            return Err(Error::InvalidShow(format!(
+                "the {:?} track of timeline {:?} of layer {:?} needs its keys in time order",
+                track.property, timeline.name, layer.name
             )));
         }
         if let Some(track) = timeline.tracks.iter().find(|t| !t.property.is_numeric()) {

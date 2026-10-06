@@ -1622,3 +1622,31 @@ fn two_layers_of_one_name_are_told_apart_by_their_path() {
         .collect();
     assert_eq!(rows, drawn);
 }
+
+#[test]
+fn keys_out_of_time_order_are_refused() {
+    let layer = |keys: &str| {
+        format!(
+            r##"{{ "name": "k", "size": [8, 8], "layers": [
+            {{ "name": "l", "type": "shape", "shape": {{ "rect": [0, 0, 1, 1] }}, "fill": "#FFFFFF",
+              "timelines": [ {{ "name": "a", "autoplay": true,
+                "tracks": [ {{ "property": "x", "keys": [ {keys} ] }} ] }} ] }} ] }}"##
+        )
+    };
+    let value = |keys: &str| {
+        format!(
+            r#"{{ "name": "k", "size": [8, 8], "values": {{ "v": {{ "timelines": [
+              {{ "name": "a", "autoplay": true, "keys": [ {keys} ] }} ] }} }} }}"#
+        )
+    };
+    let backwards = r#"{ "t": 0, "v": 0 }, { "t": 9, "v": 2 }, { "t": 1, "v": 1 }"#;
+    // Two keys at one instant are a jump, and fine.
+    let jump = r#"{ "t": 0, "v": 0 }, { "t": 1, "v": 0 }, { "t": 1, "v": 5 }"#;
+    for show in [layer(backwards), value(backwards)] {
+        let error = Engine::new().load_show(&show).unwrap_err().to_string();
+        assert!(error.contains("needs its keys in time order"), "{error}");
+    }
+    for show in [layer(jump), value(jump)] {
+        Engine::new().load_show(&show).unwrap();
+    }
+}
