@@ -327,7 +327,8 @@ fn walk(
     }
 }
 
-/// Note what a reading reads, and say so when nothing declares it.
+/// Note what a reading reads, and say so when nothing declares it and
+/// the host does not set it either.
 fn reading(
     show: &Show,
     reading: &Reading,
@@ -337,7 +338,10 @@ fn reading(
 ) {
     let name = &reading.variable;
     read.insert(name.clone());
-    if !show.variables.contains_key(name) && !show.values.contains_key(name) {
+    if !show.variables.contains_key(name)
+        && !show.values.contains_key(name)
+        && !show.input.sets(name)
+    {
         out.push(finding(
             at.to_owned(),
             FindingKind::Missing,

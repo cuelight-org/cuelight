@@ -173,3 +173,18 @@ fn a_part_hidden_for_good_is_leaving_an_element_out_not_dead_weight() {
     // The layer still is; the parts are not.
     assert_eq!(paths, ["layers[1]"], "{found:#?}");
 }
+
+#[test]
+fn the_pointer_variables_need_no_declaring() {
+    // The players set them as the pointer moves.
+    let show = r##"{ "name": "eyes", "size": [8, 8],
+      "input": { "pointer": { "x": "px", "over": "over" } },
+      "layers": [
+        { "name": "eye", "type": "shape", "shape": { "circle": [0, 0, 2] }, "fill": "#FFFFFF",
+          "bindings": [ { "property": "x", "variable": "px" },
+                        { "property": "visible", "variable": "over" },
+                        { "property": "y", "variable": "py" } ] } ] }"##;
+    let found = findings(show);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].2.contains("\"py\""), "{found:?}");
+}

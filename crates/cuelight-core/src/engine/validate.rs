@@ -646,13 +646,8 @@ pub(crate) fn quiet_bindings(show: &Show, undeclared: bool, out: &mut Vec<String
                     }
                     continue;
                 }
-                let set_by_host = show
-                    .input
-                    .pointer
-                    .as_ref()
-                    .is_some_and(|p| p.names().any(|n| n == name));
                 let Some(value) = show.variables.get(name) else {
-                    if undeclared && !set_by_host {
+                    if undeclared && !show.input.sets(name) {
                         out.push(format!(
                             "the {:?} binding of layer {:?} reads variable {name:?}, which the \
                              show does not declare; it does nothing until a host sets that \
