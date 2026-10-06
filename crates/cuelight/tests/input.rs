@@ -175,6 +175,22 @@ fn a_press_moves_with_what_it_presses() {
 }
 
 #[test]
+fn a_layer_that_is_not_pressable_does_not_stop_a_press() {
+    // An opaque panel over the button, drawn on top and not pressable:
+    // see-through for a press.
+    let show = r##"{ "name": "in", "size": [64, 32], "layers": [
+      { "name": "button", "type": "shape", "shape": { "rect": [0, 0, 32, 32] },
+        "fill": "#FF0000", "press": { "trigger": "go" } },
+      { "name": "panel", "type": "shape", "shape": { "rect": [0, 0, 64, 32] },
+        "fill": "#000000" }
+    ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    let pressed = engine.press([16.0, 16.0]).unwrap();
+    assert_eq!(pressed.trigger.as_deref(), Some("go"));
+}
+
+#[test]
 fn the_layers_under_a_point_come_topmost_first() {
     use cuelight_core::{LayerPath, Root};
     let engine = engine();
