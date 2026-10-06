@@ -111,6 +111,14 @@ impl Input {
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty() && self.press.is_none() && self.pointer.is_none()
     }
+
+    /// Whether the host sets the variable `name` for the show: one of the
+    /// pointer's, which need no declaring.
+    pub fn sets(&self, name: &str) -> bool {
+        self.pointer
+            .as_ref()
+            .is_some_and(|pointer| pointer.names().any(|n| n == name))
+    }
 }
 
 /// The variables a host sets as the pointer moves, each named by the
