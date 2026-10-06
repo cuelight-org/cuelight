@@ -739,9 +739,10 @@ impl Engine {
     /// is written. Hands back the trigger fired, or `None`.
     ///
     /// The point is tested against the frame as drawn: a layer hidden,
-    /// clipped away or covered is not hit, and what counts as inside is
-    /// the shape for a rect or a circle and the bounding box for
-    /// anything else. A host turns a click into canvas coordinates
+    /// clipped away or covered by another pressable layer is not hit,
+    /// and what counts as inside is the shape for a rect or a circle and
+    /// the bounding box for anything else. A layer that is not pressable
+    /// never stops a press, however opaque: it is see-through for one. A host turns a click into canvas coordinates
     /// first; `render::fit` says where the canvas landed on its surface.
     pub fn press(&mut self, at: [f64; 2]) -> Option<Pressed> {
         let pressed = self.pressed(at).or_else(|| {

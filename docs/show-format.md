@@ -194,11 +194,17 @@ A layer says it can be pressed, and what that fires:
 ```
 
 A press finds the topmost pressable layer drawn under the point. The
-frame as drawn is what answers: a layer that is hidden, clipped away or
-covered is not hit, and one that has moved is hit where it is now. What
-counts as inside is the shape for a rect or a circle and the box it
-fills for anything else, which is enough for a lever, a word or a
-button, and predictable.
+frame as drawn is what answers: a layer that is hidden or clipped away
+is not hit, one covered by another pressable layer is not hit, and one
+that has moved is hit where it is now. What counts as inside is the
+shape for a rect or a circle and the box it fills for anything else,
+which is enough for a lever, a word or a button, and predictable.
+
+Only pressable layers count. Anything else is see-through for a press,
+however opaque: an overlay, a vignette or a dots pass drawn on top
+never stops one. So a panel drawn over buttons does not block them
+unless it is pressable itself, or the buttons are hidden while it is
+up.
 
 A press may also open a web address, beside the trigger it fires or
 instead of one:
