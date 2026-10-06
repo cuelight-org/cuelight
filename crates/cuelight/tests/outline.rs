@@ -327,3 +327,20 @@ fn a_press_on_text_half_revealed_hits_only_what_shows() {
     assert_eq!(hit(70.0).as_deref(), Some("word"), "on the A");
     assert_eq!(hit(80.0), None, "where the 1 is not drawn yet");
 }
+
+#[test]
+fn text_in_an_outline_font_is_bounded_by_its_lines() {
+    let show = r##"{ "name": "b", "size": [400, 200],
+      "fonts": { "big": { "file": "sans", "size": 100 } },
+      "layers": [ { "name": "word", "type": "text", "font": "big", "text": "A1",
+                    "x": 10, "y": 20, "align": "top_left" } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(show).unwrap();
+    let path = cuelight_core::LayerPath::new(cuelight_core::Root::Show, vec![0]);
+    let [x, y, w, h] = engine.bounds(&path).unwrap().rect;
+    // From the A to the end of the 1's advance, ascent to descent.
+    let close = |a: f64, b: f64| (a - b).abs() < 0.01;
+    assert!(close(x, 10.0) && close(y, 20.0), "{x} {y}");
+    assert!(close(w, 121.1) && close(h, 136.2), "{w} {h}");
+}

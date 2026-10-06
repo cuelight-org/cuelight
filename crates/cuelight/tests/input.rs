@@ -395,3 +395,77 @@ fn a_layer_that_moves_under_a_still_pointer_is_under_it() {
     engine.point(Some([60.0, 40.0]));
     assert_eq!(engine.value("hovered"), Some("tile_2".into()));
 }
+
+/// Layers placed every way a layer's box can come out.
+const BOXES: &str = r##"{ "name": "b", "size": [200, 100], "layers": [
+  { "name": "plain", "type": "shape", "shape": { "rect": [0, 0, 20, 10] }, "fill": "#FFFFFF", "x": 5, "y": 7 },
+  { "name": "turned", "type": "shape", "shape": { "rect": [0, 0, 20, 10] }, "fill": "#FFFFFF",
+    "x": 50, "y": 50, "rotation": 90, "press": { "trigger": "turned" } },
+  { "name": "pair", "type": "group", "children": [
+    { "name": "a", "type": "shape", "shape": { "rect": [0, 0, 10, 10] }, "fill": "#FFFFFF", "x": 100 },
+    { "name": "b", "type": "shape", "shape": { "rect": [0, 0, 10, 10] }, "fill": "#FFFFFF", "x": 130, "y": 20 } ] },
+  { "name": "mixed", "type": "group", "children": [
+    { "name": "a", "type": "shape", "shape": { "rect": [0, 0, 10, 10] }, "fill": "#FFFFFF", "x": 150 },
+    { "name": "b", "type": "shape", "shape": { "rect": [0, 0, 20, 10] }, "fill": "#FFFFFF",
+      "x": 170, "y": 40, "rotation": 45 } ] },
+  { "name": "cut", "type": "group", "clip": { "rect": [0, 0, 15, 100] }, "children": [
+    { "name": "wide", "type": "shape", "shape": { "rect": [0, 80, 40, 10] }, "fill": "#FFFFFF" } ] },
+  { "name": "hidden", "type": "shape", "shape": { "rect": [0, 0, 5, 5] }, "fill": "#FFFFFF", "visible": false }
+] }"##;
+
+fn bounds(indices: &[usize]) -> Option<cuelight::LayerBounds> {
+    let mut engine = Engine::new();
+    engine.load_show(BOXES).unwrap();
+    engine.bounds(&cuelight_core::LayerPath::new(
+        cuelight_core::Root::Show,
+        indices.to_vec(),
+    ))
+}
+
+#[test]
+fn a_layer_placed_plainly_has_its_box_on_the_canvas() {
+    let plain = bounds(&[0]).unwrap();
+    assert_eq!(plain.rect, [5.0, 7.0, 20.0, 10.0]);
+    assert_eq!(plain.transform, cuelight::Transform::IDENTITY);
+}
+
+#[test]
+fn a_turned_layer_has_its_own_box_and_what_turns_it() {
+    let turned = bounds(&[1]).unwrap();
+    assert_eq!(turned.rect, [0.0, 0.0, 20.0, 10.0]);
+    // Its box's far corner, turned a quarter about its place.
+    let [x, y] = turned.transform.apply([20.0, 10.0]);
+    assert!(
+        (x - 40.0).abs() < 1e-9 && (y - 70.0).abs() < 1e-9,
+        "{x} {y}"
+    );
+    // What the box says is what a press there hits.
+    let mut engine = Engine::new();
+    engine.load_show(BOXES).unwrap();
+    let pressed = |at| engine.pressed(at).and_then(|p| p.trigger);
+    assert_eq!(pressed([45.0, 60.0]).as_deref(), Some("turned"));
+    assert_eq!(pressed([55.0, 60.0]), None, "outside the turned box");
+}
+
+#[test]
+fn a_group_has_the_box_round_its_children() {
+    assert_eq!(bounds(&[2]).unwrap().rect, [100.0, 0.0, 40.0, 30.0]);
+    assert_eq!(
+        bounds(&[2, 1]).unwrap().rect,
+        [130.0, 20.0, 10.0, 10.0],
+        "one child"
+    );
+    // A child placed its own way: the box round both, on the canvas.
+    let mixed = bounds(&[3]).unwrap();
+    assert_eq!(mixed.transform, cuelight::Transform::IDENTITY);
+    let [x, y, w, h] = mixed.rect;
+    let half = 10.0 / 2f64.sqrt();
+    assert_eq!([x, y], [150.0, 0.0]);
+    assert!((w - (20.0 + 2.0 * half)).abs() < 1e-9 && (h - (40.0 + 3.0 * half)).abs() < 1e-9);
+}
+
+#[test]
+fn a_clip_cuts_the_box_and_a_hidden_layer_has_none() {
+    assert_eq!(bounds(&[4]).unwrap().rect, [0.0, 80.0, 15.0, 10.0]);
+    assert_eq!(bounds(&[5]), None);
+}

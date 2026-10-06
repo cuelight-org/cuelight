@@ -57,9 +57,9 @@ mod pixels;
 mod segments;
 
 pub use engine::{
-    AssetError, Engine, FontData, FrameProfile, ImageData, LayerCost, PlacedGlyph, Pressed,
-    ResolvedGradient, ResolvedGradientKind, ResolvedLayer, ResolvedShape, TextStats, Tiled,
-    Transform, Vector, VectorPath,
+    AssetError, Engine, FontData, FrameProfile, ImageData, LayerBounds, LayerCost, PlacedGlyph,
+    Pressed, ResolvedGradient, ResolvedGradientKind, ResolvedLayer, ResolvedShape, TextStats,
+    Tiled, Transform, Vector, VectorPath,
 };
 pub use font::BitmapFont;
 pub use output::{OutputColor, LUMA_WEIGHTS};

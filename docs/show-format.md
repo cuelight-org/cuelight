@@ -1722,7 +1722,11 @@ puts it on the canvas) or the `render` feature's vello rasterizer, plus
 geometry built. Both name each layer by its path (the tree it is in and
 the index of each step down it), since names need not be unique, and
 `layers_at([x, y])` lists the layers drawn under a canvas point, topmost
-first, by the test a press uses.
+first, by the test a press uses. `bounds(layer)` is the box that test
+uses for a layer, its children included, for outlining what is
+selected: a box and the transform that places it, so a turned layer is
+outlined turned, or the box round a group's differently placed
+children on the canvas.
 
 Three more calls show the show's working rather than its result, for an
 editor or a debugger: `drain_trace()` hands back what happened since the
