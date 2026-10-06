@@ -1227,6 +1227,7 @@ impl Engine {
                                 })
                                 .collect(),
                             stroke: item.stroke.map(|(color, width)| (color, width * unit)),
+                            stroke_space: None,
                         },
                         color: item.fill.unwrap_or([0; 4]),
                         opacity: placed.opacity,
@@ -2181,6 +2182,7 @@ fn harden(items: &mut [ResolvedLayer]) {
         Some(ResolvedShape::Path {
             elements: crate::hard::as_path(&runs),
             stroke: None,
+            stroke_space: None,
         })
     };
     for item in items.iter_mut() {
@@ -2459,11 +2461,13 @@ fn push_vector(
             let Some((by, opacity)) = part_of(item) else {
                 continue;
             };
-            // How much the parts above it scale it: its stroke grows and
-            // shrinks with it, the average of the two axes, as the
-            // artwork's own size scales strokes.
+            // What the parts above it do to it, its stroke too: drawn in
+            // the parts' own space and squashed with the shape, as an SVG
+            // strokes under a transform. The artwork's own size scales
+            // strokes by the average of its two axes.
             let [a, b, c, d, ..] = by.0;
-            let part_scale = (a.hypot(b) + c.hypot(d)) / 2.0;
+            let stroke_space =
+                (by != Transform::IDENTITY).then_some(Transform([a, b, c, d, 0.0, 0.0]));
             // Onto the canvas as the path's points go: its parts, then the
             // artwork's size and place.
             let placing = Transform::translate(at[0], at[1])
@@ -2491,9 +2495,8 @@ fn push_vector(
                             })
                         })
                         .collect(),
-                    stroke: item
-                        .stroke
-                        .map(|(c, w)| (stain(c), w * part_scale * (sx + sy) / 2.0)),
+                    stroke: item.stroke.map(|(c, w)| (stain(c), w * (sx + sy) / 2.0)),
+                    stroke_space,
                 },
                 color: stain(item.fill.unwrap_or([0; 4])),
                 opacity: placed.opacity * opacity,
@@ -2751,6 +2754,7 @@ fn resolve_shape(
                 .map(|e| e.map(place))
                 .collect(),
             stroke,
+            stroke_space: None,
         },
         (
             Shape::Circle {
@@ -2773,11 +2777,13 @@ fn resolve_shape(
             ResolvedShape::Path {
                 elements: elements.into_iter().map(|e| e.map(place)).collect(),
                 stroke,
+                stroke_space: None,
             }
         }
         (Shape::Path { path: data }, stroke) => ResolvedShape::Path {
             elements: data.elements().iter().map(|e| e.map(place)).collect(),
             stroke,
+            stroke_space: None,
         },
     }
 }
@@ -2854,9 +2860,18 @@ pub enum ResolvedShape {
     /// layer's color (a fully transparent color means no fill) and then
     /// outlined with `stroke` (color, width in canvas pixels) when given.
     /// As a clip, the stroke is ignored.
+    ///
+    /// With `stroke_space`, the outline is drawn the way an SVG strokes
+    /// under a transform: the path is taken back through that map, stroked
+    /// there with `stroke`'s width, and the stroked outline mapped onto the
+    /// canvas, so a part squashed on one axis squashes its outline with it.
+    /// Only how the map turns, scales and skews matters, not where it
+    /// moves things. A map that flattens the path to a line draws no
+    /// outline.
     Path {
         elements: Vec<PathElement>,
         stroke: Option<([u8; 4], f64)>,
+        stroke_space: Option<Transform>,
     },
     /// A host image (look the pixels up via [`Engine::image`]) drawn into
     /// the destination rectangle: the whole image, or with `source` only

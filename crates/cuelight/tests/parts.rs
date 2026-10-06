@@ -160,7 +160,8 @@ fn a_part_belongs_only_to_an_artwork_layer_and_names_what_the_artwork_has() {
 }
 
 #[test]
-fn a_part_scales_the_strokes_of_its_paths() {
+fn a_part_strokes_its_paths_in_its_own_space() {
+    use cuelight::Transform;
     let outlined = VectorPath {
         elements: vec![
             PathElement::MoveTo([40.0, 40.0]),
@@ -188,14 +189,25 @@ fn a_part_scales_the_strokes_of_its_paths() {
         engine.set_vector("face", art.clone()).unwrap();
         engine.load_show(&show).unwrap();
         match &engine.resolved_layers().unwrap()[0].shape {
-            ResolvedShape::Path { stroke, .. } => stroke.unwrap().1,
+            ResolvedShape::Path {
+                stroke,
+                stroke_space,
+                ..
+            } => (stroke.unwrap().1, *stroke_space),
             other => panic!("{other:?}"),
         }
     };
-    assert!((stroke(r#""scale": 1"#) - 2.0).abs() < 1e-9);
-    assert!((stroke(r#""scale": 2.5"#) - 5.0).abs() < 1e-9);
-    // Squashed to a tenth of its height to blink: the average of the axes.
-    assert!((stroke(r#""scale_y": 0.1"#) - 1.1).abs() < 1e-9);
+    // The width is the artwork's; the part's scale is the space the
+    // outline is drawn in, so squashed to blink it squashes the outline.
+    assert_eq!(stroke(r#""scale": 1"#), (2.0, None));
+    assert_eq!(
+        stroke(r#""scale": 2.5"#),
+        (2.0, Some(Transform([2.5, 0.0, 0.0, 2.5, 0.0, 0.0])))
+    );
+    assert_eq!(
+        stroke(r#""scale_y": 0.1"#),
+        (2.0, Some(Transform([1.0, 0.0, 0.0, 0.1, 0.0, 0.0])))
+    );
 }
 
 #[test]

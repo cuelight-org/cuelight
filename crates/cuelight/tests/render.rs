@@ -193,6 +193,47 @@ fn a_stroke_outlines_a_shape() {
 }
 
 #[test]
+fn a_squashed_part_squashes_its_outline() {
+    use cuelight::{Vector, VectorPath};
+    use cuelight_core::PathElement;
+    // A square outlined 10 wide, squashed to a fifth of its height about
+    // its centre: it spans y 44 to 56, its top and bottom edges 2 thick
+    // and its sides still 10.
+    let square = VectorPath {
+        elements: vec![
+            PathElement::MoveTo([20.0, 20.0]),
+            PathElement::LineTo([80.0, 20.0]),
+            PathElement::LineTo([80.0, 80.0]),
+            PathElement::LineTo([20.0, 80.0]),
+            PathElement::Close,
+        ],
+        fill: None,
+        stroke: Some(([255, 255, 255, 255], 10.0)),
+        ids: vec!["eye".to_owned()],
+        gradient: None,
+    };
+    let show = r##"{ "name": "eye", "size": [100, 100], "background": "#000000", "layers": [
+        { "name": "face", "type": "image", "image": "face", "parts": [
+          { "id": "eye", "pivot": [50, 50], "scale_y": 0.2 } ] } ] }"##;
+    let mut engine = Engine::new();
+    let art = Vector {
+        width: 100.0,
+        height: 100.0,
+        paths: vec![square],
+    };
+    engine.set_vector("face", art).unwrap();
+    engine.load_show(show).unwrap();
+    let Some(frame) = render(&engine) else { return };
+    // The top edge, a hairline, and the inside just under it.
+    assert_eq!(pixel(&frame, 50, 44), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 50, 46), [0, 0, 0, 255]);
+    // A side, as wide as the square drew it.
+    assert_eq!(pixel(&frame, 16, 50), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 23, 50), [255, 255, 255, 255]);
+    assert_eq!(pixel(&frame, 26, 50), [0, 0, 0, 255]);
+}
+
+#[test]
 fn rotated_shapes_render_where_the_transform_says() {
     // A 12x2 white bar anchored at its center, turned upright.
     let show = r##"{ "name": "rotate", "size": [16, 16], "background": "#000000", "layers": [
