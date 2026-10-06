@@ -872,9 +872,7 @@ pub fn canvas_at(
     point: [f64; 2],
 ) -> Option<[f64; 2]> {
     let at = canvas_point(show, target, scaling, fit, point);
-    let [show_w, show_h] = show.map(f64::from);
-    let inside = (0.0..=show_w).contains(&at[0]) && (0.0..=show_h).contains(&at[1]);
-    inside.then_some(at)
+    on_canvas(show, at).then_some(at)
 }
 
 /// Where a point on a `target`-sized surface is in canvas coordinates,
@@ -891,6 +889,48 @@ pub fn canvas_point(
     let (x, y, width, height) = self::fit(show, target, scaling, fit);
     let [show_w, show_h] = show.map(f64::from);
     [(px - x) / width * show_w, (py - y) / height * show_h]
+}
+
+/// The map from canvas units to surface pixels that has the canvas
+/// rectangle `view` fill a `target` sized surface; `None` for a view or a
+/// target with no area.
+fn view_placement(target: [u32; 2], [x, y, width, height]: [f64; 4]) -> Option<Affine> {
+    let [tw, th] = target.map(f64::from);
+    let shows = |n: f64| n.is_finite() && n > 0.0;
+    if !(shows(width) && shows(height) && shows(tw) && shows(th) && x.is_finite() && y.is_finite())
+    {
+        return None;
+    }
+    Some(Affine::scale_non_uniform(tw / width, th / height) * Affine::translate((-x, -y)))
+}
+
+/// Where a point on a `target`-sized surface lands on the canvas when
+/// the canvas rectangle `view` fills it, as
+/// [`Presenter::present_view`] draws it; `None` when that is off the
+/// canvas, or the view has no area. [`canvas_at`] for a view.
+pub fn canvas_at_view(
+    show: [u32; 2],
+    target: [u32; 2],
+    view: [f64; 4],
+    point: [f64; 2],
+) -> Option<[f64; 2]> {
+    let at = canvas_point_view(target, view, point)?;
+    on_canvas(show, at).then_some(at)
+}
+
+/// Where a point on a `target`-sized surface is in canvas coordinates
+/// when the canvas rectangle `view` fills it, off the canvas too; `None`
+/// when the view has no area. [`canvas_point`] for a view.
+pub fn canvas_point_view(target: [u32; 2], view: [f64; 4], point: [f64; 2]) -> Option<[f64; 2]> {
+    let back = view_placement(target, view)?.inverse();
+    let at = back * vello::kurbo::Point::new(point[0], point[1]);
+    Some([at.x, at.y])
+}
+
+/// Whether `at` is on a canvas of `show` size, edges included.
+fn on_canvas(show: [u32; 2], [x, y]: [f64; 2]) -> bool {
+    let [show_w, show_h] = show.map(f64::from);
+    (0.0..=show_w).contains(&x) && (0.0..=show_h).contains(&y)
 }
 
 /// The loaded show's declared background as a vello color; opaque black
@@ -1522,17 +1562,59 @@ impl Presenter {
         renderer: &mut vello::Renderer,
         target: [u32; 2],
     ) -> Result<Presented, RenderError> {
-        let show = engine.show().ok_or(Error::NoShow)?;
-        let size = show.size;
-        let (output, scaling) = (engine.output(), engine.scaling());
-        let (x, y, width, height) = fit(size, target, scaling, self.fit);
+        let size = engine.show().ok_or(Error::NoShow)?.size;
+        let (x, y, width, height) = fit(size, target, engine.scaling(), self.fit);
         // Per axis, so the rounded rectangle is filled exactly; the two
         // differ by less than a pixel over the frame, and under `fill`
         // by whatever the surface's shape asks.
         let placement = Affine::translate((x, y))
             * Affine::scale_non_uniform(width / f64::from(size[0]), height / f64::from(size[1]));
+        self.present_placed(engine, device, queue, renderer, placement)
+    }
+
+    /// Build what shows the part `view` of `engine`'s current frame in a
+    /// `target` sized surface: the canvas rectangle `[x, y, width,
+    /// height]`, in canvas units, fills the target. For a host that zooms
+    /// past what fits and scrolls around: the frame drawn is the size of
+    /// the target, not of the whole canvas at that zoom. Output mode,
+    /// scaling and passes apply as for [`present`](Self::present), and
+    /// the fit does not: the view says where the canvas goes.
+    ///
+    /// A view of another shape than the target stretches the canvas to
+    /// it, so a host keeps the two the same shape. A view may reach past
+    /// the canvas; the show's background is drawn there. Points map back
+    /// with [`canvas_at_view`].
+    pub fn present_view(
+        &mut self,
+        engine: &Engine,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut vello::Renderer,
+        target: [u32; 2],
+        view: [f64; 4],
+    ) -> Result<Presented, RenderError> {
+        let placement = view_placement(target, view).ok_or_else(|| {
+            RenderError::Unrenderable(format!("a view of {view:?} shows nothing"))
+        })?;
+        self.present_placed(engine, device, queue, renderer, placement)
+    }
+
+    /// Build the frame with the canvas brought onto the target by
+    /// `placement`, from canvas units to surface pixels.
+    fn present_placed(
+        &mut self,
+        engine: &Engine,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut vello::Renderer,
+        placement: Affine,
+    ) -> Result<Presented, RenderError> {
+        let show = engine.show().ok_or(Error::NoShow)?;
+        let size = show.size;
+        let (output, scaling) = (engine.output(), engine.scaling());
         // The tighter axis: what a dot has to be made of.
-        let scale = (width / f64::from(size[0])).min(height / f64::from(size[1]));
+        let [sx, _, _, sy, ..] = placement.as_coeffs();
+        let scale = sx.abs().min(sy.abs());
         let dots = engine
             .passes()
             .into_iter()

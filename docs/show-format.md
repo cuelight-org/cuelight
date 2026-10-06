@@ -397,7 +397,11 @@ else. Hosts read the active mode with `Engine::output()`; the offscreen
 renderer applies it after readback. Hosts rendering on their own device
 use `render::Presenter`, which fits the show into their surface, applies
 the output mode on the GPU and honors `scaling` (`render::OutputPass` is
-the conversion alone, for hosts that want to do the rest themselves).
+the conversion alone, for hosts that want to do the rest themselves). A
+host that zooms past what fits, an editor, presents a part of the canvas
+with `Presenter::present_view`: a canvas rectangle fills the surface,
+so the frame drawn is the surface's size at any zoom, and
+`render::canvas_at_view` maps a point on it back to the canvas.
 
 ## Layers
 
