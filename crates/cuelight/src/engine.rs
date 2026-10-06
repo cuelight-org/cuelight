@@ -267,6 +267,8 @@ enum TextDraw {
         /// Relative to the layer's box.
         glyphs: Vec<PlacedGlyph>,
         container: [f64; 2],
+        /// Each line's box, relative to the layer's box.
+        lines: Vec<[f64; 4]>,
     },
 }
 
@@ -1004,6 +1006,7 @@ impl Engine {
                 size: style.size?,
                 glyphs: layout.glyphs,
                 container: layout.container,
+                lines: layout.lines,
             });
         }
         self.text_raster(style_name, text, size, align, shown, false)
@@ -1161,6 +1164,7 @@ impl Engine {
                 font: data,
                 size: em,
                 glyphs,
+                lines,
                 ..
             }) if !glyphs.is_empty() => {
                 let width = style
@@ -1184,6 +1188,17 @@ impl Engine {
                                     id: g.id,
                                     x: x + g.x * scale + dx,
                                     y: y + g.y * scale + dy,
+                                })
+                                .collect(),
+                            lines: lines
+                                .iter()
+                                .map(|[lx, ly, lw, lh]| {
+                                    [
+                                        x + lx * scale + dx,
+                                        y + ly * scale + dy,
+                                        lw * scale,
+                                        lh * scale,
+                                    ]
                                 })
                                 .collect(),
                             border: edge,
@@ -2334,11 +2349,9 @@ fn covers(shape: &ResolvedShape, at: [f64; 2]) -> bool {
             ..
         } => box_of([*x, *y, *width, *height]),
         // Glyphs are outlines the host rasterizes, so the run is taken
-        // as the line it sits on: its glyph boxes at the size it is
-        // drawn.
-        ResolvedShape::GlyphRun { size, glyphs, .. } => glyphs
-            .iter()
-            .any(|glyph| box_of([glyph.x, glyph.y - size, *size, *size])),
+        // as the lines it sits on, measured by the font: across its
+        // glyphs' advances, between its ascent and descent.
+        ResolvedShape::GlyphRun { lines, .. } => lines.iter().any(|line| box_of(*line)),
         ResolvedShape::ClipBegin { shape } => covers(shape, at),
         ResolvedShape::ClipEnd | ResolvedShape::BlendBegin { .. } | ResolvedShape::BlendEnd => {
             false
@@ -2937,6 +2950,11 @@ pub enum ResolvedShape {
         font: FontData,
         size: f64,
         glyphs: Vec<PlacedGlyph>,
+        /// Each line's box as `[x, y, width, height]`: from its first
+        /// glyph to the end of its last glyph's advance, between the
+        /// font's ascent and descent at `size`. What a press on the text
+        /// hits.
+        lines: Vec<[f64; 4]>,
         border: Option<([u8; 4], f64)>,
     },
     /// Pixels the engine generated (rasterized text), drawn into the

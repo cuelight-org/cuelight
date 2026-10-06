@@ -285,3 +285,45 @@ fn a_shadow_blur_on_an_outline_font_is_said_to_be_drawn_hard() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn a_press_hits_the_text_by_its_fonts_metrics() {
+    // "A1" at size 100 from (10, 20): the line runs from x 10 to the end
+    // of the 1's advance, 10 + 63.9 + 57.2 = 131.1, and from the top of
+    // the ascent, y 20, to the bottom of the descent, 20 + 106.9 + 29.3.
+    let show = r##"{ "name": "hit", "size": [400, 200],
+      "fonts": { "big": { "file": "sans", "size": 100 } },
+      "layers": [ { "name": "word", "type": "text", "font": "big", "text": "A1",
+                    "x": 10, "y": 20, "align": "top_left", "press": { "trigger": "word" } } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(show).unwrap();
+    let hit = |x: f64, y: f64| engine.pressed([x, y]).and_then(|p| p.trigger);
+    assert_eq!(hit(60.0, 80.0).as_deref(), Some("word"), "on the letters");
+    assert_eq!(
+        hit(130.0, 80.0).as_deref(),
+        Some("word"),
+        "at the end of the 1"
+    );
+    // Past the last advance, where a glyph's em square used to reach.
+    assert_eq!(hit(150.0, 80.0), None, "right of the word");
+    // Below the baseline, where a descender would be.
+    assert_eq!(hit(60.0, 150.0).as_deref(), Some("word"), "in the descent");
+    assert_eq!(hit(60.0, 160.0), None, "under the line");
+    assert_eq!(hit(60.0, 18.0), None, "above the line");
+}
+
+#[test]
+fn a_press_on_text_half_revealed_hits_only_what_shows() {
+    // "A1" half revealed: only the A, from x 10 to 10 + 63.9.
+    let show = r##"{ "name": "hit", "size": [400, 200],
+      "fonts": { "big": { "file": "sans", "size": 100 } },
+      "layers": [ { "name": "word", "type": "text", "font": "big", "text": "A1", "reveal": 0.5,
+                    "x": 10, "y": 20, "align": "top_left", "press": { "trigger": "word" } } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(show).unwrap();
+    let hit = |x: f64| engine.pressed([x, 80.0]).and_then(|p| p.trigger);
+    assert_eq!(hit(70.0).as_deref(), Some("word"), "on the A");
+    assert_eq!(hit(80.0), None, "where the 1 is not drawn yet");
+}
