@@ -469,6 +469,7 @@ fn build_scene(
                 size,
                 glyphs,
                 border,
+                ..
             } => {
                 let font = images.font(&font);
                 let run = || {

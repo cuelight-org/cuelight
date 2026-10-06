@@ -24,6 +24,11 @@ pub(crate) struct Layout {
     /// The box the text was laid out in: the one asked for, else the
     /// text's own size.
     pub container: [f64; 2],
+    /// Each line's box as `[x, y, width, height]`, relative to the box's
+    /// top-left: from its first glyph to the end of its last shown
+    /// glyph's advance, between the font's ascent and descent. A line
+    /// with nothing shown has none.
+    pub lines: Vec<[f64; 4]>,
 }
 
 /// Lay `text` out at `size` canvas pixels per em: lines split on `\n`, the
@@ -109,6 +114,7 @@ pub(crate) fn layout(
     let per_line = lines.len() > 1 && !align.is_left();
 
     let mut glyphs = Vec::new();
+    let mut boxes = Vec::new();
     let mut index = 0;
     for (i, (line, width)) in lines.iter().enumerate() {
         let x0 = if per_line {
@@ -117,20 +123,24 @@ pub(crate) fn layout(
             bx
         };
         let baseline = by + line_height * i as f64 + ascent;
-        glyphs.extend(
-            line.iter()
-                .take(shown.saturating_sub(index))
-                .map(|&(id, pen)| PlacedGlyph {
-                    id,
-                    x: x0 + pen,
-                    y: baseline,
-                }),
-        );
+        let count = line.len().min(shown.saturating_sub(index));
+        glyphs.extend(line.iter().take(count).map(|&(id, pen)| PlacedGlyph {
+            id,
+            x: x0 + pen,
+            y: baseline,
+        }));
+        if let Some(&(_, start)) = line.first().filter(|_| count > 0) {
+            // The last shown glyph ends where the next one starts, or
+            // where the line does.
+            let end = line.get(count).map_or(*width, |&(_, pen)| pen);
+            boxes.push([x0 + start, baseline - ascent, end - start, ascent - descent]);
+        }
         // The break between lines is a character too.
         index += line.len() + 1;
     }
     Some(Layout {
         glyphs,
         container: [cw, ch],
+        lines: boxes,
     })
 }
