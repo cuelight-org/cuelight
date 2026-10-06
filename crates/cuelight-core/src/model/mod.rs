@@ -99,12 +99,51 @@ pub struct Input {
     /// that instead, and never this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub press: Option<String>,
+    /// Variables the host keeps up to date with where the pointer is, a
+    /// mouse or a finger: for eyes that follow the cursor, a spotlight,
+    /// a hover highlight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<Pointer>,
 }
 
 impl Input {
     /// Whether the show says nothing about input.
     pub fn is_empty(&self) -> bool {
-        self.keys.is_empty() && self.press.is_none()
+        self.keys.is_empty() && self.press.is_none() && self.pointer.is_none()
+    }
+}
+
+/// The variables a host sets as the pointer moves, each named by the
+/// show; one left out is not set.
+///
+/// `x` and `y` are in canvas coordinates and stop at the canvas edge, so
+/// a pointer beside the canvas still gives a place on it; `over` is
+/// whether it is over the canvas. A pointer that leaves leaves `x` and
+/// `y` where it was last. With several fingers down, the first one is
+/// the pointer.
+///
+/// They are ordinary variables, so bindings, curves and transitions read
+/// them as any other; a show value of the same name, with timelines of
+/// its own, moves until a real pointer takes over.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Pointer {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub over: Option<String>,
+}
+
+impl Pointer {
+    /// The variable names it sets.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        [&self.x, &self.y, &self.over]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
     }
 }
 

@@ -257,8 +257,11 @@ struct App {
     /// and these are inputs like the script's.
     live: cuelight_loader::Live,
     /// Where the pointer last was on the surface, for turning a click
-    /// into a point on the canvas.
+    /// into a point on the canvas and for the show's `input.pointer`: the
+    /// mouse, or the first finger down.
     pointer: Option<[f64; 2]>,
+    /// The finger that is the pointer, while one is down.
+    finger: Option<u64>,
     /// The clock is stopped: frames still paint, nothing advances.
     paused: bool,
     /// Shift is held, which makes an arrow a second instead of a frame.
@@ -562,6 +565,28 @@ impl App {
         }
     }
 
+    /// Tell the show where the pointer is. Every frame rather than every
+    /// move: a resize or a seek changes what it reads under a pointer
+    /// that has not moved, and a variable that stays the same is not set
+    /// again.
+    fn point(&mut self) {
+        let (Some(state), Some(show)) = (&self.state, self.engine.show().map(|show| show.size))
+        else {
+            return;
+        };
+        let size = state.window.inner_size();
+        let at = self.pointer.map(|pointer| {
+            cuelight::render::canvas_point(
+                show,
+                [size.width, size.height],
+                self.engine.scaling(),
+                self.presenter.fit(),
+                pointer,
+            )
+        });
+        self.engine.point(at);
+    }
+
     /// Put the show `by` seconds from where it is, forwards or backwards,
     /// and stop the clock so it stays there.
     fn scrub(&mut self, by: f64) {
@@ -674,6 +699,7 @@ impl App {
         if stalled {
             log::info!("a stall longer than {A_STALL:.0}s: the show goes on from where it stopped");
         }
+        self.point();
         self.advance_driver(dt);
         self.engine.advance_to(target);
         for event in self.engine.drain_events() {
@@ -999,6 +1025,23 @@ impl ApplicationHandler for App {
                 self.pointer = Some([position.x, position.y]);
             }
             WindowEvent::CursorLeft { .. } => self.pointer = None,
+            // The first finger down is the pointer until it lifts; the
+            // others are not followed.
+            WindowEvent::Touch(touch) => {
+                use winit::event::TouchPhase;
+                let first = self.finger.is_none_or(|id| id == touch.id);
+                match touch.phase {
+                    TouchPhase::Started | TouchPhase::Moved if first => {
+                        self.finger = Some(touch.id);
+                        self.pointer = Some([touch.location.x, touch.location.y]);
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled if first => {
+                        self.finger = None;
+                        self.pointer = None;
+                    }
+                    _ => {}
+                }
+            }
             WindowEvent::MouseInput {
                 state,
                 button: winit::event::MouseButton::Left,
@@ -1411,6 +1454,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         script: script.clone(),
         live: cuelight_loader::Live::default(),
         pointer: None,
+        finger: None,
         paused: false,
         shift: false,
         ctrl: false,

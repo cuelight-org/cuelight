@@ -692,6 +692,17 @@
             "type": "string"
           }
         },
+        "pointer": {
+          "description": "Variables the host keeps up to date with where the pointer is, a\nmouse or a finger: for eyes that follow the cursor, a spotlight,\na hover highlight.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pointer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "press": {
           "description": "Trigger fired by a press that lands on nothing pressable: \"click\nanywhere to go on\". A press on a layer with its own `press` fires\nthat instead, and never this.",
           "type": [
@@ -1611,6 +1622,31 @@
           "const": "shuffle"
         }
       ]
+    },
+    "Pointer": {
+      "description": "The variables a host sets as the pointer moves, each named by the\nshow; one left out is not set.\n\n`x` and `y` are in canvas coordinates and stop at the canvas edge, so\na pointer beside the canvas still gives a place on it; `over` is\nwhether it is over the canvas. A pointer that leaves leaves `x` and\n`y` where it was last. With several fingers down, the first one is\nthe pointer.\n\nThey are ordinary variables, so bindings, curves and transitions read\nthem as any other; a show value of the same name, with timelines of\nits own, moves until a real pointer takes over.",
+      "type": "object",
+      "properties": {
+        "over": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "y": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "Press": {
       "description": "What a press on a layer does.\n\nWhat pressing a layer does: fire a trigger, open a web address, or\nboth. The engine's inputs stay one-way: a press is the same thing a\nhost firing that trigger would be, and a show is still a function\nof its triggers and its clock; opening an address is reported to the\nhost as an event, and the host decides what to do with it.",
