@@ -520,6 +520,11 @@ impl Engine {
         self.core.key(key)
     }
 
+    /// See [`cuelight_core::Engine::point`].
+    pub fn point(&mut self, at: Option<[f64; 2]>) {
+        self.core.point(at);
+    }
+
     /// See [`cuelight_core::Engine::trigger`].
     pub fn trigger(&mut self, name: &str) {
         self.core.trigger(name);

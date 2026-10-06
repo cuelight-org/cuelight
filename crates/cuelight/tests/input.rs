@@ -1,4 +1,5 @@
-//! Keys and presses: what a show makes of what a host does to it.
+//! Keys, presses and the pointer: what a show makes of what a host does
+//! to it.
 
 // Test code throughout, so clippy lets it panic as tests do.
 #![cfg(test)]
@@ -245,4 +246,77 @@ fn a_press_can_open_a_link_beside_or_instead_of_a_trigger() {
         let show = show.replace(r##""press": { "open": "https://example.com/" }"##, bad);
         assert!(Engine::new().load_show(&show).is_err(), "{bad}");
     }
+}
+
+/// A show that follows the pointer, with a value that wanders until a
+/// real pointer takes over.
+const FOLLOWS: &str = r##"{ "name": "eyes", "size": [100, 50],
+  "input": { "pointer": { "x": "px", "y": "py", "over": "over" } },
+  "values": { "px": { "timelines": [ { "name": "wander", "autoplay": true,
+    "keys": [ { "t": 0, "v": 10 }, { "t": 2, "v": 90 } ] } ] } },
+  "layers": [
+    { "name": "eye", "type": "shape", "shape": { "circle": [0, 0, 4] }, "fill": "#FFFFFF",
+      "bindings": [ { "property": "x", "variable": "px" }, { "property": "y", "variable": "py" } ] }
+  ] }"##;
+
+#[test]
+fn the_pointer_sets_the_variables_the_show_names() {
+    let mut engine = Engine::new();
+    engine.load_show(FOLLOWS).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    // Before any pointer, the show's own value moves.
+    engine.advance_to(1.0);
+    assert_eq!(engine.value("px"), Some(50.0.into()));
+    engine.point(Some([30.0, 20.0]));
+    assert_eq!(engine.value("px"), Some(30.0.into()));
+    assert_eq!(engine.value("py"), Some(20.0.into()));
+    assert_eq!(engine.value("over"), Some(true.into()));
+    // A real pointer has taken over: the value's motion is gone.
+    engine.advance_to(1.5);
+    assert_eq!(engine.value("px"), Some(30.0.into()));
+}
+
+#[test]
+fn a_pointer_beside_the_canvas_stops_at_its_edge() {
+    let mut engine = Engine::new();
+    engine.load_show(FOLLOWS).unwrap();
+    engine.point(Some([-20.0, 70.0]));
+    assert_eq!(engine.value("px"), Some(0.0.into()));
+    assert_eq!(engine.value("py"), Some(50.0.into()));
+    assert_eq!(engine.value("over"), Some(false.into()));
+    engine.point(Some([140.0, 10.0]));
+    assert_eq!(engine.value("px"), Some(100.0.into()));
+    assert_eq!(engine.value("py"), Some(10.0.into()));
+}
+
+#[test]
+fn a_pointer_that_leaves_stays_where_it_was() {
+    let mut engine = Engine::new();
+    engine.load_show(FOLLOWS).unwrap();
+    engine.point(Some([30.0, 20.0]));
+    engine.point(None);
+    assert_eq!(engine.value("px"), Some(30.0.into()));
+    assert_eq!(engine.value("py"), Some(20.0.into()));
+    assert_eq!(engine.value("over"), Some(false.into()));
+}
+
+#[test]
+fn a_show_that_names_no_pointer_is_left_alone() {
+    let mut engine = engine();
+    engine.point(Some([10.0, 10.0]));
+    assert_eq!(engine.value("pointer_x"), None);
+}
+
+#[test]
+fn a_pointer_that_has_not_moved_sets_nothing_again() {
+    let mut engine = Engine::new();
+    engine.load_show(FOLLOWS).unwrap();
+    engine.point(Some([30.0, 20.0]));
+    let _ = engine.drain_trace();
+    engine.point(Some([30.0, 20.0]));
+    assert!(engine.drain_trace().is_empty());
 }

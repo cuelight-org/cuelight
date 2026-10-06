@@ -663,6 +663,40 @@ impl Engine {
         Some(trigger)
     }
 
+    /// Say where the pointer is, in canvas coordinates, as it moves: a
+    /// place beside the canvas too, or `None` when it has left the
+    /// surface the show is on (a mouse out of the window, a finger
+    /// lifted).
+    ///
+    /// Sets the variables the show's `input.pointer` names: `x` and `y`
+    /// at that place stopped at the canvas edge, left where they were
+    /// when the pointer has gone, and `over` to whether it is on the
+    /// canvas. A variable that would not change is not set again, so a
+    /// host may call this on every frame or every move alike.
+    pub fn point(&mut self, at: Option<[f64; 2]>) {
+        let Some(show) = self.show.as_ref() else {
+            return;
+        };
+        let Some(pointer) = show.input.pointer.clone() else {
+            return;
+        };
+        let [width, height] = show.size.map(f64::from);
+        let mut set = |name: &Option<String>, value: Value| {
+            if let Some(name) = name {
+                if self.variables.get(name) != Some(&value) {
+                    self.set_variable(name, value);
+                }
+            }
+        };
+        let over =
+            at.is_some_and(|[x, y]| (0.0..=width).contains(&x) && (0.0..=height).contains(&y));
+        if let Some([x, y]) = at.filter(|[x, y]| x.is_finite() && y.is_finite()) {
+            set(&pointer.x, Value::Number(x.clamp(0.0, width)));
+            set(&pointer.y, Value::Number(y.clamp(0.0, height)));
+        }
+        set(&pointer.over, Value::Bool(over));
+    }
+
     /// Fire a named event. A scene declaring it as its trigger becomes the
     /// active scene (restarting it when already active); then every
     /// timeline declaring it, in the show's layers or the active scene,

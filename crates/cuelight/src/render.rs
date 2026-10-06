@@ -869,13 +869,28 @@ pub fn canvas_at(
     target: [u32; 2],
     scaling: Scaling,
     fit: Fit,
-    [px, py]: [f64; 2],
+    point: [f64; 2],
 ) -> Option<[f64; 2]> {
-    let (x, y, width, height) = self::fit(show, target, scaling, fit);
+    let at = canvas_point(show, target, scaling, fit, point);
     let [show_w, show_h] = show.map(f64::from);
-    let at = [(px - x) / width * show_w, (py - y) / height * show_h];
     let inside = (0.0..=show_w).contains(&at[0]) && (0.0..=show_h).contains(&at[1]);
     inside.then_some(at)
+}
+
+/// Where a point on a `target`-sized surface is in canvas coordinates,
+/// as [`canvas_at`] works it out, but beside the canvas too: off its
+/// edges, below 0 or past its size. What
+/// [`Engine::point`](crate::Engine::point) takes.
+pub fn canvas_point(
+    show: [u32; 2],
+    target: [u32; 2],
+    scaling: Scaling,
+    fit: Fit,
+    [px, py]: [f64; 2],
+) -> [f64; 2] {
+    let (x, y, width, height) = self::fit(show, target, scaling, fit);
+    let [show_w, show_h] = show.map(f64::from);
+    [(px - x) / width * show_w, (py - y) / height * show_h]
 }
 
 /// The loaded show's declared background as a vello color; opaque black

@@ -232,6 +232,38 @@ log or record it and open the address its own way;
 Presses are in canvas coordinates, which `render::canvas_at` works out
 from a point on the surface.
 
+### Pointer
+
+A show can follow the pointer, a mouse or a finger: eyes that follow the
+cursor, a spotlight, a hover highlight. It names the variables the host
+keeps up to date:
+
+```json
+{ "input": { "pointer": { "x": "pointer_x", "y": "pointer_y", "over": "pointer_over" } } }
+```
+
+- `x` and `y` are where the pointer is, in canvas coordinates. Beside
+  the canvas (in the letterbox) they stop at its edge.
+- `over` is `true` while the pointer is over the canvas.
+- A pointer that leaves (a mouse out of the window, a finger lifted)
+  leaves `x` and `y` where it was last, and `over` goes `false`.
+- With several fingers down, the first one is the pointer until it
+  lifts.
+
+Any of the three may be left out. They are ordinary variables, so
+bindings, curves and transitions read them as any other, and they need
+not be declared, though declaring them gives the show a place to start
+from. A [show value](#values-the-show-animates) of the same name, with a wandering
+timeline, keeps the show alive until a real pointer takes over.
+
+Pointer moves are not recorded: after a seek the variables read where
+the pointer is now. Both players follow the pointer themselves, the web
+player on its own canvas, so a page needs no code for it; a page that
+wants a finger followed rather than taken to scroll sets `touch-action:
+none` on the canvas. Hosts: `Engine::point(Some([x, y]))` as it moves,
+in canvas coordinates beside the canvas too (`render::canvas_point`),
+and `Engine::point(None)` when it has gone.
+
 ## Scenes
 
 ```json

@@ -75,6 +75,11 @@
 //! again. `player.pressedAt(x, y)` says what a press would do, as
 //! `{ trigger?, open? }`, for a pointer cursor.
 //!
+//! A show that follows the pointer (`input.pointer`) needs nothing from
+//! the page: the player follows the mouse, or the first finger down, on
+//! its own canvas. A page that wants a finger followed rather than taken
+//! to scroll sets `touch-action: none` on the canvas.
+//!
 //! The show is fitted inside the canvas, keeping its shape, with the
 //! canvas's own background showing beside it. `player.fit = "cover"`
 //! fills the canvas instead, cutting the canvas edges on the long axis,
@@ -119,6 +124,9 @@ const A_STALL: f64 = 5.0;
 type FrameCallback = Closure<dyn FnMut(f64)>;
 /// An event name and the handler listening for it on the document.
 type GestureListener = (String, Closure<dyn FnMut()>);
+/// An event name and the handler following the pointer for it on the
+/// canvas.
+type PointerListener = (String, Closure<dyn FnMut(web_sys::PointerEvent)>);
 
 fn error(message: impl AsRef<str>) -> JsValue {
     js_sys::Error::new(message.as_ref()).into()
@@ -525,6 +533,10 @@ struct Inner {
     on_event: Option<js_sys::Function>,
     on_driver: Option<js_sys::Function>,
     pending_frame: Option<i32>,
+    /// Where the pointer is on the canvas element, in CSS pixels from
+    /// its top-left corner: the mouse, or the first finger down. `None`
+    /// once it has left.
+    pointer: Option<[f64; 2]>,
     /// The page's sound, when the browser gave us an audio context.
     audio: Option<WebAudio>,
     /// The show's clips, by the name the show plays them under.
@@ -710,6 +722,25 @@ impl Inner {
         }
     }
 
+    /// Tell the show where the pointer is, on the canvas or beside it.
+    fn point(&mut self) {
+        let Some(size) = self.engine.show().map(|show| show.size) else {
+            return;
+        };
+        let ratio = self.pixel_ratio();
+        let surface = [self.surface.config.width, self.surface.config.height];
+        let at = self.pointer.map(|[x, y]| {
+            cuelight::render::canvas_point(
+                size,
+                surface,
+                self.engine.scaling(),
+                self.presenter.fit(),
+                [x * ratio, y * ratio],
+            )
+        });
+        self.engine.point(at);
+    }
+
     /// Pixels per CSS pixel on this screen, for turning a pointer's
     /// place on the element into a place on the surface.
     fn pixel_ratio(&self) -> f64 {
@@ -778,6 +809,7 @@ impl Inner {
             self.anchor_ms = Some(now_ms - time * 1000.0);
             (target, dt) = (time, 0.0);
         }
+        self.point();
         let mut applied = Vec::new();
         if self.driver_playing && !self.paused {
             if let Some(driver) = &mut self.driver {
@@ -863,6 +895,9 @@ pub struct CuelightPlayer {
     _frame: Rc<RefCell<Option<FrameCallback>>>,
     // The gesture listeners that wake the audio context, removed on drop.
     _gestures: Vec<GestureListener>,
+    // The canvas and the listeners following the pointer on it, removed
+    // on drop.
+    _pointer: (HtmlCanvasElement, Vec<PointerListener>),
 }
 
 #[wasm_bindgen]
@@ -956,6 +991,7 @@ impl CuelightPlayer {
             web_sys::console::warn_1(&format!("cuelight: {warning}").into());
         }
 
+        let pointer_canvas = canvas.clone();
         let mut context = RenderContext::new();
         let surface = context
             .create_surface(
@@ -1004,6 +1040,7 @@ impl CuelightPlayer {
             on_event: None,
             on_driver: None,
             pending_frame: None,
+            pointer: None,
             audio,
             clips: opened,
             screens: HashMap::new(),
@@ -1014,11 +1051,13 @@ impl CuelightPlayer {
         });
         let frame = start_frames(&inner, &reports)?;
         let gestures = listen_for_gestures(&inner)?;
+        let pointer = follow_pointer(&inner, &pointer_canvas)?;
         Ok(CuelightPlayer {
             inner,
             reports,
             _frame: frame,
             _gestures: gestures,
+            _pointer: (pointer_canvas, pointer),
         })
     }
 
@@ -1454,6 +1493,11 @@ impl Drop for CuelightPlayer {
                     .remove_event_listener_with_callback(event, closure.as_ref().unchecked_ref());
             }
         }
+        let (canvas, listeners) = &self._pointer;
+        for (event, closure) in listeners {
+            let _ =
+                canvas.remove_event_listener_with_callback(event, closure.as_ref().unchecked_ref());
+        }
     }
 }
 
@@ -1489,6 +1533,48 @@ fn listen_for_gestures(inner: &Rc<RefCell<Inner>>) -> Result<Vec<GestureListener
             }
         });
         document.add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())?;
+        listeners.push((event.to_owned(), closure));
+    }
+    Ok(listeners)
+}
+
+/// Follow the pointer over the canvas, for the show's `input.pointer`:
+/// the mouse, or the first finger down until it lifts (`isPrimary`).
+/// Only noted here; each frame tells the engine, so a resize or a seek
+/// under a pointer that has not moved still reads right.
+fn follow_pointer(
+    inner: &Rc<RefCell<Inner>>,
+    canvas: &HtmlCanvasElement,
+) -> Result<Vec<PointerListener>, JsValue> {
+    let mut listeners = Vec::new();
+    for event in [
+        "pointerdown",
+        "pointermove",
+        "pointerup",
+        "pointercancel",
+        "pointerleave",
+    ] {
+        let weak = Rc::downgrade(inner);
+        let closure = Closure::new(move |e: web_sys::PointerEvent| {
+            if !e.is_primary() {
+                return;
+            }
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let Ok(mut inner) = inner.try_borrow_mut() else {
+                return;
+            };
+            // A finger lifted is a pointer gone; a mouse stays until it
+            // leaves the canvas.
+            let gone = match e.type_().as_str() {
+                "pointerleave" | "pointercancel" => true,
+                "pointerup" => e.pointer_type() != "mouse",
+                _ => false,
+            };
+            inner.pointer = (!gone).then(|| [f64::from(e.offset_x()), f64::from(e.offset_y())]);
+        });
+        canvas.add_event_listener_with_callback(event, closure.as_ref().unchecked_ref())?;
         listeners.push((event.to_owned(), closure));
     }
     Ok(listeners)
