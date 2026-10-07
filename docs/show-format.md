@@ -13,6 +13,31 @@ Point your editor at the schema for autocomplete and validation:
 { "$schema": "../../../cuelight-core/schemas/show.schema.json", "name": "my_show", ... }
 ```
 
+## What a show is, and is not
+
+A show is a fixed canvas with things placed on it and moved over time,
+not a document that flows. Every layer is where the show puts it: there
+is no layout engine deciding where things go, and a box is the size the
+show says, or its content's own. That is what makes a show the same on
+every host and at every moment: it is a function of its inputs and its
+clock, so it can be seeked, scrubbed and rendered to frames exactly,
+and a player small enough for a kiosk plays it as a browser does.
+
+Where a property means what a CSS one means, it takes CSS's name and
+CSS's meaning, edge cases included: a host's `contain`, `cover` and
+`fill` are `object-fit`'s, `multiply` and `screen` are the blend modes
+CSS names so, and a text shadow's `blur` is `text-shadow`'s. Those
+questions have been worked through already, and an author who knows the
+web knows the words. What is not taken is CSS's flow layout: positions
+stay absolute, and nothing reflows round anything else.
+
+Text is where that line is easiest to cross. Lines are broken where the
+text says, glyphs are placed by their advances, and that is all a show
+lays out. Wrapping, mixed styles in one line, shaping and right to left
+scripts are a text layout engine's work; when shows need them, they
+come from a library built for it rather than from the engine one
+feature at a time.
+
 ## Format version
 
 ```json
