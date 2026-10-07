@@ -24,9 +24,9 @@ clock, so it can be seeked, scrubbed and rendered to frames exactly,
 and a player small enough for a kiosk plays it as a browser does.
 
 Where a property means what a CSS one means, it takes CSS's name and
-CSS's meaning, edge cases included: a host's `contain`, `cover` and
-`fill` are `object-fit`'s, `multiply` and `screen` are the blend modes
-CSS names so, and a text shadow's `blur` is `text-shadow`'s. Those
+CSS's meaning, edge cases included: an image layer's `fit` is
+`object-fit`, a text layer's `box: "cap"` is `text-box-edge: cap
+alphabetic`, and a text shadow's `blur` is `text-shadow`'s. Those
 questions have been worked through already, and an author who knows the
 web knows the words. What is not taken is CSS's flow layout: positions
 stay absolute, and nothing reflows round anything else.
