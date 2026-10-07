@@ -308,7 +308,13 @@ impl Draw<'_> {
         scene.set_transform(placement);
         scene.reset_paint_transform();
         scene.reset_tint();
-        let blended = blend_mode(layer.blend).inspect(|mode| scene.push_blend_layer(*mode));
+        // A blended item blends as it is drawn, straight onto what is
+        // beneath: one shape blended is the same picture as one shape in a
+        // layer of its own blended, without the layer, and a layer each
+        // for a hundred lamps costs the GPU a pass each. A blended group
+        // is still a layer, since it is composited as one picture.
+        let blended = None;
+        scene.set_blend_mode(blend_mode(layer.blend).unwrap_or_default());
         match layer.shape {
             ResolvedShape::BlendBegin { blend } => {
                 scene.reset_transform();
@@ -403,12 +409,14 @@ impl Draw<'_> {
                     let _ = scene
                         .glyph_run(&mut self.target.resources, &font)
                         .font_size(size as f32)
+                        .atlas_cache(true)
                         .stroke_glyphs(run());
                 }
                 scene.set_paint(color);
                 let _ = scene
                     .glyph_run(&mut self.target.resources, &font)
                     .font_size(size as f32)
+                    .atlas_cache(true)
                     .fill_glyphs(run());
             }
             ResolvedShape::Image {
