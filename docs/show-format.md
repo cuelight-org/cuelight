@@ -638,6 +638,22 @@ Layer kinds:
   The `text` property can be bound (see [Bindings](#bindings)) but not
   keyframed.
 
+  `box` says what a line spans from top to bottom, and so what `anchor`,
+  `align` and a press go by. `line` (default) runs from the font's
+  ascent to its descent, room for accents above and descenders below,
+  so capitals sit above the middle. `cap` runs from the top of a capital
+  to the baseline, as CSS's `text-box-edge: cap alphabetic` trims a
+  line: a word anchored at `center` turns about the middle of its
+  letters rather than wobbling about a point below them. Several lines
+  run from the top of the first one's capitals to the last one's
+  baseline. The box is the same whatever the text says, so a changing
+  word does not move; a font without a capital H keeps the line box.
+
+  ```json
+  { "name": "title", "type": "text", "text": "GAME OVER", "font": "big", "box": "cap",
+    "anchor": "center", "x": 960, "y": 540 }
+  ```
+
   `reveal` (default 1) is how much of the text shows, as a share of its
   characters from 0 to 1: the first `reveal` of them are drawn and the
   rest keep their room, so a line neither reflows nor re-centres as it

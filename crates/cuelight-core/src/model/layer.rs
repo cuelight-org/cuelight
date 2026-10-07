@@ -358,6 +358,11 @@ pub enum LayerKind {
         size: Option<[f64; 2]>,
         #[serde(default)]
         align: Align,
+        /// What the box spans from top to bottom: each line from ascent
+        /// to descent (`line`, the default) or from cap height to
+        /// baseline (`cap`).
+        #[serde(default, rename = "box", skip_serializing_if = "TextBox::is_line")]
+        text_box: TextBox,
         /// How much of the text shows, as a share of its characters from
         /// 0 to 1: the first `reveal` of them are drawn, the rest keep
         /// their room and are not, so a line neither reflows nor

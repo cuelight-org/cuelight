@@ -84,6 +84,30 @@ fn default_border_width() -> u32 {
     1
 }
 
+/// What a text layer's box spans from top to bottom, and so what its
+/// `anchor`, its `align` and a press on it go by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum TextBox {
+    /// Each line from the font's ascent to its descent: room for accents
+    /// above and descenders below, so capitals sit above the middle.
+    #[default]
+    Line,
+    /// Each line from the top of a capital to the baseline, as CSS's
+    /// `text-box-edge: cap alphabetic` trims it: centred on `center`, a
+    /// word turns about the middle of its letters. The box stays the
+    /// same whatever the text says; a font without a capital H keeps
+    /// the line box.
+    Cap,
+}
+
+impl TextBox {
+    pub fn is_line(&self) -> bool {
+        *self == TextBox::Line
+    }
+}
+
 /// Where content sits in a box: one of nine positions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

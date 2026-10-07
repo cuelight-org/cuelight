@@ -1038,6 +1038,10 @@
               "$ref": "#/$defs/Align",
               "default": "center"
             },
+            "box": {
+              "description": "What the box spans from top to bottom: each line from ascent\nto descent (`line`, the default) or from cap height to\nbaseline (`cap`).",
+              "$ref": "#/$defs/TextBox"
+            },
             "font": {
               "type": "string"
             },
@@ -2238,6 +2242,21 @@
       },
       "required": [
         "color"
+      ]
+    },
+    "TextBox": {
+      "description": "What a text layer's box spans from top to bottom, and so what its\n`anchor`, its `align` and a press on it go by.",
+      "oneOf": [
+        {
+          "description": "Each line from the font's ascent to its descent: room for accents\nabove and descenders below, so capitals sit above the middle.",
+          "type": "string",
+          "const": "line"
+        },
+        {
+          "description": "Each line from the top of a capital to the baseline, as CSS's\n`text-box-edge: cap alphabetic` trims it: centred on `center`, a\nword turns about the middle of its letters. The box stays the\nsame whatever the text says; a font without a capital H keeps\nthe line box.",
+          "type": "string",
+          "const": "cap"
+        }
       ]
     },
     "Tile": {

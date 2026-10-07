@@ -8,8 +8,8 @@ use cuelight::{Engine, ResolvedShape};
 
 const FONT: &[u8] = include_bytes!("fonts/cuelight_test_sans.ttf");
 
-// The test font: 1000 units per em, ascent 1069, descent -293, advances
-// A 639, 1 572, space 260. At size 100 a unit is 0.1 px.
+// The test font: 1000 units per em, ascent 1069, descent -293, cap height
+// 714, advances A 639, 1 572, space 260. At size 100 a unit is 0.1 px.
 const SHOW: &str = r##"{
   "name": "outline", "size": [800, 400],
   "fonts": {
@@ -343,4 +343,68 @@ fn text_in_an_outline_font_is_bounded_by_its_lines() {
     let close = |a: f64, b: f64| (a - b).abs() < 0.01;
     assert!(close(x, 10.0) && close(y, 20.0), "{x} {y}");
     assert!(close(w, 121.1) && close(h, 136.2), "{w} {h}");
+}
+
+#[test]
+fn text_boxed_by_its_cap_height_runs_from_the_capitals_to_the_baseline() {
+    // At size 100 the cap height is 71.4 and the ascent 106.9, the line
+    // 136.2: boxed by the cap, the top of the box is the top of a
+    // capital and its bottom the baseline.
+    let show = |text: &str, text_box: &str| {
+        format!(
+            r##"{{ "name": "b", "size": [400, 400],
+              "fonts": {{ "big": {{ "file": "sans", "size": 100 }} }},
+              "layers": [ {{ "name": "word", "type": "text", "font": "big", "text": "{text}",
+                            "box": "{text_box}", "x": 10, "y": 20, "align": "top_left" }} ] }}"##
+        )
+    };
+    let laid_out = |text: &str, text_box: &str| {
+        let mut engine = Engine::new();
+        engine.set_outline_font("sans", FONT).unwrap();
+        engine.load_show(&show(text, text_box)).unwrap();
+        let path = cuelight_core::LayerPath::new(cuelight_core::Root::Show, vec![0]);
+        let rect = engine.bounds(&path).unwrap().rect;
+        let (_, glyphs, ..) = run(&engine, "word");
+        (rect, glyphs[0].1)
+    };
+    let close = |a: f64, b: f64| (a - b).abs() < 0.01;
+    let ([_, y, _, h], baseline) = laid_out("A1", "cap");
+    assert!(close(y, 20.0) && close(h, 71.4), "{y} {h}");
+    assert!(close(baseline, 20.0 + 71.4), "{baseline}");
+    // The line box, as before.
+    let ([_, y, _, h], baseline) = laid_out("A1", "line");
+    assert!(close(y, 20.0) && close(h, 136.2), "{y} {h}");
+    assert!(close(baseline, 20.0 + 106.9), "{baseline}");
+    // Two lines: the cap of the first to the baseline of the second.
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(&show("A\\n1", "cap")).unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let ResolvedShape::GlyphRun { lines, glyphs, .. } = &layers[0].shape else {
+        panic!("{:?}", layers[0].shape);
+    };
+    assert!(close(glyphs[1].y, 20.0 + 71.4 + 136.2), "{}", glyphs[1].y);
+    assert!(
+        close(lines[1][1] + lines[1][3], 20.0 + 71.4 + 136.2),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_word_boxed_by_its_cap_height_turns_about_the_middle_of_its_letters() {
+    // Anchored at its centre: the cap box's middle is where it is
+    // placed, so the baseline sits half a cap height below it.
+    let show = r##"{ "name": "b", "size": [400, 400],
+      "fonts": { "big": { "file": "sans", "size": 100 } },
+      "layers": [ { "name": "word", "type": "text", "font": "big", "text": "HI", "box": "cap",
+                    "x": 200, "y": 200, "anchor": "center" } ] }"##;
+    let mut engine = Engine::new();
+    engine.set_outline_font("sans", FONT).unwrap();
+    engine.load_show(show).unwrap();
+    let (_, glyphs, ..) = run(&engine, "word");
+    assert!(
+        (glyphs[0].1 - (200.0 + 71.4 / 2.0)).abs() < 0.01,
+        "{}",
+        glyphs[0].1
+    );
 }

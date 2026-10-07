@@ -8,4 +8,5 @@ the license, with the original copyright, is in [OFL.txt](OFL.txt).
 Source: <https://github.com/notofonts/latin-greek-cyrillic>
 
 Metrics the tests rely on: 1000 units per em, ascent 1069, descent -293,
-no line gap; advances A 639, 1 572, space 260, comma and period 268.
+no line gap, cap height 714; advances A 639, 1 572, space 260, comma and
+period 268.

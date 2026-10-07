@@ -14,7 +14,7 @@ use cuelight_core::{
     frame_key, parse_color, revealed, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill,
     Finding, Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
     Press, Property, Reel, ReelCells, ResolvedValue, Root, Sampling, Scaling, Shape, Sheet, Show,
-    Traced, Value, Voice,
+    TextBox, Traced, Value, Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -270,6 +270,14 @@ enum TextDraw {
         /// Each line's box, relative to the layer's box.
         lines: Vec<[f64; 4]>,
     },
+}
+
+/// How text sits in its box: where it is aligned, and what each line
+/// spans from top to bottom.
+#[derive(Debug, Clone, Copy)]
+struct Setting {
+    align: Align,
+    text_box: TextBox,
 }
 
 /// Rasterized text, placed relative to its layer's box.
@@ -1040,13 +1048,27 @@ impl Engine {
             }
             LayerKind::Digits { size: [w, h], .. } => [0.0, 0.0, *w, *h],
             // The text's box: its size, or the measured text.
-            LayerKind::Text { size, align, .. } => {
+            LayerKind::Text {
+                size,
+                align,
+                text_box,
+                ..
+            } => {
                 let [w, h] = match size {
                     Some(size) => *size,
                     None => {
                         let text = self.core.text(root, layer, path, Property::Text);
                         let font = self.core.text(root, layer, path, Property::Font);
-                        match self.text_draw(&font, &text, None, *align, usize::MAX)? {
+                        match self.text_draw(
+                            &font,
+                            &text,
+                            None,
+                            Setting {
+                                align: *align,
+                                text_box: *text_box,
+                            },
+                            usize::MAX,
+                        )? {
                             TextDraw::Bitmap(raster) => raster.container,
                             TextDraw::Glyphs { container, .. } => container,
                         }
@@ -1068,7 +1090,7 @@ impl Engine {
         style_name: &str,
         text: &str,
         size: Option<[f64; 2]>,
-        align: Align,
+        setting: Setting,
         shown: usize,
     ) -> Option<TextDraw> {
         #[cfg(feature = "outline-fonts")]
@@ -1079,7 +1101,15 @@ impl Engine {
             .and_then(|style| Some((style, self.outline_fonts.get(&style.file)?)))
             .filter(|(style, _)| !self.pixels(style))
         {
-            let layout = crate::outline::layout(font, text, style.size?, size, align, shown)?;
+            let layout = crate::outline::layout(
+                font,
+                text,
+                style.size?,
+                size,
+                setting.align,
+                setting.text_box,
+                shown,
+            )?;
             return Some(TextDraw::Glyphs {
                 font: font.clone(),
                 size: style.size?,
@@ -1088,7 +1118,7 @@ impl Engine {
                 lines: layout.lines,
             });
         }
-        self.text_raster(style_name, text, size, align, shown, false)
+        self.text_raster(style_name, text, size, setting, shown, false)
             .map(TextDraw::Bitmap)
     }
 
@@ -1102,17 +1132,20 @@ impl Engine {
         style_name: &str,
         text: &str,
         size: Option<[f64; 2]>,
-        align: Align,
+        setting: Setting,
         shown: usize,
         as_shadow: bool,
     ) -> Option<Arc<TextRaster>> {
+        let Setting { align, text_box } = setting;
         let style = self.core.show()?.fonts.get(style_name)?;
         let mut cache = self.text_cache.lock().unwrap_or_else(|e| e.into_inner());
         let registered = self.registered_font(&mut cache, style)?;
         let ink = if as_shadow { "\u{1}shadow" } else { "" };
         // Every way of asking for the whole text is one entry.
         let shown = shown.min(text.chars().count());
-        let key = format!("{style_name}{ink}\u{1}{text}\u{1}{size:?}\u{1}{align:?}\u{1}{shown}");
+        let key = format!(
+            "{style_name}{ink}\u{1}{text}\u{1}{size:?}\u{1}{align:?}\u{1}{text_box:?}\u{1}{shown}"
+        );
         if let Some(raster) = cache.rasters.get(&key).cloned() {
             cache.hits += 1;
             return raster;
@@ -1150,9 +1183,8 @@ impl Engine {
             true => style.shadow.as_ref().map_or(0.0, |s| s.blur),
             false => 0.0,
         };
-        let raster = styled
-            .rasterize(text, size, align, shown)
-            .map(|(rgba, offset, container)| {
+        let raster = styled.rasterize(text, size, align, text_box, shown).map(
+            |(rgba, offset, container)| {
                 let (rgba, pad) = match blur > 0.0 {
                     true => rgba.blurred(blur),
                     false => (rgba, 0),
@@ -1162,7 +1194,8 @@ impl Engine {
                     offset: [offset[0] - pad, offset[1] - pad],
                     container,
                 })
-            });
+            },
+        );
         let bytes = key.len() + raster.as_ref().map_or(0, |r| r.image.pixels.len());
         cache.rasterized_bytes += bytes as u64;
         cache.rasters.insert(key, raster.clone(), bytes);
@@ -1182,7 +1215,7 @@ impl Engine {
         style_name: &str,
         text: &str,
         size: Option<[f64; 2]>,
-        align: Align,
+        setting: Setting,
         shown: usize,
     ) {
         let Placed {
@@ -1205,7 +1238,7 @@ impl Engine {
             let [sx, sy] = s.offset;
             (rgba(&s.color), sx * scale, sy * scale)
         });
-        match self.text_draw(style_name, text, size, align, shown) {
+        match self.text_draw(style_name, text, size, setting, shown) {
             Some(TextDraw::Bitmap(raster)) => {
                 let mut bitmap = |raster: &Arc<TextRaster>, dx: f64, dy: f64, alpha: f64| {
                     let [ox, oy] = raster.offset;
@@ -1232,7 +1265,7 @@ impl Engine {
                 // layer's opacity.
                 if let Some(([.., a], dx, dy)) = shadow {
                     if let Some(behind) =
-                        self.text_raster(style_name, text, size, align, shown, true)
+                        self.text_raster(style_name, text, size, setting, shown, true)
                     {
                         bitmap(&behind, dx, dy, f64::from(a) / 255.0);
                     }
@@ -1636,7 +1669,10 @@ impl Engine {
                             font,
                             character,
                             Some(cell),
-                            Align::Center,
+                            Setting {
+                                align: Align::Center,
+                                text_box: TextBox::Line,
+                            },
                             usize::MAX,
                         );
                     }
@@ -2179,7 +2215,12 @@ impl Engine {
                             ),
                         }
                     }
-                    LayerKind::Text { size, align, .. } => {
+                    LayerKind::Text {
+                        size,
+                        align,
+                        text_box,
+                        ..
+                    } => {
                         let text = self.core.text(root, layer, path, Property::Text);
                         let font = self.core.text(root, layer, path, Property::Font);
                         let shown =
@@ -2201,7 +2242,10 @@ impl Engine {
                             &font,
                             &text,
                             *size,
-                            *align,
+                            Setting {
+                                align: *align,
+                                text_box: *text_box,
+                            },
                             shown,
                         );
                     }
