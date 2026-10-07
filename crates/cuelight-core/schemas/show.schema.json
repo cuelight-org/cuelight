@@ -681,6 +681,26 @@
         }
       ]
     },
+    "ImageFit": {
+      "description": "How an image fills a box of another shape, as CSS's `object-fit` says.",
+      "oneOf": [
+        {
+          "description": "Stretched to the box, its shape lost.",
+          "type": "string",
+          "const": "fill"
+        },
+        {
+          "description": "As large as fits inside the box keeping its shape, centred, the\nrest of the box empty.",
+          "type": "string",
+          "const": "contain"
+        },
+        {
+          "description": "As small as fills the box keeping its shape, centred, cropped to\nthe box.",
+          "type": "string",
+          "const": "cover"
+        }
+      ]
+    },
     "Input": {
       "description": "What the show makes of a host's keys and presses.\n\nDeclared by the show rather than wired into each host, so the player,\na browser and an embedder behave the same, and a host stays a source\nof events: it says which key went down or where a press landed, and\nthe show says what that means.",
       "type": "object",
@@ -925,6 +945,10 @@
           "description": "Artwork the host registered under `image` with the `cuelight`\ncrate: pixels through its `set_image`, or vector artwork through\nits `set_vector`, which the loader does for every `assets/*.svg`.\nDrawn with its top-left corner at the layer's x/y unless the layer\nhas an `anchor`; what is not registered yet is skipped.\n\nOne layer kind for both, since the asset says how to draw itself\nand everything else about a layer of artwork is the same. `type`\nand the name may still be written as `vector`, which older shows\ndo; `sheet` and `frame` are for pixels, and say so at load on\nvector artwork.",
           "type": "object",
           "properties": {
+            "fit": {
+              "description": "How the artwork fills `size` when the two differ in shape:\nstretched (`fill`, the default), inside it keeping its shape\n(`contain`) or filling it keeping its shape and cropped\n(`cover`). Nothing to a tiled image, whose tiles keep the\nsize they are given.",
+              "$ref": "#/$defs/ImageFit"
+            },
             "frame": {
               "description": "Base cell index for sheets (row-major, 0 is the top-left cell).",
               "type": "number",

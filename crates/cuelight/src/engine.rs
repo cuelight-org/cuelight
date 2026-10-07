@@ -12,9 +12,9 @@ use crate::output::OutputColor;
 use crate::segments;
 use cuelight_core::{
     frame_key, parse_color, revealed, row_cells, Align, Blend, DigitDisplay, Error, Event, Fill,
-    Finding, Gradient, Influence, Justify, Layer, LayerKind, LayerPath, Pass, PathElement, Playing,
-    Press, Property, Reel, ReelCells, ResolvedValue, Root, Sampling, Scaling, Shape, Sheet, Show,
-    TextBox, Traced, Value, Voice,
+    Finding, Gradient, ImageFit, Influence, Justify, Layer, LayerKind, LayerPath, Pass,
+    PathElement, Playing, Press, Property, Reel, ReelCells, ResolvedValue, Root, Sampling, Scaling,
+    Shape, Sheet, Show, TextBox, Traced, Value, Voice,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1896,11 +1896,37 @@ impl Engine {
                         repeat,
                         parts,
                         sampling,
+                        fit,
                         ..
                     } => {
                         // Whichever artwork the layer is pointed at now:
                         // its own, or the one a binding names.
                         let image = &self.core.text(root, layer, path, Property::Image);
+                        // A fit other than `fill` puts the picture in the
+                        // box keeping its shape; under `cover` it spills
+                        // over, and the box crops it.
+                        let fitting = |natural: [f64; 2], boxed: Option<[f64; 2]>| {
+                            let boxed = boxed.filter(|_| repeat.is_none())?;
+                            let [fx, fy, fw, fh] = fit.place(natural, boxed);
+                            let crop = (*fit == ImageFit::Cover).then(|| ResolvedShape::Rect {
+                                x,
+                                y,
+                                width: boxed[0] * scale,
+                                height: boxed[1] * scale,
+                            });
+                            Some(([x + fx * scale, y + fy * scale], [fw, fh], crop))
+                        };
+                        let marker = |shape| ResolvedLayer {
+                            gradient: None,
+                            overflow,
+                            name: layer.name.clone(),
+                            layer: here.clone(),
+                            shape,
+                            color: [0; 4],
+                            opacity,
+                            blend: Blend::Normal,
+                            transform,
+                        };
                         // Vector artwork under the same name, drawn as
                         // the paths it is rather than as pixels; the
                         // layer is the same either way.
@@ -1925,7 +1951,17 @@ impl Engine {
                                     ],
                                 }
                             });
-                            let box_size = size.unwrap_or([art.width, art.height]);
+                            let natural = [art.width, art.height];
+                            let (origin, box_size, crop) = fitting(natural, *size).unwrap_or((
+                                [x, y],
+                                size.unwrap_or(natural),
+                                None,
+                            ));
+                            if let Some(crop) = &crop {
+                                built.items.push(marker(ResolvedShape::ClipBegin {
+                                    shape: Box::new(crop.clone()),
+                                }));
+                            }
                             push_vector(
                                 &mut built.items,
                                 art,
@@ -1933,7 +1969,7 @@ impl Engine {
                                     overflow,
                                     name: &layer.name,
                                     layer: &here,
-                                    origin: [x, y],
+                                    origin,
                                     scale,
                                     opacity,
                                     blend: layer.blend,
@@ -1945,6 +1981,9 @@ impl Engine {
                                 tint,
                                 &moved,
                             );
+                            if crop.is_some() {
+                                built.items.push(marker(ResolvedShape::ClipEnd));
+                            }
                         }
                         // Missing images are skipped, not an error: the
                         // host may provide them later.
@@ -1957,7 +1996,13 @@ impl Engine {
                                 Some([_, _, w, h]) => [f64::from(w), f64::from(h)],
                                 None => [f64::from(data.width), f64::from(data.height)],
                             };
-                            let [width, height] = size.unwrap_or(natural);
+                            let ([left, top], [width, height], crop) = fitting(natural, *size)
+                                .unwrap_or(([x, y], size.unwrap_or(natural), None));
+                            if let Some(crop) = &crop {
+                                built.items.push(marker(ResolvedShape::ClipBegin {
+                                    shape: Box::new(crop.clone()),
+                                }));
+                            }
                             // Tiling covers the layer's size with copies
                             // of one tile; without it the image is
                             // stretched to that size, as it always was.
@@ -1982,8 +2027,8 @@ impl Engine {
                                 shape: ResolvedShape::Image {
                                     image: image.clone(),
                                     source,
-                                    x,
-                                    y,
+                                    x: left,
+                                    y: top,
                                     width: width * scale,
                                     height: height * scale,
                                     tile,
@@ -1999,6 +2044,9 @@ impl Engine {
                                 blend: layer.blend,
                                 transform,
                             });
+                            if crop.is_some() {
+                                built.items.push(marker(ResolvedShape::ClipEnd));
+                            }
                         }
                     }
                     LayerKind::Digits {

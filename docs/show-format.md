@@ -561,6 +561,19 @@ Layer kinds:
                     "map": { "1": "avatar_1", "2": "avatar_2" } } ] }
   ```
 
+  `fit` says how the artwork fills a `size` of another shape, as CSS's
+  `object-fit` does: `fill` (default) stretches it to the box, `contain`
+  draws it as large as fits inside keeping its shape, centred, and
+  `cover` as small as fills the box keeping its shape, centred and
+  cropped to the box. For a picture that arrives in whatever shape it
+  has, an avatar or a photo; a round avatar is a `cover` image in a
+  group clipped to a circle. A tiled image's tiles keep the size they
+  are given, so `fit` does nothing there.
+
+  ```json
+  { "name": "avatar", "type": "image", "image": "avatar_1", "size": [128, 128], "fit": "cover" }
+  ```
+
   `sampling` says how an image's pixels are read when it is drawn at
   another size: `smooth` (default) filters them, and `nearest` draws each
   source pixel as a block with hard edges, at any scale and rotation, so
