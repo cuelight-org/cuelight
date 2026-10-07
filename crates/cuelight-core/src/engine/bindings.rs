@@ -191,7 +191,7 @@ impl Engine {
     /// Layers come in draw order, each with its path and name, and only
     /// the properties that layer actually has.
     pub fn values(&self) -> Result<Vec<ResolvedValue>, Error> {
-        const EVERY: [Property; 16] = [
+        const EVERY: [Property; 17] = [
             Property::X,
             Property::Y,
             Property::Opacity,
@@ -204,6 +204,7 @@ impl Engine {
             Property::Reveal,
             Property::Video,
             Property::Sound,
+            Property::Image,
             Property::Frame,
             Property::Gain,
             Property::Visible,

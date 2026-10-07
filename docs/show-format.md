@@ -522,6 +522,20 @@ Layer kinds:
   behind white artwork, one sprite or icon reused in several colors, a
   worn look over a clean texture).
 
+  `image` is bindable, as a video layer's `video` is: one layer shows
+  whichever picture a variable names, the avatar of whoever is playing
+  rather than a layer per player. The host registers each picture under
+  a name, before the show loads or while it runs, and points the
+  variable at it, directly or through a `map`. A name nothing is
+  registered under draws nothing, as an image that has not arrived yet
+  does, and every name a `map` lists is a file the show ships.
+
+  ```json
+  { "name": "avatar", "type": "image", "image": "avatar_1", "size": [96, 96],
+    "bindings": [ { "property": "image", "variable": "player",
+                    "map": { "1": "avatar_1", "2": "avatar_2" } } ] }
+  ```
+
   `sampling` says how an image's pixels are read when it is drawn at
   another size: `smooth` (default) filters them, and `nearest` draws each
   source pixel as a block with hard edges, at any scale and rotation, so
@@ -1375,7 +1389,7 @@ or `curve`.
   short, and the engine reads it as that curve. That is the rule for any
   shorthand the format has: it is defined as the longer form it stands
   for, so the two cannot drift apart. A curve only bends numbers, so one
-  on `tint`, `font`, `video` or `sound` is reported as a binding that
+  on `tint`, `font`, `video`, `sound` or `image` is reported as a binding that
   does nothing.
 
 What comes out is a value. A binding goes on to `scale` and `offset`,
