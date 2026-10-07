@@ -82,6 +82,11 @@ struct Cli {
     /// How many layers each list of the profile names.
     #[arg(long, default_value_t = 10)]
     top: usize,
+    /// Draw with vello_gpu instead of the classic renderer, at the show's
+    /// own size (a spike, to compare the two).
+    #[cfg(feature = "vello-gpu")]
+    #[arg(long, conflicts_with_all = ["scale", "width", "profile"])]
+    vello_gpu: bool,
 }
 
 /// An input the command line asks for, at the time it asks for it.
@@ -347,6 +352,14 @@ fn run(cli: &Cli) -> Result<(), Stop> {
         true => None,
         false => Some(Renderer::new().map_err(|e| format!("no renderer: {e}"))?),
     };
+    #[cfg(feature = "vello-gpu")]
+    let mut gpu = match cli.vello_gpu && !cli.events {
+        true => Some(
+            cuelight::render::gpu::GpuRenderer::new()
+                .map_err(|e| format!("no vello_gpu renderer: {e}"))?,
+        ),
+        false => None,
+    };
     if renderer.is_some() && !cli.profile {
         std::fs::create_dir_all(&cli.out).map_err(|e| format!("{}: {e}", cli.out.display()))?;
     }
@@ -415,6 +428,11 @@ fn run(cli: &Cli) -> Result<(), Stop> {
                 let frame = match target {
                     None => renderer.render_to_rgba(&engine),
                     Some(target) => renderer.present_to_rgba(&engine, target),
+                };
+                #[cfg(feature = "vello-gpu")]
+                let frame = match gpu.as_mut() {
+                    Some(gpu) => gpu.render_to_rgba(&engine),
+                    None => frame,
                 };
                 frame
                     .map_err(|e| e.to_string())?
@@ -777,6 +795,8 @@ mod tests {
             triggers: Vec::new(),
             sets: Vec::new(),
             scale: None,
+            #[cfg(feature = "vello-gpu")]
+            vello_gpu: false,
             width: None,
         }
     }

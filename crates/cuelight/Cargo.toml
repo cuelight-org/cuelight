@@ -13,6 +13,8 @@ cuelight-core = { path = "../cuelight-core", version = "0.0.1" }
 thiserror = "2"
 
 vello = { version = "0.11", optional = true }
+vello_gpu = { version = "0.3", optional = true }
+glifo = { version = "0.4", optional = true }
 pollster = { version = "1.0", optional = true }
 png = { version = "0.18", optional = true }
 skrifa = { version = "0.44", optional = true }
@@ -29,6 +31,9 @@ env_logger = "0.11"
 [features]
 default = ["render"]
 render = ["dep:vello", "dep:pollster", "dep:png"]
+# A second renderer on vello_gpu, beside the classic one, to compare the
+# two (a spike: offscreen, at the show's own size).
+vello-gpu = ["render", "dep:vello_gpu", "dep:glifo"]
 # Outline (TrueType/OpenType) fonts for text layers: measuring and glyph
 # placement in the engine. Off by default so a bitmap-font-only embed stays
 # lean; the renderer draws the resulting glyph runs either way.
