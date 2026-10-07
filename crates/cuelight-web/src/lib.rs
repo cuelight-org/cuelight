@@ -75,6 +75,12 @@
 //! again. `player.pressedAt(x, y)` says what a press would do, as
 //! `{ trigger?, open? }`, for a pointer cursor.
 //!
+//! A picture the page has, an avatar a visitor picked or a photo it
+//! fetched, reaches the show with `player.setImage(name, blobOrUrl)`,
+//! decoded by the browser, so any format it shows will do; the show draws
+//! it wherever it draws the image `name`. `player.setImagePixels(name,
+//! width, height, rgba)` takes pixels a page made itself.
+//!
 //! A show that follows the pointer (`input.pointer`) needs nothing from
 //! the page: the player follows the mouse, or the first finger down, on
 //! its own canvas. A page that wants a finger followed rather than taken
@@ -146,6 +152,48 @@ async fn fetch(url: &str) -> Result<Vec<u8>, JsValue> {
     }
     let buffer = JsFuture::from(response.array_buffer()?).await?;
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+/// Decode a picture the page has, a `Blob` or a URL to fetch, in the
+/// browser, and read its pixels: `(width, height, rgba)`, straight
+/// alpha.
+async fn decode_image(source: &JsValue) -> Result<(u32, u32, Vec<u8>), JsValue> {
+    let blob: web_sys::Blob = match source.as_string() {
+        Some(url) => {
+            let response: web_sys::Response = JsFuture::from(window()?.fetch_with_str(&url))
+                .await
+                .map_err(|_| error(format!("{url}: request failed")))?
+                .dyn_into()?;
+            if !response.ok() {
+                return Err(error(format!("{url}: HTTP {}", response.status())));
+            }
+            JsFuture::from(response.blob()?).await?.dyn_into()?
+        }
+        None => source
+            .clone()
+            .dyn_into()
+            .map_err(|_| error("an image is a Blob or a URL"))?,
+    };
+    let bitmap: web_sys::ImageBitmap =
+        JsFuture::from(window()?.create_image_bitmap_with_blob(&blob)?)
+            .await
+            .map_err(|e| {
+                error(format!(
+                    "the browser could not decode the image: {}",
+                    js_error_text(&e)
+                ))
+            })?
+            .dyn_into()?;
+    let (width, height) = (bitmap.width(), bitmap.height());
+    let canvas = web_sys::OffscreenCanvas::new(width.max(1), height.max(1))?;
+    let context: web_sys::OffscreenCanvasRenderingContext2d = canvas
+        .get_context("2d")?
+        .ok_or_else(|| error("no 2D canvas to read the image with"))?
+        .dyn_into()?;
+    context.draw_image_with_image_bitmap(&bitmap, 0.0, 0.0)?;
+    bitmap.close();
+    let data = context.get_image_data(0.0, 0.0, f64::from(width), f64::from(height))?;
+    Ok((width, height, data.data().0))
 }
 
 /// A show as fetched: its files, and where its clips are.
@@ -1220,6 +1268,55 @@ impl CuelightPlayer {
             inner.presenter.set_fit(fit);
         }
         Ok(())
+    }
+
+    /// Give the show a picture to draw wherever it draws the image
+    /// `name`: a `Blob` (a file the page was given, a fetch's body) or a
+    /// URL, decoded by the browser, so any format it shows will do. An
+    /// image already under that name is replaced. Resolves once the
+    /// picture is in place; rejects when it cannot be fetched or
+    /// decoded.
+    ///
+    /// ```js
+    /// await player.setImage("avatar_1", file);
+    /// ```
+    #[wasm_bindgen(js_name = setImage)]
+    pub fn set_image(&self, name: String, source: JsValue) -> js_sys::Promise {
+        let inner = Rc::downgrade(&self.inner);
+        wasm_bindgen_futures::future_to_promise(async move {
+            let (width, height, pixels) = decode_image(&source).await?;
+            let inner = inner.upgrade().ok_or_else(|| error("the player is gone"))?;
+            let mut inner = inner
+                .try_borrow_mut()
+                .map_err(|_| error("the player has stopped"))?;
+            inner
+                .engine
+                .set_image(&name, width, height, pixels)
+                .map_err(|e| error(e.to_string()))?;
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+
+    /// Give the show a picture as pixels, `width` by `height` of RGBA8,
+    /// straight alpha: a `Uint8Array`, or the `data` of an `ImageData`
+    /// from a canvas. Refused when there are not `width * height * 4`
+    /// bytes.
+    #[wasm_bindgen(js_name = setImagePixels)]
+    pub fn set_image_pixels(
+        &self,
+        name: &str,
+        width: u32,
+        height: u32,
+        pixels: &JsValue,
+    ) -> Result<(), JsValue> {
+        let pixels = js_sys::Uint8Array::new(pixels).to_vec();
+        let mut inner = self
+            .state_mut()
+            .ok_or_else(|| error("the player has stopped"))?;
+        inner
+            .engine
+            .set_image(name, width, height, pixels)
+            .map_err(|e| error(e.to_string()))
     }
 
     /// Set a variable to a boolean, a number or a string.
