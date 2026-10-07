@@ -32,6 +32,7 @@
 //! A host that has a mixer of its own can consume the voice list directly
 //! and skip all of this.
 
+mod listen;
 mod mixer;
 mod sound;
 mod wav;
@@ -42,8 +43,9 @@ mod live;
 mod web;
 
 pub use cuelight_core::Voice;
+pub use listen::Analyser;
 #[cfg(feature = "live")]
-pub use live::Output;
+pub use live::{Listen, Listener, Output};
 pub use mixer::Mixer;
 pub use sound::{length, Sound, SOUND_EXTENSIONS};
 pub use wav::write_wav;

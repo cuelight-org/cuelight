@@ -61,7 +61,7 @@ pub use audit::{audit, audit_document, Audited};
 pub use easing::Easing;
 pub use engine::{
     frame_key, layer_at, root_layers, row_cells, Cause, Ending, Engine, Error, Event, Finding,
-    FindingKind, Firing, Happened, Influence, LayerPath, Playing, ResolvedValue, Root,
+    FindingKind, Firing, Happened, Heard, Influence, LayerPath, Playing, ResolvedValue, Root,
     TimelineOwner, TimelineRef, Traced, VideoInfo, Voice, Which, SAME_INSTANT,
 };
 pub use model::{

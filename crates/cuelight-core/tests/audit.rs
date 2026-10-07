@@ -188,3 +188,15 @@ fn the_pointer_variables_need_no_declaring() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].2.contains("\"py\""), "{found:?}");
 }
+
+#[test]
+fn the_variables_heard_from_sound_need_no_declaring() {
+    // The player sets them as it listens.
+    let show = r##"{ "name": "pulse", "size": [8, 8],
+      "input": { "audio": { "level": "loud", "bands": ["bass", "treble"] } },
+      "layers": [
+        { "name": "ring", "type": "shape", "shape": { "circle": [0, 0, 2] }, "fill": "#FFFFFF",
+          "bindings": [ { "property": "scale", "variable": "bass" },
+                        { "property": "opacity", "variable": "loud" } ] } ] }"##;
+    assert_eq!(findings(show), []);
+}

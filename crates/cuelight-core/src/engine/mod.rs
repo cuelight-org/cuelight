@@ -276,6 +276,25 @@ pub enum Event {
 /// beyond this so an uninterested host costs nothing.
 const MAX_PENDING_EVENTS: usize = 256;
 
+/// What a host heard since the last frame: what [`Engine::listen`] takes.
+/// Every number runs from 0 to 1.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Heard {
+    /// Loudness.
+    pub level: f64,
+    /// The loudness of each frequency range, low to high, as many as the
+    /// show's `input.audio.bands` names.
+    pub bands: Vec<f64>,
+    /// The loudness itself, on a decibel scale from -60 dB of full scale
+    /// (0) to full scale (1), for `input.audio.absolute`: what a meter
+    /// shows, following the volume.
+    pub absolute_level: f64,
+    /// Each range's loudness on the same scale.
+    pub absolute_bands: Vec<f64>,
+    /// Whether the sound jumped: a beat or a hit.
+    pub onset: bool,
+}
+
 /// Trace records kept while the host does not drain them, the same way.
 /// More than events: a show starts and ends a good many timelines.
 const MAX_PENDING_TRACE: usize = 4096;
@@ -486,6 +505,18 @@ impl Engine {
             ignored_fields(raw, &understood, "", &mut self.load_warnings);
         }
         quiet_bindings(&show, true, &mut self.load_warnings);
+        // Both sets of bands are the same ranges, split for whichever
+        // names more: a set naming fewer would get the low ones only.
+        if let Some(audio) = &show.input.audio {
+            let absolute = audio.absolute.as_ref().map_or(0, |a| a.bands.len());
+            if !audio.bands.is_empty() && absolute != 0 && absolute != audio.bands.len() {
+                self.load_warnings.push(format!(
+                    "input.audio names {} bands and {absolute} absolute bands; they are the same \
+                     ranges, so name as many of each",
+                    audio.bands.len()
+                ));
+            }
+        }
         dark_segment_cells(&show, &mut self.load_warnings);
         self.eased_values = eased_values(&show);
         self.value_conditions = value_conditions(&show);
@@ -696,6 +727,45 @@ impl Engine {
             set(&pointer.y, Value::Number(y.clamp(0.0, height)));
         }
         set(&pointer.over, Value::Bool(over));
+    }
+
+    /// Tell the show what the host heard since the last frame, for the
+    /// show's `input.audio`: sets the variables it names (`level`, then
+    /// `bands` in order, a band the host did not measure reading 0) and
+    /// fires its `onset` trigger when `heard.onset` says the sound
+    /// jumped. A variable that would not change is not set again.
+    /// Nothing happens for a show that names no `input.audio`.
+    pub fn listen(&mut self, heard: &Heard) {
+        let Some(audio) = self.show.as_ref().and_then(|show| show.input.audio.clone()) else {
+            return;
+        };
+        let mut set = |name: &str, value: f64| {
+            let value = Value::Number(if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                0.0
+            });
+            if self.variables.get(name) != Some(&value) {
+                self.set_variable(name, value);
+            }
+        };
+        if let Some(name) = &audio.level {
+            set(name, heard.level);
+        }
+        for (i, name) in audio.bands.iter().enumerate() {
+            set(name, heard.bands.get(i).copied().unwrap_or(0.0));
+        }
+        if let Some(absolute) = &audio.absolute {
+            if let Some(name) = &absolute.level {
+                set(name, heard.absolute_level);
+            }
+            for (i, name) in absolute.bands.iter().enumerate() {
+                set(name, heard.absolute_bands.get(i).copied().unwrap_or(0.0));
+            }
+        }
+        if let (true, Some(onset)) = (heard.onset, &audio.onset) {
+            self.trigger(onset);
+        }
     }
 
     /// Fire a named event. A scene declaring it as its trigger becomes the

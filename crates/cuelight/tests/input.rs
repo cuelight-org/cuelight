@@ -469,3 +469,89 @@ fn a_clip_cuts_the_box_and_a_hidden_layer_has_none() {
     assert_eq!(bounds(&[4]).unwrap().rect, [0.0, 80.0, 15.0, 10.0]);
     assert_eq!(bounds(&[5]), None);
 }
+
+/// A show that pulses to sound: a ring scaled by the bass, a light by the
+/// level, a flash on every onset.
+const PULSE: &str = r##"{ "name": "pulse", "size": [100, 50],
+  "input": { "audio": { "level": "loud", "bands": ["bass", "mid", "treble"], "onset": "beat",
+                        "absolute": { "level": "vu", "bands": ["vu_bass", "vu_mid", "vu_treble"] } } },
+  "layers": [
+    { "name": "ring", "type": "shape", "shape": { "circle": [50, 25, 10] }, "fill": "#FFFFFF",
+      "bindings": [ { "property": "scale", "variable": "bass", "scale": 0.5, "offset": 1 } ] },
+    { "name": "flash", "type": "shape", "shape": { "rect": [0, 0, 10, 10] }, "fill": "#FFFFFF",
+      "opacity": 0,
+      "timelines": [ { "name": "flash", "trigger": "beat",
+        "tracks": [ { "property": "opacity", "keys": [ { "t": 0, "v": 1 }, { "t": 0.2, "v": 0 } ] } ] } ] }
+  ] }"##;
+
+#[test]
+fn what_is_heard_sets_the_variables_the_show_names_and_fires_its_onset() {
+    use cuelight_core::Heard;
+    let mut engine = Engine::new();
+    engine.load_show(PULSE).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    assert!(
+        engine.show().unwrap().triggers().contains("beat"),
+        "the onset is a trigger"
+    );
+    let heard = Heard {
+        level: 0.8,
+        bands: vec![1.0, 0.25],
+        absolute_level: 0.5,
+        absolute_bands: vec![0.6, 0.4, 0.2],
+        onset: true,
+    };
+    engine.listen(&heard);
+    assert_eq!(engine.value("loud"), Some(0.8.into()));
+    assert_eq!(engine.value("bass"), Some(1.0.into()));
+    assert_eq!(engine.value("mid"), Some(0.25.into()));
+    // A band the host did not measure reads 0.
+    assert_eq!(engine.value("treble"), Some(0.0.into()));
+    // The absolute set, beside the other.
+    assert_eq!(engine.value("vu"), Some(0.5.into()));
+    assert_eq!(engine.value("vu_treble"), Some(0.2.into()));
+    // The bass scales the ring; the onset started the flash.
+    engine.advance_frame(0.0);
+    let ring = engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .find(|l| l.name == "ring")
+        .unwrap();
+    match ring.shape {
+        ResolvedShape::Circle { radius, .. } => assert!((radius - 15.0).abs() < 1e-9, "{radius}"),
+        other => panic!("{other:?}"),
+    }
+    // Halfway through the flash the onset started: half faded.
+    engine.advance_frame(0.1);
+    let flash = engine
+        .resolved_layers()
+        .unwrap()
+        .into_iter()
+        .find(|l| l.name == "flash")
+        .map_or(0.0, |l| l.opacity);
+    assert!((flash - 0.5).abs() < 1e-9, "{flash}");
+    // Numbers that stay the same are not set again.
+    let _ = engine.drain_trace();
+    engine.listen(&Heard {
+        onset: false,
+        ..heard
+    });
+    assert!(engine.drain_trace().is_empty());
+}
+
+#[test]
+fn a_show_that_does_not_listen_is_left_alone() {
+    let mut engine = engine();
+    engine.listen(&cuelight_core::Heard {
+        level: 1.0,
+        bands: vec![1.0],
+        onset: true,
+        ..Default::default()
+    });
+    assert!(engine.drain_events().is_empty());
+}

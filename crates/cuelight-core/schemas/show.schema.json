@@ -104,6 +104,66 @@
         "bottom_right"
       ]
     },
+    "AudioInput": {
+      "description": "What a host that listens to sound tells the show, each part named by\nthe show; one left out is not told. Where the sound comes from is the\nhost's choice, never the show's: a host that is not listening leaves\nthese alone.\n\nThe numbers run from 0 to 1, measured against how loud the sound has\nbeen over the last few seconds, so a quiet track moves a show as much\nas a loud one, and they are smoothed so that a binding does not\nflicker. Silence reads 0.",
+      "type": "object",
+      "properties": {
+        "absolute": {
+          "description": "Variables set to the loudness itself rather than measured against\nhow loud it has been: a decibel scale from -60 dB of full scale (0)\nto full scale (1), following the volume, as a meter shows it.\nBeside the others, so a show can have both. Its bands are the same\nranges, so where both name bands they name as many.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioLevels"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bands": {
+          "description": "Variables set to the loudness of frequency ranges, low to high:\nthree split at about 250 Hz and 2 kHz, so the first follows the\nbass, the second voices, the third cymbals and hiss. Any number\nmay be named; the ranges divide the audible spectrum evenly in\noctaves.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "level": {
+          "description": "The variable set to the sound's loudness.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onset": {
+          "description": "The trigger fired when the sound jumps, a beat or a hit: at most a\nfew times a second, so a busy track does not fire it on every\ndrum.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "AudioLevels": {
+      "description": "Loudness variables on an absolute scale; see [`AudioInput::absolute`].",
+      "type": "object",
+      "properties": {
+        "bands": {
+          "description": "Variables set to the loudness of the frequency ranges, low to high.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "level": {
+          "description": "The variable set to the sound's loudness.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "Binding": {
       "description": "A permanent wiring of a property to a variable, evaluated every frame.\n\nThe variable is read as a [`Reading`] (its fields sit directly on the\nbinding), then numeric properties take `value * scale + offset`. The\n`text` property takes the value as text: numbers get `scale`/`offset`\napplied, then `format`. The `font` property takes the value as a\nfont style name. A reading with nothing to say leaves the property at\nits base value. The order is: `debounce`, `map`, `threshold` or\n`curve`, `scale` and `offset`, `transition`.",
       "type": "object",
@@ -705,6 +765,17 @@
       "description": "What the show makes of a host's keys and presses.\n\nDeclared by the show rather than wired into each host, so the player,\na browser and an embedder behave the same, and a host stays a source\nof events: it says which key went down or where a press landed, and\nthe show says what that means.",
       "type": "object",
       "properties": {
+        "audio": {
+          "description": "Variables and a trigger the host keeps up to date with the sound it\nlistens to, so a show can pulse to whatever music is playing.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "keys": {
           "description": "Keys that fire a trigger, by the name a browser gives the key\n(`KeyboardEvent.key`): `ArrowRight`, `Enter`, `a`, `\" \"` for the\nspace bar. Names are matched exactly, so `A` is shift and `a` is\nnot.",
           "type": "object",

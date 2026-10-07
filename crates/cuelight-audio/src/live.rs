@@ -1,11 +1,12 @@
+use crate::listen::Analyser;
 use crate::mixer::Mixer;
 use crate::sound::Sound;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
-use cuelight_core::Voice;
+use cuelight_core::{Heard, Voice};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// What the game thread tells the mixer on the device thread.
@@ -49,7 +50,7 @@ impl Output {
     /// Open the default output device in its default configuration.
     pub fn open() -> Result<Output, String> {
         let opening = Instant::now();
-        let host = cpal::default_host();
+        let host = playback_host();
         let device = host
             .default_output_device()
             .ok_or("no default output device")?;
@@ -174,4 +175,253 @@ fn build<T: SizedSample + FromSample<f32>>(
             None,
         )
         .map_err(|e| format!("opening the stream: {e}"))
+}
+
+/// The host sound plays through: the system's default, except on Linux,
+/// where it stays ALSA (on PipeWire and PulseAudio systems, through their
+/// ALSA plugin) even though the PulseAudio client is built in for
+/// listening; see `crate::listen`.
+pub(crate) fn playback_host() -> cpal::Host {
+    #[cfg(target_os = "linux")]
+    if let Ok(host) = cpal::host_from_id(cpal::HostId::Alsa) {
+        return host;
+    }
+    cpal::default_host()
+}
+
+/// Frames a listened device is asked to hand over at a time: about 10 ms
+/// at 48 kHz, so what is heard reaches the show within a frame or two.
+const LISTEN_FRAMES: u32 = 480;
+
+/// What a [`Listener`] listens to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listen {
+    /// What the computer plays: the default output, heard as it goes out.
+    Output,
+    /// The default input device, a microphone.
+    Mic,
+}
+
+/// A sound device listened to for a show's `input.audio`: its samples go
+/// through an [`Analyser`] on the device's own thread, and
+/// [`heard`](Listener::heard) says what it made of them so far.
+///
+/// A device that goes away, a sound server restarting or the machine
+/// waking from sleep, is opened again by itself, every few seconds until
+/// it is back; until then it hears silence.
+pub struct Listener {
+    from: Listen,
+    bands: usize,
+    /// What is being listened to, as the system names it.
+    pub name: String,
+    live: Option<Live>,
+    /// When to try opening the device again, once it went away.
+    retry_at: Instant,
+}
+
+/// An open device being listened to.
+struct Live {
+    analyser: Arc<Mutex<Analyser>>,
+    /// Set by the device's thread when the stream fails.
+    lost: Arc<AtomicBool>,
+    _stream: cpal::Stream,
+}
+
+/// How long to wait before opening a device that went away again.
+const RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl Listener {
+    /// Listen to `from`, measuring `bands` frequency ranges.
+    pub fn open(from: Listen, bands: usize) -> Result<Listener, String> {
+        let (live, name) = connect(from, bands)?;
+        log::info!("listening to {name}");
+        Ok(Listener {
+            from,
+            bands,
+            name,
+            live: Some(live),
+            retry_at: Instant::now(),
+        })
+    }
+
+    /// What was heard: the numbers as they stand, and whether the sound
+    /// jumped since the last time this was asked. Silence while the device
+    /// is away, and each call past the retry time tries to open it again.
+    pub fn heard(&mut self) -> Heard {
+        if self
+            .live
+            .as_ref()
+            .is_some_and(|live| live.lost.load(Ordering::Relaxed))
+        {
+            log::warn!("lost {}; listening again when it is back", self.name);
+            self.live = None;
+            self.retry_at = Instant::now() + RETRY;
+        }
+        if self.live.is_none() && Instant::now() >= self.retry_at {
+            match connect(self.from, self.bands) {
+                Ok((live, name)) => {
+                    log::info!("listening to {name} again");
+                    self.name = name;
+                    self.live = Some(live);
+                }
+                Err(_) => self.retry_at = Instant::now() + RETRY,
+            }
+        }
+        match &self.live {
+            Some(live) => live
+                .analyser
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .heard(),
+            None => Heard::default(),
+        }
+    }
+}
+
+/// Open `from` and start listening to it.
+fn connect(from: Listen, bands: usize) -> Result<(Live, String), String> {
+    let (device, name) = listening_device(from)?;
+    // An output listened to is opened as an input: Windows and macOS turn
+    // that into a loopback, and on Linux the device is the output's
+    // monitor, an input already.
+    let supported = device
+        .default_input_config()
+        .or_else(|_| device.default_output_config())
+        .map_err(|e| format!("{name}: no configuration to listen with: {e}"))?;
+    let format = supported.sample_format();
+    // Asked for in small pieces: left to itself, a PulseAudio server hands
+    // a recording over in chunks of up to two seconds, and a show would
+    // pulse to the music two seconds late.
+    let small = match *supported.buffer_size() {
+        cpal::SupportedBufferSize::Range { min, max } => {
+            Some(cpal::BufferSize::Fixed(LISTEN_FRAMES.clamp(min, max)))
+        }
+        cpal::SupportedBufferSize::Unknown => None,
+    };
+    let mut config: cpal::StreamConfig = supported.into();
+    if let Some(small) = small {
+        config.buffer_size = small;
+    }
+    let analyser = Arc::new(Mutex::new(Analyser::new(config.sample_rate, bands)));
+    let lost = Arc::new(AtomicBool::new(false));
+    let stream = match format {
+        cpal::SampleFormat::F32 => listen::<f32>(&device, &config, &analyser, &lost),
+        cpal::SampleFormat::I16 => listen::<i16>(&device, &config, &analyser, &lost),
+        cpal::SampleFormat::U16 => listen::<u16>(&device, &config, &analyser, &lost),
+        cpal::SampleFormat::I32 => listen::<i32>(&device, &config, &analyser, &lost),
+        cpal::SampleFormat::F64 => listen::<f64>(&device, &config, &analyser, &lost),
+        other => return Err(format!("{name}: unsupported sample format {other}")),
+    }?;
+    stream
+        .play()
+        .map_err(|e| format!("{name}: starting to listen: {e}"))?;
+    log::debug!(
+        "{name} at {} Hz, {} channel(s)",
+        config.sample_rate,
+        config.channels
+    );
+    Ok((
+        Live {
+            analyser,
+            lost,
+            _stream: stream,
+        },
+        name,
+    ))
+}
+
+/// The device `from` names, and what the system calls it.
+fn listening_device(from: Listen) -> Result<(cpal::Device, String), String> {
+    let describe = |device: &cpal::Device| {
+        device
+            .description()
+            .map_or_else(|_| "a sound device".to_owned(), |d| d.to_string())
+    };
+    // On Linux the output is heard through its monitor, which only the
+    // PulseAudio protocol offers (PipeWire speaks it too).
+    #[cfg(target_os = "linux")]
+    if from == Listen::Output {
+        let host = cpal::host_from_id(cpal::HostId::PulseAudio)
+            .map_err(|e| format!("hearing the output needs PulseAudio or PipeWire: {e}"))?;
+        let output = host
+            .default_output_device()
+            .ok_or("no default output to listen to")?;
+        let monitor = format!(
+            "{}.monitor",
+            output
+                .id()
+                .map_err(|e| format!("the output has no name: {e}"))?
+                .id()
+        );
+        let device = host
+            .devices()
+            .map_err(|e| format!("listing sound devices: {e}"))?
+            .find(|d| d.id().is_ok_and(|id| id.id() == monitor))
+            .ok_or_else(|| format!("no monitor of {} to listen to", describe(&output)))?;
+        let name = format!("what {} plays", describe(&output));
+        return Ok((device, name));
+    }
+    match from {
+        Listen::Output => {
+            let device = playback_host()
+                .default_output_device()
+                .ok_or("no default output to listen to")?;
+            let name = format!("what {} plays", describe(&device));
+            Ok((device, name))
+        }
+        Listen::Mic => {
+            let device = listening_host()
+                .default_input_device()
+                .ok_or("no microphone to listen to")?;
+            let name = describe(&device);
+            Ok((device, name))
+        }
+    }
+}
+
+/// The host a microphone is listened to through: PulseAudio on Linux when
+/// it is there, as for the output, otherwise the default.
+fn listening_host() -> cpal::Host {
+    #[cfg(target_os = "linux")]
+    if let Ok(host) = cpal::host_from_id(cpal::HostId::PulseAudio) {
+        return host;
+    }
+    cpal::default_host()
+}
+
+fn listen<T: SizedSample + cpal::Sample>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    analyser: &Arc<Mutex<Analyser>>,
+    lost: &Arc<AtomicBool>,
+) -> Result<cpal::Stream, String>
+where
+    f32: FromSample<T>,
+{
+    let channels = usize::from(config.channels.max(1));
+    let analyser = analyser.clone();
+    let mut samples: Vec<f32> = Vec::new();
+    device
+        .build_input_stream(
+            *config,
+            move |data: &[T], _| {
+                samples.clear();
+                samples.extend(
+                    data.iter()
+                        .map(|s| <f32 as FromSample<T>>::from_sample_(*s)),
+                );
+                if let Ok(mut analyser) = analyser.lock() {
+                    analyser.take(&samples, channels);
+                }
+            },
+            {
+                let lost = lost.clone();
+                move |e| {
+                    log::warn!("listening: {e}");
+                    lost.store(true, Ordering::Relaxed);
+                }
+            },
+            None,
+        )
+        .map_err(|e| format!("listening: {e}"))
 }
