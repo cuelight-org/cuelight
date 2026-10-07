@@ -312,6 +312,13 @@ pub enum LayerKind {
         /// Tile the artwork across `size` instead of stretching to it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         repeat: Option<Tile>,
+        /// How the artwork fills `size` when the two differ in shape:
+        /// stretched (`fill`, the default), inside it keeping its shape
+        /// (`contain`) or filling it keeping its shape and cropped
+        /// (`cover`). Nothing to a tiled image, whose tiles keep the
+        /// size they are given.
+        #[serde(default, skip_serializing_if = "ImageFit::is_fill")]
+        fit: ImageFit,
         /// How the pixels are read when drawn at another size: `smooth`
         /// (default) or `nearest`. The layer's own choice, whatever the
         /// show's `scaling`. Nothing to vector artwork.

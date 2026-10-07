@@ -1650,3 +1650,111 @@ fn keys_out_of_time_order_are_refused() {
         Engine::new().load_show(&show).unwrap();
     }
 }
+
+#[test]
+fn an_image_fits_its_box_as_its_fit_says() {
+    // A 4 x 2 picture in a 10 x 10 box.
+    let show = r#"{ "name": "fit", "size": [64, 64], "layers": [
+        { "name": "fill", "type": "image", "image": "wide", "size": [10, 10] },
+        { "name": "contain", "type": "image", "image": "wide", "size": [10, 10], "fit": "contain" },
+        { "name": "cover", "type": "image", "image": "wide", "size": [10, 10], "fit": "cover", "x": 20 },
+        { "name": "tiled", "type": "image", "image": "wide", "size": [10, 10], "fit": "cover",
+          "repeat": {} }
+    ] }"#;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine
+        .set_image("wide", 4, 2, vec![255u8; 4 * 2 * 4])
+        .unwrap();
+    let layers = engine.resolved_layers().unwrap();
+    let placed = |name: &str| {
+        let shapes: Vec<_> = layers
+            .iter()
+            .filter(|l| l.name == name)
+            .map(|l| &l.shape)
+            .collect();
+        let image = shapes.iter().find_map(|s| match s {
+            ResolvedShape::Image {
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => Some([*x, *y, *width, *height]),
+            _ => None,
+        });
+        let clipped = shapes
+            .iter()
+            .any(|s| matches!(s, ResolvedShape::ClipBegin { .. }));
+        (image.unwrap(), clipped)
+    };
+    // Stretched, as it always was.
+    assert_eq!(placed("fill"), ([0.0, 0.0, 10.0, 10.0], false));
+    // Its shape kept, inside the box: 10 x 5, centred down it.
+    assert_eq!(placed("contain"), ([0.0, 2.5, 10.0, 5.0], false));
+    // Its shape kept, filling the box: 20 x 10, centred across it and
+    // cropped to the box.
+    assert_eq!(placed("cover"), ([15.0, 0.0, 20.0, 10.0], true));
+    let crop = layers
+        .iter()
+        .filter(|l| l.name == "cover")
+        .find_map(|l| match &l.shape {
+            ResolvedShape::ClipBegin { shape } => Some(shape.as_ref().clone()),
+            _ => None,
+        });
+    assert_eq!(
+        crop,
+        Some(ResolvedShape::Rect {
+            x: 20.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0
+        })
+    );
+    // A tiled image's tiles keep their size: the fit does nothing.
+    assert_eq!(placed("tiled"), ([0.0, 0.0, 10.0, 10.0], false));
+}
+
+#[test]
+fn vector_artwork_fits_its_box_as_its_fit_says() {
+    use cuelight::{Vector, VectorPath};
+    // A 100 x 50 artwork, one rectangle filling it, in a 50 x 50 box.
+    let art = Vector {
+        width: 100.0,
+        height: 50.0,
+        paths: vec![VectorPath {
+            elements: vec![
+                cuelight_core::PathElement::MoveTo([0.0, 0.0]),
+                cuelight_core::PathElement::LineTo([100.0, 0.0]),
+                cuelight_core::PathElement::LineTo([100.0, 50.0]),
+                cuelight_core::PathElement::LineTo([0.0, 50.0]),
+                cuelight_core::PathElement::Close,
+            ],
+            fill: Some([255, 255, 255, 255]),
+            stroke: None,
+            ids: Vec::new(),
+            gradient: None,
+        }],
+    };
+    let bounds = |fit: &str| {
+        let show = format!(
+            r#"{{ "name": "fit", "size": [64, 64], "layers": [
+              {{ "name": "art", "type": "image", "image": "art", "size": [50, 50], "fit": "{fit}" }} ] }}"#
+        );
+        let mut engine = Engine::new();
+        engine.set_vector("art", art.clone()).unwrap();
+        engine.load_show(&show).unwrap();
+        let layers = engine.resolved_layers().unwrap();
+        layers
+            .iter()
+            .find_map(|l| match &l.shape {
+                ResolvedShape::Path { elements, .. } => {
+                    cuelight_core::PathElement::bounds(elements)
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(bounds("contain"), [0.0, 12.5, 50.0, 25.0]);
+    assert_eq!(bounds("cover"), [-25.0, 0.0, 100.0, 50.0]);
+}

@@ -1013,3 +1013,22 @@ fn nearest_sampling_draws_each_source_pixel_as_a_block() {
     let blended = pixel(&smooth, 18, 10)[0];
     assert!((20..235).contains(&blended), "{blended}");
 }
+
+#[test]
+fn a_covering_image_is_cropped_to_its_box() {
+    // A 2 x 1 picture, red then blue, covering an 8 x 8 box: drawn 16
+    // wide from x -4, so red then blue across the box and nothing past
+    // it, where the blue would have spilled.
+    let show = r##"{ "name": "cover", "size": [16, 8], "background": "#000000", "layers": [
+        { "name": "pic", "type": "image", "image": "pic", "size": [8, 8], "fit": "cover",
+          "sampling": "nearest" } ] }"##;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    engine
+        .set_image("pic", 2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255])
+        .unwrap();
+    let Some(frame) = render(&engine) else { return };
+    assert_eq!(pixel(&frame, 2, 4), [255, 0, 0, 255]);
+    assert_eq!(pixel(&frame, 6, 4), [0, 0, 255, 255]);
+    assert_eq!(pixel(&frame, 10, 4), [0, 0, 0, 255], "cropped");
+}

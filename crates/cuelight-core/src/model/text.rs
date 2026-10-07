@@ -108,6 +108,46 @@ impl TextBox {
     }
 }
 
+/// How an image fills a box of another shape, as CSS's `object-fit` says.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum ImageFit {
+    /// Stretched to the box, its shape lost.
+    #[default]
+    Fill,
+    /// As large as fits inside the box keeping its shape, centred, the
+    /// rest of the box empty.
+    Contain,
+    /// As small as fills the box keeping its shape, centred, cropped to
+    /// the box.
+    Cover,
+}
+
+impl ImageFit {
+    pub fn is_fill(&self) -> bool {
+        *self == ImageFit::Fill
+    }
+
+    /// Where an image of `natural` size goes in a box of `size`, as
+    /// `[x, y, width, height]` from the box's top-left: past the box
+    /// under `cover`, which the box then crops.
+    pub fn place(self, natural: [f64; 2], size: [f64; 2]) -> [f64; 4] {
+        let [nw, nh] = natural;
+        let [w, h] = size;
+        if self == ImageFit::Fill || !(nw > 0.0 && nh > 0.0) {
+            return [0.0, 0.0, w, h];
+        }
+        let (across, down) = (w / nw, h / nh);
+        let scale = match self {
+            ImageFit::Contain => across.min(down),
+            _ => across.max(down),
+        };
+        let (fw, fh) = (nw * scale, nh * scale);
+        [(w - fw) / 2.0, (h - fh) / 2.0, fw, fh]
+    }
+}
+
 /// Where content sits in a box: one of nine positions.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
