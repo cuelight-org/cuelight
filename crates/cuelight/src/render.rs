@@ -21,6 +21,9 @@ use vello::peniko::{
 };
 use vello::wgpu;
 
+#[cfg(feature = "vello-gpu")]
+pub mod gpu;
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RenderError {

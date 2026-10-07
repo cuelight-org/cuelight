@@ -48,6 +48,8 @@ outline-fonts = ["cuelight/outline-fonts"]
 # Generate the JSON Schema for driver files.
 schema = ["dep:schemars", "cuelight-core/schema"]
 render-cli = ["dep:clap", "png", "cuelight/render", "dep:cuelight-audio", "dep:cuelight-video"]
+# cuelight-render --vello-gpu: draw with vello_gpu instead (a spike).
+vello-gpu = ["render-cli", "cuelight/vello-gpu"]
 
 [[bin]]
 name = "cuelight-check"
