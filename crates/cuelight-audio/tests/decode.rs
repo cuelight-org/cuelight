@@ -60,6 +60,7 @@ fn mixes_a_decoded_sound_offline() {
         sound: "ramp".into(),
         position: 0.05,
         gain: 1.0,
+        pan: 0.0,
         looping: false,
         bus: None,
     }]);

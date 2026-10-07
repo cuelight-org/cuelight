@@ -32,6 +32,7 @@ web-sys = { version = "0.3", optional = true, features = [
     "AudioScheduledSourceNode",
     "BaseAudioContext",
     "GainNode",
+    "StereoPannerNode",
 ] }
 
 [features]

@@ -11,7 +11,7 @@ use cuelight_core::Voice;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode};
+use web_sys::{AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode, StereoPannerNode};
 
 /// Seconds a gain takes to move: keeps starts, stops and gain changes
 /// from clicking.
@@ -25,6 +25,12 @@ const RESYNC: f64 = 0.25;
 struct Playing {
     source: AudioBufferSourceNode,
     gain: GainNode,
+    panner: StereoPannerNode,
+    /// What the voice's gain is multiplied by: the browser's panner
+    /// places a mono sound at 0.7 a side in the middle, and a voice in
+    /// the middle is to sound as it does unpanned, as the native mixer
+    /// has it.
+    boost: f32,
     /// Context time at which the sound's position 0 would have played.
     origin: f64,
     duration: f64,
@@ -39,6 +45,8 @@ pub struct WebAudio {
     /// Whether the page wants sound at all; off keeps the context
     /// suspended whatever gestures come in.
     enabled: bool,
+    /// Stereo sounds a show has panned, said once each.
+    balanced: std::collections::HashSet<String>,
 }
 
 impl WebAudio {
@@ -50,6 +58,7 @@ impl WebAudio {
             sounds: HashMap::new(),
             playing: HashMap::new(),
             enabled: true,
+            balanced: std::collections::HashSet::new(),
         })
     }
 
@@ -122,6 +131,17 @@ impl WebAudio {
         }
         let now = self.context.current_time();
         for voice in voices {
+            let stereo = self
+                .sounds
+                .get(&voice.sound)
+                .is_some_and(|b| b.number_of_channels() >= 2);
+            if stereo && voice.pan != 0.0 && self.balanced.insert(voice.sound.clone()) {
+                log::warn!(
+                    "sound {:?} is stereo, so its pan balances it rather than placing it; \
+                     a sound that should move between the speakers is best mono",
+                    voice.sound
+                );
+            }
             let drifted = self.playing.get(&voice.id).is_some_and(|p| {
                 let mut drift = voice.position - (now - p.origin);
                 if p.looping && p.duration > 0.0 {
@@ -134,10 +154,15 @@ impl WebAudio {
             }
             match self.playing.get(&voice.id) {
                 Some(playing) => {
+                    let _ = playing.gain.gain().set_target_at_time(
+                        voice.gain as f32 * playing.boost,
+                        now,
+                        RAMP,
+                    );
                     let _ = playing
-                        .gain
-                        .gain()
-                        .set_target_at_time(voice.gain as f32, now, RAMP);
+                        .panner
+                        .pan()
+                        .set_target_at_time(voice.pan as f32, now, RAMP);
                 }
                 None => {
                     if let Some(playing) = self.start(voice, now) {
@@ -167,11 +192,18 @@ impl WebAudio {
         source.set_buffer(Some(buffer));
         source.set_loop(voice.looping);
         let gain = self.context.create_gain().ok()?;
+        let boost = match buffer.number_of_channels() {
+            1 => std::f32::consts::SQRT_2,
+            _ => 1.0,
+        };
         // Ramp in from silence, like every other gain change.
         let param = gain.gain();
         param.set_value(0.0);
-        let _ = param.set_target_at_time(voice.gain as f32, now, RAMP);
-        source.connect_with_audio_node(&gain).ok()?;
+        let _ = param.set_target_at_time(voice.gain as f32 * boost, now, RAMP);
+        let panner = self.context.create_stereo_panner().ok()?;
+        panner.pan().set_value(voice.pan as f32);
+        source.connect_with_audio_node(&panner).ok()?;
+        panner.connect_with_audio_node(&gain).ok()?;
         gain.connect_with_audio_node(&self.context.destination())
             .ok()?;
         let position = voice.position.max(0.0);
@@ -181,6 +213,8 @@ impl WebAudio {
         Some(Playing {
             source,
             gain,
+            panner,
+            boost,
             origin: now - position,
             duration,
             looping: voice.looping,

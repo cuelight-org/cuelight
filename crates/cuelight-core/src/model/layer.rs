@@ -534,6 +534,13 @@ pub enum LayerKind {
         /// it. A normal numeric property: bindable and animatable.
         #[serde(default = "default_scale")]
         gain: f64,
+        /// Where the sound sits between the speakers, -1 (left) to 1
+        /// (right), 0 (default) in the middle: bindable and animatable,
+        /// so a sound can follow the thing making it. A mono sound is
+        /// placed, as loud wherever it is; a stereo one is balanced,
+        /// turning one side down.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        pan: f64,
         /// Name of the bus the sound plays through; hosts route buses to
         /// outputs. [`MAIN_BUS`] when omitted, so every sound is on one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -619,6 +626,8 @@ pub enum Property {
     TileY,
     /// Loudness of an audio layer or a group's subtree.
     Gain,
+    /// Where an audio layer's sound sits between the speakers, -1 to 1.
+    Pan,
     /// Whether the layer (and its subtree) shows and sounds; bindable,
     /// not animatable. Bound, it is on when the binding's number is not 0.
     Visible,
@@ -787,12 +796,14 @@ impl Layer {
                 | LayerKind::Audio { gain, .. }
                 | LayerKind::Video { gain, .. },
             ) => Value::Number(*gain),
+            (Property::Pan, LayerKind::Audio { pan, .. }) => Value::Number(*pan),
             (
                 Property::Text
                 | Property::Font
                 | Property::Reveal
                 | Property::Frame
                 | Property::Gain
+                | Property::Pan
                 | Property::Tint
                 | Property::Video
                 | Property::Sound

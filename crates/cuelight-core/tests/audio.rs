@@ -192,6 +192,49 @@ fn gain_is_only_for_groups_and_audio() {
 }
 
 #[test]
+fn pan_places_a_voice_and_can_be_bound_and_animated() {
+    let mut engine = engine(
+        r#"{ "name": "hum", "type": "audio", "sound": "loop", "autoplay": true, "loop": true,
+             "pan": -0.5 },
+           { "name": "ship", "type": "audio", "sound": "loop", "autoplay": true, "loop": true,
+             "bindings": [ { "property": "pan", "variable": "level" } ] },
+           { "name": "pass", "type": "audio", "sound": "loop", "trigger": "pass", "loop": true,
+             "timelines": [ { "name": "across", "trigger": "pass",
+               "tracks": [ { "property": "pan", "keys": [ { "t": 0, "v": -1 }, { "t": 2, "v": 1 } ] } ] } ] }"#,
+    );
+    let pan = |engine: &Engine, layer: &str| {
+        voices(engine)
+            .iter()
+            .find(|v| v.layer == layer)
+            .map(|v| v.pan)
+    };
+    assert_eq!(pan(&engine, "hum"), Some(-0.5));
+    // Bound, and kept between the speakers.
+    assert_eq!(pan(&engine, "ship"), Some(1.0));
+    engine.set_variable("level", -0.25);
+    assert_eq!(pan(&engine, "ship"), Some(-0.25));
+    engine.set_variable("level", -7.0);
+    assert_eq!(pan(&engine, "ship"), Some(-1.0));
+    // Animated: a sound passing from left to right.
+    engine.trigger("pass");
+    engine.advance_frame(0.5);
+    let passing = pan(&engine, "pass").unwrap();
+    assert!((passing - -0.5).abs() < 1e-9, "{passing}");
+}
+
+#[test]
+fn pan_is_only_for_audio() {
+    let mut engine = Engine::new();
+    let err = engine
+        .load_show(&show(
+            r##"{ "name": "box", "type": "shape", "shape": { "rect": [0, 0, 8, 8] }, "fill": "#FFFFFF",
+                 "bindings": [ { "property": "pan", "variable": "level" } ] }"##,
+        ))
+        .unwrap_err();
+    assert!(err.to_string().contains("no Pan property"), "{err}");
+}
+
+#[test]
 fn invisible_layers_are_not_heard() {
     let engine = engine(
         r#"{ "name": "hum", "type": "audio", "sound": "loop", "autoplay": true, "loop": true,
