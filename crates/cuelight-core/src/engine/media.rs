@@ -86,6 +86,10 @@ pub struct Voice {
     pub position: f64,
     /// Effective loudness: the layer's gain times every group's above it.
     pub gain: f64,
+    /// Where it sits between the speakers, -1 (left) to 1 (right): a
+    /// mono sound is placed there with constant power, a stereo one
+    /// balanced. 0 plays it as it is.
+    pub pan: f64,
     /// Whether the sound plays on from its end.
     pub looping: bool,
     /// The bus the layer names, if any.
@@ -834,6 +838,12 @@ impl Engine {
                         let gain = chain
                             * self.number(root, layer, path, Property::Gain).max(0.0)
                             * self.duck_of(root, path);
+                        let pan = self.number(root, layer, path, Property::Pan);
+                        let pan = if pan.is_finite() {
+                            pan.clamp(-1.0, 1.0)
+                        } else {
+                            0.0
+                        };
                         let plays = self
                             .sounding
                             .iter()
@@ -858,6 +868,7 @@ impl Engine {
                                 sound: sound.clone(),
                                 position,
                                 gain,
+                                pan,
                                 looping: *looping,
                                 bus: Some(effective_bus(bus).to_owned()),
                             });
@@ -905,6 +916,8 @@ impl Engine {
                                 sound: clip.clone(),
                                 position,
                                 gain,
+                                // A clip's soundtrack plays as it was mixed.
+                                pan: 0.0,
                                 looping: media.looping,
                                 bus: Some(effective_bus(bus).to_owned()),
                             });

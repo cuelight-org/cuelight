@@ -1344,6 +1344,11 @@
               ],
               "default": null
             },
+            "pan": {
+              "description": "Where the sound sits between the speakers, -1 (left) to 1\n(right), 0 (default) in the middle: bindable and animatable,\nso a sound can follow the thing making it. A mono sound is\nplaced, as loud wherever it is; a stereo one is balanced,\nturning one side down.",
+              "type": "number",
+              "format": "double"
+            },
             "pick": {
               "description": "Which of several sounds a play uses; ignored for one.",
               "$ref": "#/$defs/Pick",
@@ -1764,6 +1769,11 @@
           "description": "Loudness of an audio layer or a group's subtree.",
           "type": "string",
           "const": "gain"
+        },
+        {
+          "description": "Where an audio layer's sound sits between the speakers, -1 to 1.",
+          "type": "string",
+          "const": "pan"
         },
         {
           "description": "Whether the layer (and its subtree) shows and sounds; bindable,\nnot animatable. Bound, it is on when the binding's number is not 0.",

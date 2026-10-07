@@ -33,6 +33,10 @@ struct Playing {
     /// The gain applied now, on its way to `target`.
     gain: f32,
     target: f32,
+    /// The pan applied now, on its way to `pan_target`, ramped as the
+    /// gain is so that a moving sound does not click.
+    pan: f32,
+    pan_target: f32,
     /// Fading out, to be dropped once silent.
     ending: bool,
 }
@@ -45,6 +49,8 @@ pub struct Mixer {
     rate: u32,
     sounds: HashMap<String, Arc<Sound>>,
     playing: Vec<Playing>,
+    /// Stereo sounds a show has panned, said once each.
+    balanced: std::collections::HashSet<String>,
 }
 
 impl Mixer {
@@ -54,6 +60,7 @@ impl Mixer {
             rate: rate.max(1),
             sounds: HashMap::new(),
             playing: Vec::new(),
+            balanced: std::collections::HashSet::new(),
         }
     }
 
@@ -77,9 +84,21 @@ impl Mixer {
     /// a later call.
     pub fn apply(&mut self, voices: &[Voice]) {
         for voice in voices {
+            let stereo = self
+                .sounds
+                .get(&voice.sound)
+                .is_some_and(|s| s.channels >= 2);
+            if stereo && voice.pan != 0.0 && self.balanced.insert(voice.sound.clone()) {
+                log::warn!(
+                    "sound {:?} is stereo, so its pan balances it rather than placing it; \
+                     a sound that should move between the speakers is best mono",
+                    voice.sound
+                );
+            }
             match self.playing.iter_mut().find(|p| p.id == voice.id) {
                 Some(playing) => {
                     playing.target = voice.gain as f32;
+                    playing.pan_target = voice.pan as f32;
                     playing.ending = false;
                     let rate = f64::from(playing.sound.rate);
                     let here = playing.cursor / rate;
@@ -112,6 +131,8 @@ impl Mixer {
                         behind: 0.0,
                         gain: 0.0,
                         target: voice.gain as f32,
+                        pan: voice.pan as f32,
+                        pan_target: voice.pan as f32,
                         ending: false,
                     });
                 }
@@ -143,9 +164,11 @@ impl Mixer {
             let advance = f64::from(sound.rate) / f64::from(self.rate);
             let last = (frames.max(1) - 1) as f64;
             for frame in out.as_chunks_mut::<2>().0 {
-                // Ramp toward the wanted gain.
+                // Ramp toward the wanted gain and pan.
                 let delta = playing.target - playing.gain;
                 playing.gain += delta.clamp(-step_per_sample, step_per_sample);
+                let delta = playing.pan_target - playing.pan;
+                playing.pan += delta.clamp(-step_per_sample, step_per_sample);
                 if playing.ending && playing.gain <= 0.0 {
                     done.push(index);
                     break;
@@ -172,20 +195,48 @@ impl Mixer {
                     let y = sound.samples.get(b + offset).copied().unwrap_or(0.0);
                     (x + (y - x) * t) * playing.gain
                 };
-                if channels >= 2 {
-                    frame[0] += sample(0);
-                    frame[1] += sample(1);
+                let [left, right] = if channels >= 2 {
+                    balance([sample(0), sample(1)], playing.pan)
                 } else {
-                    let s = sample(0);
-                    frame[0] += s;
-                    frame[1] += s;
-                }
+                    place(sample(0), playing.pan)
+                };
+                frame[0] += left;
+                frame[1] += right;
                 playing.cursor += advance;
             }
         }
         for index in done.into_iter().rev() {
             self.playing.remove(index);
         }
+    }
+}
+
+/// A mono sample at `pan`, -1 to 1, as left and right: constant power,
+/// so it is as loud wherever it is, and scaled so that in the middle it
+/// is in both channels whole, as it is unpanned.
+fn place(sample: f32, pan: f32) -> [f32; 2] {
+    if pan == 0.0 {
+        return [sample, sample];
+    }
+    let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
+    let scale = std::f32::consts::SQRT_2 * sample;
+    [scale * angle.cos(), scale * angle.sin()]
+}
+
+/// A stereo frame at `pan`, -1 to 1: the far side turned down and folded
+/// into the near one, as a browser's stereo panner balances, so a show
+/// sounds the same in both players. Unchanged at 0.
+fn balance([left, right]: [f32; 2], pan: f32) -> [f32; 2] {
+    if pan == 0.0 {
+        return [left, right];
+    }
+    let pan = pan.clamp(-1.0, 1.0);
+    if pan <= 0.0 {
+        let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_2;
+        [left + right * angle.cos(), right * angle.sin()]
+    } else {
+        let angle = pan * std::f32::consts::FRAC_PI_2;
+        [left * angle.cos(), right + left * angle.sin()]
     }
 }
 
@@ -208,6 +259,7 @@ mod tests {
             sound: "tone".into(),
             position,
             gain,
+            pan: 0.0,
             looping,
             bus: None,
         }
@@ -289,6 +341,56 @@ mod tests {
         // A real seek still moves it: the distance jumps in one step.
         mixer.apply(&[voice(1, at + 2.0, 1.0, false)]);
         assert!((mixer.playing[0].cursor - (at + 2.0) * 1000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_mono_sound_is_placed_with_constant_power() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        // In the middle, as it plays unpanned.
+        assert_eq!(place(0.5, 0.0), [0.5, 0.5]);
+        // At either side, all of it in one speaker.
+        let [l, r] = place(0.5, -1.0);
+        assert!(
+            close(l, 0.5 * std::f32::consts::SQRT_2) && close(r, 0.0),
+            "{l} {r}"
+        );
+        let [l, r] = place(0.5, 1.0);
+        assert!(
+            close(l, 0.0) && close(r, 0.5 * std::f32::consts::SQRT_2),
+            "{l} {r}"
+        );
+        // As loud wherever it is.
+        for pan in [-0.75, -0.3, 0.2, 0.6] {
+            let [l, r] = place(0.5, pan);
+            assert!(close(l * l + r * r, 0.5), "{pan}: {l} {r}");
+        }
+    }
+
+    #[test]
+    fn a_stereo_sound_is_balanced() {
+        assert_eq!(balance([0.25, 0.5], 0.0), [0.25, 0.5]);
+        // Hard left: the right channel folded into the left.
+        let [l, r] = balance([0.25, 0.5], -1.0);
+        assert!((l - 0.75).abs() < 1e-6 && r.abs() < 1e-6, "{l} {r}");
+        let [l, r] = balance([0.25, 0.5], 1.0);
+        assert!(l.abs() < 1e-6 && (r - 0.75).abs() < 1e-6, "{l} {r}");
+    }
+
+    #[test]
+    fn a_voice_panned_right_sounds_on_the_right() {
+        let mut mixer = Mixer::new(1000);
+        mixer.set_sound("tone", tone(1000, 100));
+        let mut right = voice(1, 0.0, 1.0, false);
+        right.pan = 1.0;
+        mixer.apply(&[right]);
+        let mut out = vec![0.0; 40];
+        mixer.render(&mut out);
+        assert!(out[20].abs() < 1e-6, "left: {}", out[20]);
+        assert!(
+            (out[21] - 0.5 * std::f32::consts::SQRT_2).abs() < 1e-6,
+            "right: {}",
+            out[21]
+        );
     }
 
     #[test]

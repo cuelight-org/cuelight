@@ -919,6 +919,15 @@ controlled the way a timeline is, with the same names and meanings:
 
 - `trigger` (a name or a list) plays it; `autoplay` plays it when the show
   loads or its scene is entered.
+- `pan` places it between the speakers, -1 (left) to 1 (right), 0
+  (default) in the middle. A numeric property like `gain`, so a sound can
+  follow the thing making it: bind it to the `x` a moving object is
+  bound to, through a `curve` or `scale`. A mono sound is placed with
+  constant power, as loud wherever it is, and in the middle it plays as
+  it would unpanned. A stereo sound is balanced instead, the far side
+  turned down, which is rarely what panning means: the players say so
+  once in their log, and a sound that should move is best shipped mono.
+  A video's soundtrack is not panned.
 - `duck`: step this layer back while something on another bus is
   sounding.
 
