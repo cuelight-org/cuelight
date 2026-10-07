@@ -1020,11 +1020,10 @@ impl Engine {
                 let [w, h] = size.unwrap_or(natural);
                 [0.0, 0.0, w, h]
             }
-            LayerKind::Image {
-                image, size, sheet, ..
-            } => {
+            LayerKind::Image { size, sheet, .. } => {
                 // Pixels or vector artwork, whichever is registered
-                // under the name.
+                // under the name it is pointed at now.
+                let image = &self.core.text(root, layer, path, Property::Image);
                 let natural = match self.images.get(image) {
                     Some(data) => match sheet {
                         Some(sheet) => sheet.cell.map(f64::from),
@@ -1856,7 +1855,6 @@ impl Engine {
                         }
                     }
                     LayerKind::Image {
-                        image,
                         size,
                         sheet,
                         repeat,
@@ -1864,6 +1862,9 @@ impl Engine {
                         sampling,
                         ..
                     } => {
+                        // Whichever artwork the layer is pointed at now:
+                        // its own, or the one a binding names.
+                        let image = &self.core.text(root, layer, path, Property::Image);
                         // Vector artwork under the same name, drawn as
                         // the paths it is rather than as pixels; the
                         // layer is the same either way.

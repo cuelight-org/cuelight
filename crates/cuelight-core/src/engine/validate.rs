@@ -630,7 +630,11 @@ pub(crate) fn quiet_bindings(show: &Show, undeclared: bool, out: &mut Vec<String
                 if !binding.reading.curve.is_empty()
                     && matches!(
                         binding.property,
-                        Property::Tint | Property::Font | Property::Video | Property::Sound
+                        Property::Tint
+                            | Property::Font
+                            | Property::Video
+                            | Property::Sound
+                            | Property::Image
                     )
                 {
                     out.push(format!(

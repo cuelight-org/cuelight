@@ -563,15 +563,22 @@ pub(crate) fn references_at(show: &cuelight_core::Show) -> Vec<(Asset, String, S
                 // it is: a path ending in .svg is drawn as paths, and
                 // anything else as pixels. A name that is a stem is
                 // registered from the conventional folders either way.
+                // The names an `image` binding maps to, or falls back to,
+                // are drawn as surely as the layer's own.
                 LayerKind::Image { image, .. } => {
-                    let vector = std::path::Path::new(image)
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case(crate::VECTOR_EXTENSION));
-                    let kind = match vector {
-                        true => Asset::Vector,
-                        false => Asset::Image,
+                    let kind = |name: &str| {
+                        let vector = std::path::Path::new(name)
+                            .extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case(crate::VECTOR_EXTENSION));
+                        match vector {
+                            true => Asset::Vector,
+                            false => Asset::Image,
+                        }
                     };
-                    out.push((kind, image.clone(), here.clone()));
+                    out.push((kind(image), image.clone(), here.clone()));
+                    for (name, at) in bound_names(layer, cuelight_core::Property::Image, &here) {
+                        out.push((kind(&name), name, at));
+                    }
                 }
                 // What a playhead names, and what a binding may point it
                 // at: the names a `sound` or `video` binding maps to, or

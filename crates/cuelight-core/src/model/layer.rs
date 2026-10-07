@@ -593,6 +593,11 @@ pub enum Property {
     /// pointed at: a bed that follows the state a show is in, rather than
     /// a layer per track each having to stop the others.
     Sound,
+    /// The artwork an image layer draws, by the name it is registered
+    /// under; bindable, not animatable. Binding it lets one layer show
+    /// whichever picture it is pointed at: the avatar of whoever is
+    /// playing, rather than a layer per player.
+    Image,
     /// Sprite sheet cell of an image layer: rounded down and clamped to
     /// the sheet, so a linear key from 0 to n steps through n cells.
     Frame,
@@ -622,6 +627,7 @@ impl Property {
                 | Property::Tint
                 | Property::Video
                 | Property::Sound
+                | Property::Image
         )
     }
 }
@@ -746,6 +752,7 @@ impl Layer {
             (Property::Sound, LayerKind::Audio { sound, .. }) => {
                 Value::Text(sound.first().to_owned())
             }
+            (Property::Image, LayerKind::Image { image, .. }) => Value::Text(image.clone()),
             (Property::Frame, LayerKind::Image { frame, .. }) => Value::Number(*frame),
             (
                 Property::TileX,
@@ -777,6 +784,7 @@ impl Layer {
                 | Property::Tint
                 | Property::Video
                 | Property::Sound
+                | Property::Image
                 | Property::TileX
                 | Property::TileY,
                 _,

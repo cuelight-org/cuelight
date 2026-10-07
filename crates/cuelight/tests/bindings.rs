@@ -593,3 +593,47 @@ fn a_filament_takes_only_what_it_can_use() {
         assert!(err.contains(wanted), "{transition}: {err}");
     }
 }
+
+#[test]
+fn an_image_layer_shows_whichever_picture_it_is_bound_to() {
+    let show = r#"{ "name": "avatars", "size": [64, 64], "variables": { "player": 1, "picked": "" },
+      "layers": [
+        { "name": "avatar", "type": "image", "image": "avatar_1", "size": [16, 16],
+          "bindings": [ { "property": "image", "variable": "player",
+                          "map": { "1": "avatar_1", "2": "avatar_2" } } ] },
+        { "name": "direct", "type": "image", "image": "avatar_1", "size": [16, 16], "x": 32,
+          "bindings": [ { "property": "image", "variable": "picked" } ] }
+      ] }"#;
+    let mut engine = Engine::new();
+    engine.load_show(show).unwrap();
+    assert!(
+        engine.load_warnings().is_empty(),
+        "{:?}",
+        engine.load_warnings()
+    );
+    engine.set_image("avatar_1", 1, 1, vec![255u8; 4]).unwrap();
+    // A picture that arrives after the show loaded, as an avatar would.
+    engine.set_image("avatar_2", 2, 1, vec![255u8; 8]).unwrap();
+    let drawn = |engine: &Engine, name: &str| {
+        engine
+            .resolved_layers()
+            .unwrap()
+            .iter()
+            .find(|l| l.name == name)
+            .and_then(|l| match &l.shape {
+                ResolvedShape::Image { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+    };
+    assert_eq!(drawn(&engine, "avatar").as_deref(), Some("avatar_1"));
+    engine.set_variable("player", 2.0);
+    assert_eq!(drawn(&engine, "avatar").as_deref(), Some("avatar_2"));
+    // Straight from a variable, the name a host registered the picture
+    // under.
+    engine.set_variable("picked", "avatar_2");
+    assert_eq!(drawn(&engine, "direct").as_deref(), Some("avatar_2"));
+    // A name nothing is registered under draws nothing, as an image
+    // that has not arrived yet does.
+    engine.set_variable("picked", "avatar_9");
+    assert_eq!(drawn(&engine, "direct"), None);
+}

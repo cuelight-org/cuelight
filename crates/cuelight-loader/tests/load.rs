@@ -1213,3 +1213,23 @@ fn an_svg_gradient_fill_is_kept_through_its_transform() {
         }
     );
 }
+
+#[test]
+fn an_image_a_binding_can_point_at_by_path_has_to_be_there() {
+    let dir = std::env::temp_dir().join(format!("cuelight-loader-boundimg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // A name the binding maps to is a file the show needs, as surely as
+    // the layer's own image: one that is not there is refused.
+    std::fs::write(
+        dir.join("show.json"),
+        r##"{ "name": "bound", "size": [8, 8], "variables": { "player": 1 }, "layers": [
+              { "name": "avatar", "type": "image", "image": "art/one.png",
+                "bindings": [{ "property": "image", "variable": "player",
+                               "map": { "1": "art/one.png", "2": "art/two.png" } }] } ] }"##,
+    )
+    .unwrap();
+    let err = load(&mut Engine::new(), &dir).unwrap_err().to_string();
+    assert!(err.contains("art/two.png"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -1718,6 +1718,11 @@
           "const": "sound"
         },
         {
+          "description": "The artwork an image layer draws, by the name it is registered\nunder; bindable, not animatable. Binding it lets one layer show\nwhichever picture it is pointed at: the avatar of whoever is\nplaying, rather than a layer per player.",
+          "type": "string",
+          "const": "image"
+        },
+        {
           "description": "Sprite sheet cell of an image layer: rounded down and clamped to\nthe sheet, so a linear key from 0 to n steps through n cells.",
           "type": "string",
           "const": "frame"

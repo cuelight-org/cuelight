@@ -234,7 +234,9 @@ impl Binding {
             },
             // Any name will do: a video nobody registered simply has no
             // frames, as an unregistered image has no pixels.
-            Property::Video | Property::Sound => Some(Value::Text(value.to_text())),
+            Property::Video | Property::Sound | Property::Image => {
+                Some(Value::Text(value.to_text()))
+            }
             // Only declared font styles apply.
             Property::Font => match value {
                 Value::Text(style) if show.fonts.contains_key(&style) => Some(Value::Text(style)),
@@ -255,7 +257,11 @@ impl Binding {
         // Where the property takes a number, the stages between.
         let takes_number = match self.property {
             Property::Text => matches!(mapped, Some(Value::Number(_))),
-            Property::Tint | Property::Video | Property::Sound | Property::Font => false,
+            Property::Tint
+            | Property::Video
+            | Property::Sound
+            | Property::Image
+            | Property::Font => false,
             _ => true,
         };
         let bent = mapped
