@@ -7,7 +7,7 @@
 //! That is one function to replace when a shaper comes in.
 
 use crate::engine::{FontData, PlacedGlyph};
-use cuelight_core::Align;
+use cuelight_core::{Align, TextBox};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::{FontRef, MetadataProvider};
 
@@ -74,6 +74,7 @@ pub(crate) fn layout(
     size: f64,
     container: Option<[f64; 2]>,
     align: Align,
+    text_box: TextBox,
     shown: usize,
 ) -> Option<Layout> {
     let font = FontRef::new(&font.data).ok()?;
@@ -83,6 +84,17 @@ pub(crate) fn layout(
     let charmap = font.charmap();
     let (ascent, descent) = (f64::from(metrics.ascent), f64::from(metrics.descent));
     let line_height = ascent - descent + f64::from(metrics.leading);
+    // Down from the top of a line: where the block starts above the
+    // first, where it ends below the last, and what a press on a line
+    // hits. The cap height is the font's own, else the top of its H.
+    let cap = metrics.cap_height.map(f64::from).or_else(|| {
+        let id = charmap.map('H')?;
+        glyph_metrics.bounds(id).map(|b| f64::from(b.y_max))
+    });
+    let (start, end, hit) = match (text_box, cap) {
+        (TextBox::Cap, Some(cap)) => (ascent - cap, ascent, (ascent - cap, ascent)),
+        _ => (0.0, line_height, (0.0, ascent - descent)),
+    };
 
     // Glyph ids and pen positions per line; a character the font lacks
     // becomes glyph 0, the font's "missing" box.
@@ -107,7 +119,7 @@ pub(crate) fn layout(
         (0.0, 0.0)
     } else {
         let widest = lines.iter().map(|(_, w)| *w).fold(0.0, f64::max);
-        (widest, line_height * lines.len() as f64)
+        (widest, line_height * (lines.len() - 1) as f64 + end - start)
     };
     let [cw, ch] = container.unwrap_or([block_w, block_h]);
     let (bx, by) = align.offset(block_w, block_h, cw, ch);
@@ -122,18 +134,23 @@ pub(crate) fn layout(
         } else {
             bx
         };
-        let baseline = by + line_height * i as f64 + ascent;
+        let baseline = by - start + line_height * i as f64 + ascent;
         let count = line.len().min(shown.saturating_sub(index));
         glyphs.extend(line.iter().take(count).map(|&(id, pen)| PlacedGlyph {
             id,
             x: x0 + pen,
             y: baseline,
         }));
-        if let Some(&(_, start)) = line.first().filter(|_| count > 0) {
+        if let Some(&(_, first)) = line.first().filter(|_| count > 0) {
             // The last shown glyph ends where the next one starts, or
             // where the line does.
-            let end = line.get(count).map_or(*width, |&(_, pen)| pen);
-            boxes.push([x0 + start, baseline - ascent, end - start, ascent - descent]);
+            let last = line.get(count).map_or(*width, |&(_, pen)| pen);
+            boxes.push([
+                x0 + first,
+                baseline - ascent + hit.0,
+                last - first,
+                hit.1 - hit.0,
+            ]);
         }
         // The break between lines is a character too.
         index += line.len() + 1;

@@ -15,7 +15,7 @@
 //! is MIT/Apache) instead of growing this one; only `BitmapFont::parse`
 //! would change.
 
-use cuelight_core::Align;
+use cuelight_core::{Align, TextBox};
 use std::collections::HashMap;
 
 /// One glyph's placement data from the font description.
@@ -497,9 +497,22 @@ impl StyledFont {
         text: &str,
         container: Option<[f64; 2]>,
         align: Align,
+        text_box: TextBox,
         shown: usize,
     ) -> Option<(Rgba, [i32; 2], [f64; 2])> {
-        let (block_w, block_h) = self.measure(text);
+        let (block_w, mut block_h) = self.measure(text);
+        // Boxed by the cap: from the top of the H on the first line to
+        // the bottom of it on the last, and the lines moved up to match.
+        let mut start = 0;
+        if let (TextBox::Cap, Some((top, bottom))) = (text_box, self.ink(&['H'])) {
+            let lines = split_lines(text).len() as i32;
+            if !text.is_empty() {
+                (start, block_h) = (
+                    top as i32,
+                    (lines - 1) * self.font.line_height + (bottom - top) as i32,
+                );
+            }
+        }
         let [cw, ch] = container.unwrap_or([f64::from(block_w), f64::from(block_h)]);
         let (bx, by) = align.offset(f64::from(block_w), f64::from(block_h), cw, ch);
         let lines = split_lines(text);
@@ -515,7 +528,7 @@ impl StyledFont {
             } else {
                 bx.floor() as i32
             };
-            let y0 = (by + f64::from(i as i32 * self.font.line_height)).floor() as i32;
+            let y0 = (by + f64::from(i as i32 * self.font.line_height - start)).floor() as i32;
             let mut pen = 0;
             let mut previous = ' ';
             for c in line.chars() {
@@ -673,7 +686,7 @@ kerning first=65 second=66 amount=-1
     fn rasterizes_tinted_glyphs() {
         let font = styled(None);
         let (bitmap, offset, container) = font
-            .rasterize("A", None, Align::TopLeft, usize::MAX)
+            .rasterize("A", None, Align::TopLeft, TextBox::Line, usize::MAX)
             .unwrap();
         assert_eq!((bitmap.width, bitmap.height), (2, 3));
         assert_eq!(offset, [0, 0]);
@@ -689,7 +702,7 @@ kerning first=65 second=66 amount=-1
         // the page leaves room inside it (BMFont padding); here 'B''s
         // rectangle includes the border pixels around 'A''s column 1.
         let (bitmap, _, _) = font
-            .rasterize("B", None, Align::TopLeft, usize::MAX)
+            .rasterize("B", None, Align::TopLeft, TextBox::Line, usize::MAX)
             .unwrap();
         assert_eq!(bitmap.get(0, 0), [255, 0, 0, 255]);
         assert_eq!(bitmap.get(1, 0), [0, 0, 255, 255]);
@@ -699,18 +712,30 @@ kerning first=65 second=66 amount=-1
     fn aligns_block_and_lines_in_container() {
         let font = styled(None);
         let (_, offset, container) = font
-            .rasterize("A", Some([9.0, 8.0]), Align::Center, usize::MAX)
+            .rasterize(
+                "A",
+                Some([9.0, 8.0]),
+                Align::Center,
+                TextBox::Line,
+                usize::MAX,
+            )
             .unwrap();
         assert_eq!(container, [9.0, 8.0]);
         // block 3x4 centered in 9x8
         assert_eq!(offset, [3, 2]);
         let (_, offset, _) = font
-            .rasterize("A", Some([9.0, 8.0]), Align::BottomRight, usize::MAX)
+            .rasterize(
+                "A",
+                Some([9.0, 8.0]),
+                Align::BottomRight,
+                TextBox::Line,
+                usize::MAX,
+            )
             .unwrap();
         assert_eq!(offset, [6, 4]);
         // Multi-line, centered: the narrow second line centers on its own.
         let (bitmap, offset, _) = font
-            .rasterize("AA\nA", None, Align::Center, usize::MAX)
+            .rasterize("AA\nA", None, Align::Center, TextBox::Line, usize::MAX)
             .unwrap();
         assert_eq!(offset, [0, 0]);
         // line widths 6 and 3: the second line starts at floor(1.5)

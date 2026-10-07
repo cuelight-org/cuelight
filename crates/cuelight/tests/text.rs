@@ -474,3 +474,32 @@ fn a_blurred_bitmap_shadow_softens_its_edge_as_css_does() {
     let bad = SHOW.replace(r#""offset": [1, 1] }"#, r#""offset": [1, 1], "blur": -1 }"#);
     assert!(Engine::new().load_show(&bad).is_err());
 }
+
+#[test]
+fn bitmap_text_boxed_by_its_cap_height_stands_on_the_bottom_of_its_box() {
+    // An H three pixels tall, one row down a six row line.
+    let fnt = r#"info face="Caps" size=3
+common lineHeight=6 base=4 scaleW=2 scaleH=3 pages=1
+page id=0 file="caps_0.png"
+char id=72 x=0 y=0 width=2 height=3 xoffset=0 yoffset=1 xadvance=3 page=0
+"#;
+    let raster = |text_box: &str| {
+        let show = format!(
+            r##"{{ "name": "c", "size": [32, 16], "fonts": {{ "caps": {{ "file": "caps" }} }},
+              "layers": [ {{ "name": "h", "type": "text", "font": "caps", "text": "H", "box": "{text_box}",
+                             "x": 2, "y": 10, "anchor": "bottom_left" }} ] }}"##
+        );
+        let mut engine = Engine::new();
+        let font = BitmapFont::parse(fnt).unwrap();
+        engine
+            .set_font("caps", font, vec![(2, 3, vec![255; 2 * 3 * 4])])
+            .unwrap();
+        engine.load_show(&show).unwrap();
+        let (_, y, _, height, _) = bitmap(&engine, "h");
+        (y, height)
+    };
+    // Boxed by the cap, the H's foot is the bottom of the box.
+    assert_eq!(raster("cap"), (7.0, 3.0));
+    // In the line box it stands a row down from a six row line's top.
+    assert_eq!(raster("line"), (5.0, 3.0));
+}
