@@ -109,9 +109,19 @@ impl GpuRenderer {
             encoder: &mut encoder,
             target,
         };
+        // Blended items, a run of them at a time, go into groups by overlap
+        // (see `Group`); everything else is drawn as it comes.
+        let mut run: Vec<(ResolvedLayer, Rect)> = Vec::new();
         for item in items {
-            draw.item(&mut scene, item);
+            match groupable(&item) {
+                Some(area) => run.push((item, area)),
+                None => {
+                    draw.run(&mut scene, std::mem::take(&mut run));
+                    draw.item(&mut scene, item);
+                }
+            }
         }
+        draw.run(&mut scene, run);
         let render_size = vello_gpu::RenderSize {
             width: size[0],
             height: size[1],
@@ -259,6 +269,52 @@ struct Draw<'a> {
 }
 
 impl Draw<'_> {
+    /// Draw a run of blended items in groups: each goes into the first
+    /// group of its blend mode after the last one holding anything it
+    /// overlaps, so what overlaps keeps its order and the rest shares a
+    /// layer. Added items may pass each other, since adding does not care
+    /// about order.
+    fn run(&mut self, scene: &mut vello_gpu::Scene, run: Vec<(ResolvedLayer, Rect)>) {
+        let touches = |a: Rect, b: &Rect| a.intersect(*b).area() > 0.0;
+        let mut groups: Vec<Group> = Vec::new();
+        for (mut item, area) in run {
+            let blend = item.blend;
+            // Adding is the same whatever the order, so an added item only
+            // waits for what it overlaps of other blends. It still needs a
+            // group of its own where it overlaps, to be added twice.
+            let after = groups
+                .iter()
+                .rposition(|g| {
+                    !(blend == cuelight_core::Blend::Add && g.blend == blend)
+                        && g.areas.iter().any(|b| touches(area, b))
+                })
+                .map_or(0, |i| i + 1);
+            item.blend = cuelight_core::Blend::Normal;
+            let fits = |g: &Group| g.blend == blend && !g.areas.iter().any(|b| touches(area, b));
+            match groups.iter_mut().skip(after).find(|g| fits(g)) {
+                Some(group) => {
+                    group.areas.push(area);
+                    group.items.push(item);
+                }
+                None => groups.push(Group {
+                    blend,
+                    areas: vec![area],
+                    items: vec![item],
+                }),
+            }
+        }
+        for group in groups {
+            scene.reset_transform();
+            scene.set_blend_mode(vello::peniko::BlendMode::default());
+            scene.push_layer(None, blend_mode(group.blend), None, None, None);
+            for item in group.items {
+                self.item(scene, item);
+            }
+            scene.reset_transform();
+            scene.pop_layer();
+        }
+    }
+
     /// The atlas id of prepared pixels, uploaded the first time they are
     /// drawn.
     fn image(&mut self, data: &vello::peniko::ImageData) -> ImageId {
@@ -494,6 +550,41 @@ impl Draw<'_> {
         }
         close(scene, blended);
     }
+}
+
+/// The area on the canvas a blended item covers, when it can go into a
+/// group with others: an item that draws, not a clip or a group marker,
+/// with a box that is cheap to know.
+fn groupable(item: &ResolvedLayer) -> Option<Rect> {
+    if item.blend == cuelight_core::Blend::Normal {
+        return None;
+    }
+    if matches!(
+        item.shape,
+        ResolvedShape::ClipBegin { .. }
+            | ResolvedShape::ClipEnd
+            | ResolvedShape::BlendBegin { .. }
+            | ResolvedShape::BlendEnd
+    ) {
+        return None;
+    }
+    super::bounds(&item.shape).map(|b| Affine::new(item.transform.0).transform_rect_bbox(b))
+}
+
+/// Blended items drawn plainly into one layer, which is then blended once.
+///
+/// `vello_gpu` gives every blended draw a layer of its own, and each such
+/// layer waits for the one before: a hundred lamps added onto a picture
+/// cost a hundred rounds of render passes. Only items that overlap depend
+/// on each other, though. Items of one blend mode that do not overlap
+/// can share a layer, drawn plainly in it and blended once, which is the
+/// same picture: each pixel of the layer is one item's. So a run of
+/// blended items costs as many layers as its deepest stack of overlapping
+/// items, not as many as it has items.
+struct Group {
+    blend: cuelight_core::Blend,
+    areas: Vec<Rect>,
+    items: Vec<ResolvedLayer>,
 }
 
 /// A brush drawing pixels already in the atlas.
