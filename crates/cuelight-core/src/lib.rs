@@ -74,3 +74,6 @@ pub use model::{
 };
 pub use path::{PathData, PathElement};
 pub use value::Value;
+
+#[cfg(feature = "schema")]
+pub use engine::show_schema;

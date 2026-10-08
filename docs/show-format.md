@@ -194,6 +194,8 @@ distribution form.
   painted on top of them.
 - `input` (optional) says what a key or a press on the show means; see
   [Input](#input).
+- `components` (optional) are layers written once and used by name; see
+  [Components](#components).
 
 ## Input
 
@@ -483,8 +485,8 @@ so the frame drawn is the surface's size at any zoom, and
 group children behind whatever follows the group. Every layer has:
 
 - `name`: identifier, also surfaced in the resolved draw list.
-- `type`: `group`, `shape`, `image`, `text`, `digits`, `audio`
-  or `video` (see below).
+- `type`: `group`, `shape`, `image`, `text`, `digits`, `audio`,
+  `video` or `component` (see below).
 - `x`, `y` (default 0): translation. Groups pass it down to their subtree.
 - `opacity` (default 1): multiplied down the tree.
 - `scale` (default 1): uniform scale of the layer around its x/y origin
@@ -949,6 +951,67 @@ Layer kinds:
   [Sound](#sound).
 - `video`: a moving picture, played like a sound is; the host decodes it.
   See [Video](#video).
+- `component`: a use of a component, layers written once under the
+  show's `components`. See [Components](#components).
+
+## Components
+
+A show that draws the same thing several times writes it once, under
+`components`, and uses it by name. What differs between the uses is a
+list of `inputs`, filled in by each use's `with`:
+
+```json
+"components": {
+  "caption": {
+    "inputs": ["heading", "body"],
+    "layers": [
+      { "name": "heading", "type": "text", "font": "heading", "text": "{heading}" },
+      { "name": "body", "type": "text", "font": "body", "y": 40, "text": "{body}" }
+    ]
+  }
+},
+"layers": [
+  { "name": "totality", "type": "component", "component": "caption",
+    "x": 716, "y": 546, "opacity": 0,
+    "with": { "heading": "Totality", "body": "The moon covers the whole sun." },
+    "timelines": [ { "name": "in", "trigger": "c2", "delay": 0.5, "hold": true,
+      "tracks": [ { "property": "opacity", "keys": [ { "t": 0, "v": 0 }, { "t": 0.4, "v": 1 } ] } ] } ] }
+]
+```
+
+- A layer of type `component` is a group whose children are the
+  component's layers, and everything a group takes works on it: `x`,
+  `y`, `opacity`, `scale`, `rotation`, `visible`, `bindings`,
+  `timelines` and the rest. So a use is placed, faded and moved as one
+  picture, without the component knowing.
+- `inputs` names what a use fills in; `{name}` anywhere in the layers
+  takes the value the use gives. A string that is only `{name}` takes
+  the value as it is, so `"x": "{left}"` is a number and `"keys": "{keys}"`
+  a list. Inside a longer string the value goes in as text: `"lamp_{n}"`,
+  `"Player {n}"`. Braces around anything but a name stay as they are.
+- A use gives a value for every input and for nothing else, and a
+  component uses no `{name}` that is not one of its inputs. Either is
+  refused at load, so a typo is an error rather than a `{heding}` on
+  screen.
+- Only values are filled in, never field names, and there is no
+  arithmetic and no conditions. A show that needs those is better
+  written by a script, which keeps working.
+- A component can use other components, with its own inputs passed on
+  (`"with": { "x": "{left}" }`), but not itself.
+- A component is the show's own: its layers may name the show's
+  variables, triggers, fonts and images directly. To use one component
+  with different variables, make the variable an input
+  (`"variable": "{level}"`).
+- Layers are never looked up by name, so two uses of a component never
+  clash, even though their children have the same names.
+
+Components are expanded when the show loads, before anything else reads
+it: the engine, the draw list and every host see the groups, as if the
+show had been written out by hand. A layer's path is the same either way,
+since the component's layers are the use's children, so a finding about
+the second layer of a component used as `layers[3]` is at
+`layers[3].children[1]`. A use that cannot be expanded is refused by a
+strict load; a tolerant load leaves it an empty group and says why.
 
 ## Sound
 
