@@ -559,6 +559,11 @@ impl Engine {
         }
     }
 
+    /// See [`cuelight_core::Engine::listen`].
+    pub fn listen(&mut self, heard: &cuelight_core::Heard) {
+        self.core.listen(heard);
+    }
+
     /// See [`cuelight_core::Engine::trigger`].
     pub fn trigger(&mut self, name: &str) {
         self.core.trigger(name);

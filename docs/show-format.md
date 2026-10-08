@@ -306,6 +306,55 @@ none` on the canvas. Hosts: `Engine::point(Some([x, y]))` as it moves,
 in canvas coordinates beside the canvas too (`render::canvas_point`),
 and `Engine::point(None)` when it has gone.
 
+### Sound
+
+A show can react to sound the host listens to, the music the computer
+is playing or a microphone: a ring that pulses to the bass, lights that
+follow the loudness, a flash on every beat. It names what it wants:
+
+```json
+{ "input": { "audio": { "level": "loudness", "bands": ["bass", "mid", "treble"], "onset": "beat" } } }
+```
+
+- `level` is a variable set to the sound's loudness.
+- `bands` are variables set to the loudness of frequency ranges, low to
+  high. The ranges divide the audible spectrum, 31 Hz to 16 kHz, evenly
+  in octaves: three split at about 250 Hz and 2 kHz, so the first
+  follows the bass, the second voices, the third cymbals and hiss. Any
+  number may be named.
+- `onset` is a trigger fired when the sound jumps, a beat or a hit, at
+  most about six times a second.
+
+Each part may be left out. The numbers run from 0 to 1, measured
+against how loud the sound has been over the last few seconds, so a
+quiet track moves a show as much as a loud one, and silence reads 0.
+They rise quickly and fall over a fifth of a second, so a binding does
+not flicker. They are ordinary variables, needing no declaring, and the
+onset is an ordinary trigger.
+
+`absolute` names the same readings on a fixed scale instead, what a
+meter shows: -60 dB of full scale reads 0 and full scale 1, so they
+follow the volume, where the others do not. A show can have both, a
+meter of the real loudness under shapes that move as much at any
+volume. Both sets of bands are the same ranges, so a show naming both
+names as many of each.
+
+```json
+{ "input": { "audio": { "bands": ["bass", "mid", "treble"],
+                        "absolute": { "level": "vu", "bands": ["vu_bass", "vu_mid", "vu_treble"] } } } }
+```
+
+Where the sound comes from is the host's choice, never the show's:
+nothing listens unless whoever runs the player asks it to. The native
+player listens with `--listen output`, what the computer plays, or
+`--listen mic`; without it a show that reacts to sound says so in the
+log and plays without. Live sound is not recorded: after a seek the
+variables read what is heard now. A device that goes away, the sound
+server restarting or the machine waking from sleep, is listened to
+again once it is back. Hosts: `Engine::listen(&Heard)`
+each frame, and `cuelight_audio::Analyser` works the numbers out from
+samples.
+
 ## Scenes
 
 ```json

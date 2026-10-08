@@ -15,6 +15,11 @@ hound = "3.5"
 cpal = { version = "0.18", optional = true }
 log = "0.4"
 
+# On Linux, the PulseAudio protocol as well (spoken by PipeWire too), the
+# one way to hear what an output plays: its monitor. A pure Rust client.
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18", optional = true, features = ["pulseaudio"] }
+
 # The browser's WebAudio, for the `web` feature; the crate is otherwise
 # the same on wasm32, so a web host decodes and mixes nothing itself.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -54,7 +54,7 @@ use clap::Parser;
 use cuelight::render::{Fit, Presenter};
 use cuelight::vello;
 use cuelight::Engine;
-use cuelight_audio::{Output, Sound};
+use cuelight_audio::{Listen, Listener, Output, Sound};
 use cuelight_core::{Layer, LayerKind, Value};
 use cuelight_loader::{Driver, DriverPlayer, Step};
 #[cfg(feature = "video")]
@@ -271,6 +271,9 @@ struct App {
     ctrl: bool,
     /// The sound device, when one could be opened and was wanted.
     audio: Option<Output>,
+    /// What is listened to for the show's `input.audio`, when `--listen`
+    /// asked for it.
+    listener: Option<Listener>,
     console: Receiver<String>,
     context: RenderContext,
     // One vello renderer per wgpu device the context hands out.
@@ -587,6 +590,13 @@ impl App {
         self.engine.point(at);
     }
 
+    /// Tell the show what was heard since the last frame.
+    fn hear(&mut self) {
+        if let Some(listener) = &mut self.listener {
+            self.engine.listen(&listener.heard());
+        }
+    }
+
     /// Put the show `by` seconds from where it is, forwards or backwards,
     /// and stop the clock so it stays there.
     fn scrub(&mut self, by: f64) {
@@ -704,6 +714,7 @@ impl App {
         // After the clock, so what is under the pointer is read from the
         // frame about to be drawn.
         self.point();
+        self.hear();
         for event in self.engine.drain_events() {
             log::info!("show event: {event:?}");
         }
@@ -1150,6 +1161,27 @@ struct Cli {
     /// not draw it 240 times a second. The show's clock is unaffected.
     #[arg(long, value_parser = positive_rate)]
     fps: Option<f64>,
+    /// Listen to sound for a show that reacts to it (`input.audio`):
+    /// `output` is what the computer plays, `mic` the microphone. Off
+    /// unless asked for.
+    #[arg(long, value_enum)]
+    listen: Option<ListenArg>,
+}
+
+/// [`Listen`] as a command line word.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ListenArg {
+    Output,
+    Mic,
+}
+
+impl From<ListenArg> for Listen {
+    fn from(from: ListenArg) -> Self {
+        match from {
+            ListenArg::Output => Listen::Output,
+            ListenArg::Mic => Listen::Mic,
+        }
+    }
 }
 
 /// A frame rate from the command line: a number above 0.
@@ -1440,6 +1472,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let driver = script.clone().map(DriverPlayer::new);
 
     let show = engine.show().ok_or("no show loaded")?;
+    // Listening only when asked, and only for a show that has a use for
+    // it: nothing switches on a microphone because a show would like it.
+    let wanted = show.input.audio.as_ref();
+    let listener = match (cli.listen, wanted) {
+        (Some(from), Some(audio)) => Listener::open(from.into(), audio.band_count())
+            .map_err(|e| log::warn!("not listening: {e}"))
+            .ok(),
+        (Some(_), None) => {
+            log::info!("--listen: this show does not react to sound");
+            None
+        }
+        (None, Some(_)) => {
+            log::info!("this show reacts to sound; --listen output or --listen mic lets it hear");
+            None
+        }
+        (None, None) => None,
+    };
     for layers in show.layer_trees() {
         warn_missing_images(&engine, layers);
     }
@@ -1462,6 +1511,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ctrl: false,
         driver,
         audio,
+        listener,
         console: rx,
         context: RenderContext::new(),
         renderers: Vec::new(),

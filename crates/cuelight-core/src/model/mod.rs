@@ -104,20 +104,104 @@ pub struct Input {
     /// a hover highlight.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pointer: Option<Pointer>,
+    /// Variables and a trigger the host keeps up to date with the sound it
+    /// listens to, so a show can pulse to whatever music is playing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioInput>,
 }
 
 impl Input {
     /// Whether the show says nothing about input.
     pub fn is_empty(&self) -> bool {
-        self.keys.is_empty() && self.press.is_none() && self.pointer.is_none()
+        self.keys.is_empty()
+            && self.press.is_none()
+            && self.pointer.is_none()
+            && self.audio.is_none()
     }
 
     /// Whether the host sets the variable `name` for the show: one of the
-    /// pointer's, which need no declaring.
+    /// pointer's or the sound's, which need no declaring.
     pub fn sets(&self, name: &str) -> bool {
-        self.pointer
+        let pointer = self
+            .pointer
             .as_ref()
-            .is_some_and(|pointer| pointer.names().any(|n| n == name))
+            .is_some_and(|pointer| pointer.names().any(|n| n == name));
+        let audio = self
+            .audio
+            .as_ref()
+            .is_some_and(|audio| audio.names().any(|n| n == name));
+        pointer || audio
+    }
+}
+
+/// What a host that listens to sound tells the show, each part named by
+/// the show; one left out is not told. Where the sound comes from is the
+/// host's choice, never the show's: a host that is not listening leaves
+/// these alone.
+///
+/// The numbers run from 0 to 1, measured against how loud the sound has
+/// been over the last few seconds, so a quiet track moves a show as much
+/// as a loud one, and they are smoothed so that a binding does not
+/// flicker. Silence reads 0.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AudioInput {
+    /// The variable set to the sound's loudness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Variables set to the loudness of frequency ranges, low to high:
+    /// three split at about 250 Hz and 2 kHz, so the first follows the
+    /// bass, the second voices, the third cymbals and hiss. Any number
+    /// may be named; the ranges divide the audible spectrum evenly in
+    /// octaves.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bands: Vec<String>,
+    /// The trigger fired when the sound jumps, a beat or a hit: at most a
+    /// few times a second, so a busy track does not fire it on every
+    /// drum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onset: Option<String>,
+    /// Variables set to the loudness itself rather than measured against
+    /// how loud it has been: a decibel scale from -60 dB of full scale (0)
+    /// to full scale (1), following the volume, as a meter shows it.
+    /// Beside the others, so a show can have both. Its bands are the same
+    /// ranges, so where both name bands they name as many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub absolute: Option<AudioLevels>,
+}
+
+/// Loudness variables on an absolute scale; see [`AudioInput::absolute`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AudioLevels {
+    /// The variable set to the sound's loudness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<String>,
+    /// Variables set to the loudness of the frequency ranges, low to high.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bands: Vec<String>,
+}
+
+impl AudioInput {
+    /// The variable names it sets.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        let absolute = self
+            .absolute
+            .iter()
+            .flat_map(|a| a.level.iter().chain(&a.bands));
+        self.level
+            .iter()
+            .chain(&self.bands)
+            .chain(absolute)
+            .map(String::as_str)
+    }
+
+    /// How many frequency ranges a host measures for it.
+    pub fn band_count(&self) -> usize {
+        let absolute = self.absolute.as_ref().map_or(0, |a| a.bands.len());
+        self.bands.len().max(absolute)
     }
 }
 
@@ -351,6 +435,12 @@ impl Show {
         // Fired by an input rather than heard: an action all the same.
         let mut fired: Vec<String> = self.input.keys.values().cloned().collect();
         fired.extend(self.input.press.clone());
+        fired.extend(
+            self.input
+                .audio
+                .as_ref()
+                .and_then(|audio| audio.onset.clone()),
+        );
         let mut everywhere: Vec<String> = Vec::new();
         heard(&self.layers, &mut everywhere, &mut fired);
         // The show's values are the show's own, wherever it is.
