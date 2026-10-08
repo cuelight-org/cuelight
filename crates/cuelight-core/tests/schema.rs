@@ -13,7 +13,7 @@ const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schemas/show.schema.jso
 
 #[test]
 fn checked_in_schema_matches_model() {
-    let schema = schemars::schema_for!(Show);
+    let schema = cuelight_core::show_schema();
     let generated = serde_json::to_string_pretty(&schema).unwrap() + "\n";
     if std::env::var_os("UPDATE_SCHEMA").is_some() {
         std::fs::write(PATH, &generated).unwrap();

@@ -31,7 +31,7 @@ impl Salvaged {
 /// shifted by the drops before it; see [`remove_blanks`].
 pub(crate) fn salvaged(json: &str) -> Result<Salvaged, Error> {
     let mut raw = parse_document(json)?;
-    let mut findings = Vec::new();
+    let mut findings = expand_components(&mut raw);
     let mut blanked: Vec<Site> = Vec::new();
     salvage(&mut raw, &mut findings, &mut blanked);
     let mut show = parse_show(&raw)?;

@@ -9,6 +9,14 @@
       "type": "string",
       "default": "#000000"
     },
+    "components": {
+      "description": "Layers written once and used by name from a layer of type `component`, by the show's layers and its scenes'.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Component"
+      },
+      "default": {}
+    },
     "fonts": {
       "description": "Named text styles for text layers: a bitmap font plus colors.",
       "type": "object",
@@ -333,6 +341,32 @@
             "type": "string"
           }
         }
+      ]
+    },
+    "Component": {
+      "description": "Layers written once, with what differs between their uses as named inputs.",
+      "type": "object",
+      "properties": {
+        "inputs": {
+          "description": "What a use fills in: an `{input}` anywhere in the layers takes the value its `with` gives. A string that is only `{input}` takes the value as it is, a number or a list; inside a longer string it goes in as text.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "layers": {
+          "description": "The layers each use draws, as the children of the layer that uses them.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Layer"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "layers"
       ]
     },
     "DigitDisplay": {
@@ -1495,6 +1529,29 @@
           "required": [
             "type",
             "sound"
+          ]
+        },
+        {
+          "description": "A use of a component: a group whose children are the component's layers, with its inputs filled in.",
+          "type": "object",
+          "properties": {
+            "component": {
+              "description": "The name of the component under `components`.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "component"
+            },
+            "with": {
+              "description": "A value for each of the component's inputs, and nothing else.",
+              "type": "object",
+              "default": {}
+            }
+          },
+          "required": [
+            "type",
+            "component"
           ]
         }
       ],

@@ -14,6 +14,7 @@ use crate::value::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod bindings;
+mod components;
 mod conditions;
 mod media;
 mod reels;
@@ -22,6 +23,9 @@ mod trace;
 mod validate;
 
 use bindings::*;
+#[cfg(feature = "schema")]
+pub use components::show_schema;
+use components::*;
 use conditions::*;
 pub use media::*;
 pub use reels::*;
@@ -435,7 +439,13 @@ impl Engine {
         json: &str,
         check: impl FnOnce(&Show) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let raw = parse_document(json)?;
+        let mut raw = parse_document(json)?;
+        if let Some(problem) = expand_components(&mut raw).into_iter().next() {
+            return Err(Error::InvalidShow(format!(
+                "{}: {}",
+                problem.path, problem.message
+            )));
+        }
         let show = parse_show(&raw)?;
         if let Some(problem) = problems(&show).into_iter().next() {
             return Err(problem.error);
