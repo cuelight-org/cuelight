@@ -23,7 +23,7 @@ serde_json = "1"
 thiserror = "2"
 # Text becomes paths through the show's own fonts, so the feature that
 # reads the machine's is off.
-usvg = { version = "0.48", default-features = false, features = ["text"], optional = true }
+usvg = { version = "0.49", default-features = false, features = ["text"], optional = true }
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dev-dependencies]
