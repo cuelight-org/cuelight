@@ -24,11 +24,11 @@ thiserror = "2"
 # Text becomes paths through the show's own fonts, so the feature that
 # reads the machine's is off.
 usvg = { version = "0.48", default-features = false, features = ["text"], optional = true }
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [dev-dependencies]
 png = "0.18"
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [features]
 default = ["png", "outline-fonts", "svg", "pack"]
